@@ -56,6 +56,18 @@ const JOBS: Job[] = [
 
 const COMPANIES = ['All Companies', 'Sun Pharma', 'Cipla Ltd', 'Mankind Pharma', 'Dr. Reddy\'s', 'Alkem Laboratories', 'Torrent Pharma', 'Zydus Lifesciences', 'Lupin Ltd', 'Abbott India', 'Glenmark Pharma', 'Intas Pharmaceuticals', 'Aurobindo Pharma']
 const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tamil Nadu', 'Maharashtra', 'Gujarat', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Delhi']
+// Derived City & HQ lists from vacancy details — these are exactly what's shown in each card's HQ field
+const CITIES = ['All Cities', ...Array.from(new Set(JOBS.map(j => j.hq.split(' - ')[0].trim())))]
+const HQ_OPTIONS = ['All HQs', ...JOBS.map(j => j.hq)]
+const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
+
+// helper to get experience bucket from exp string like "0-2 yrs", "0.5-3 yrs", "1-4 yrs"
+const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 months' => {
+  const lower = parseFloat(exp.match(/^[0-9]*\.?[0-9]+/)?.[0] ?? '0')
+  if (lower === 0) return 'Fresher'
+  if (lower < 1) return 'Below 6 months' // 0.5 = 6 months
+  return 'Above 6 months'
+}
 
 const TIERS = [
   { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['View 3 contacts/day (Ad to unlock)', 'Blurred phone & email', 'Apply to jobs', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3/day' },
@@ -120,8 +132,10 @@ export default function App() {
   const [tier, setTier] = useState<Tier>('free')
   const [search, setSearch] = useState('')
   const [location, setLocation] = useState('All India')
+  const [city, setCity] = useState('All Cities')
+  const [hq, setHq] = useState('All HQs')
   const [company, setCompany] = useState('All Companies')
-  const [expFilter, setExpFilter] = useState('All Experience')
+  const [expFilter, setExpFilter] = useState<typeof EXP_OPTIONS[number]>('All Experience')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [applied, setApplied] = useState<Set<string>>(new Set())
@@ -263,12 +277,11 @@ export default function App() {
   const filtered = JOBS.filter(j => {
     if (search && !(j.company.toLowerCase().includes(search.toLowerCase()) || j.title.toLowerCase().includes(search.toLowerCase()) || j.hq.toLowerCase().includes(search.toLowerCase()) || j.division.toLowerCase().includes(search.toLowerCase()))) return false
     if (location !== 'All India' && j.state !== location) return false
+    const jCity = j.hq.split(' - ')[0].trim()
+    if (city !== 'All Cities' && jCity !== city) return false
+    if (hq !== 'All HQs' && j.hq !== hq) return false
     if (company !== 'All Companies' && j.company !== company) return false
-    if (expFilter !== 'All Experience') {
-      if (expFilter === 'Fresher' && !j.exp.includes('0-')) return false
-      if (expFilter === '1-3 years' && !j.exp.includes('1-3') && !j.exp.includes('1-4')) return false
-      if (expFilter === '2+ years' && j.exp.startsWith('0-')) return false
-    }
+    if (expFilter !== 'All Experience' && getExpBucket(j.exp) !== expFilter) return false
     if (verifiedOnly && !j.verified) return false
     return true
   })
@@ -627,7 +640,7 @@ export default function App() {
               <div className="rounded-2xl border bg-white p-4">
                 <div className="flex items-center justify-between">
                   <p className="flex items-center gap-2 text-sm font-extrabold"><Filter className="h-4 w-4" /> Filters</p>
-                  <button onClick={() => { setSearch(''); setLocation('All India'); setCompany('All Companies'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="text-xs font-bold text-sky-600">Clear all</button>
+                  <button onClick={() => { setSearch(''); setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="text-xs font-bold text-sky-600">Clear all</button>
                 </div>
 
                 <div className="mt-4 space-y-4">
@@ -640,24 +653,40 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700">Location (State)</label>
+                    <label className="text-xs font-bold text-slate-700">Filter — State</label>
                     <select value={location} onChange={e => setLocation(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
                       {LOCATIONS.map(l => <option key={l}>{l}</option>)}
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700">Company</label>
+                    <label className="text-xs font-bold text-slate-700">Filter — City <span className="font-normal text-slate-400">({CITIES.length - 1} cities)</span></label>
+                    <select value={city} onChange={e => setCity(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {CITIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700">Filter — HQ <span className="font-normal text-slate-400">exact from vacancy</span></label>
+                    <select value={hq} onChange={e => setHq(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {HQ_OPTIONS.map(h => <option key={h}>{h}</option>)}
+                    </select>
+                    <p className="mt-1 text-[11px] leading-tight text-slate-500">HQs are exactly as shown in vacancy cards: e.g. “Hyderabad - Ameerpet”</p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700">Filter — Company</label>
                     <select value={company} onChange={e => setCompany(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
                       {COMPANIES.map(c => <option key={c}>{c}</option>)}
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700">Experience</label>
-                    <select value={expFilter} onChange={e => setExpFilter(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
-                      {['All Experience', 'Fresher', '1-3 years', '2+ years'].map(o => <option key={o}>{o}</option>)}
+                    <label className="text-xs font-bold text-slate-700">Filter — Experience</label>
+                    <select value={expFilter} onChange={e => setExpFilter(e.target.value as any)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {EXP_OPTIONS.map(o => <option key={o}>{o}</option>)}
                     </select>
+                    <p className="mt-1 text-[11px] leading-tight text-slate-500">Fresher = 0 yrs • Below 6 months = 0.5 yrs (6 mo) • Above 6 months = 1+ yrs</p>
                   </div>
 
                   <label className="flex items-center gap-2 rounded-xl border bg-emerald-50 px-3 py-2.5">
@@ -717,25 +746,48 @@ export default function App() {
               {showFilters && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden lg:hidden">
                   <div className="mt-3 grid gap-3 rounded-2xl border bg-white p-4">
+                    <select value={location} onChange={e => setLocation(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {LOCATIONS.map(l => <option key={l}>{l}</option>)}
+                    </select>
+                    <select value={city} onChange={e => setCity(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {CITIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                    <select value={hq} onChange={e => setHq(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                      {HQ_OPTIONS.map(h => <option key={h}>{h}</option>)}
+                    </select>
                     <div className="grid grid-cols-2 gap-3">
-                      <select value={location} onChange={e => setLocation(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
-                        {LOCATIONS.map(l => <option key={l}>{l}</option>)}
-                      </select>
                       <select value={company} onChange={e => setCompany(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
                         {COMPANIES.map(c => <option key={c}>{c}</option>)}
                       </select>
+                      <select value={expFilter} onChange={e => setExpFilter(e.target.value as any)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
+                        {EXP_OPTIONS.map(o => <option key={o}>{o}</option>)}
+                      </select>
                     </div>
-                    <select value={expFilter} onChange={e => setExpFilter(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
-                      {['All Experience', 'Fresher', '1-3 years', '2+ years'].map(o => <option key={o}>{o}</option>)}
-                    </select>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={verifiedOnly} onChange={e => setVerifiedOnly(e.target.checked)} className="h-4 w-4 accent-sky-600" />
-                      <span className="text-sm font-bold">Verified only</span>
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={verifiedOnly} onChange={e => setVerifiedOnly(e.target.checked)} className="h-4 w-4 accent-sky-600" />
+                        <span className="text-sm font-bold">Verified only</span>
+                      </label>
+                      <button onClick={() => { setSearch(''); setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="text-xs font-bold text-sky-600">Clear all</button>
+                    </div>
+                    <p className="text-[11px] text-slate-500">HQ list = exactly as shown in vacancy cards (e.g. “Hyderabad - Ameerpet”). Exp: Fresher = 0 yrs, Below 6 months = 0.5 yrs, Above 6 months = 1+ yrs</p>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* active filter chips */}
+            {(location !== 'All India' || city !== 'All Cities' || hq !== 'All HQs' || company !== 'All Companies' || expFilter !== 'All Experience' || verifiedOnly) && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {location !== 'All India' && <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-bold text-white">State: {location} <button onClick={() => setLocation('All India')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {city !== 'All Cities' && <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white">City: {city} <button onClick={() => setCity('All Cities')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {hq !== 'All HQs' && <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3 py-1.5 text-xs font-bold text-white">HQ: {hq} <button onClick={() => setHq('All HQs')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {company !== 'All Companies' && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">{company} <button onClick={() => setCompany('All Companies')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {expFilter !== 'All Experience' && <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">{expFilter} <button onClick={() => setExpFilter('All Experience')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {verifiedOnly && <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white">Verified only <button onClick={() => setVerifiedOnly(false)} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                <button onClick={() => { setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setExpFilter('All Experience'); setVerifiedOnly(false); setSearch('') }} className="rounded-full border bg-white px-3 py-1.5 text-xs font-bold">Clear all ✕</button>
+              </div>
+            )}
 
             {/* subscription awareness bar */}
             <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -756,7 +808,7 @@ export default function App() {
                   <SearchX className="mx-auto h-10 w-10 text-slate-300" />
                   <p className="mt-3 text-sm font-bold">No vacancies match your filters</p>
                   <p className="text-xs text-slate-500">Try clearing location/company or search with different HQ like Hyderabad/Pune</p>
-                  <button onClick={() => { setSearch(''); setLocation('All India'); setCompany('All Companies'); setExpFilter('All Experience') }} className="mt-4 rounded-full bg-sky-600 px-6 py-2 text-sm font-bold text-white">Clear filters</button>
+                  <button onClick={() => { setSearch(''); setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="mt-4 rounded-full bg-sky-600 px-6 py-2 text-sm font-bold text-white">Clear filters</button>
                 </div>
               ) : (
                 filtered.map((job, idx) => (
