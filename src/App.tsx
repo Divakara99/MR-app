@@ -773,7 +773,7 @@ export default function App() {
                   <p className="text-[9px] font-extrabold tracking-widest text-sky-700">MANAGED BY • APP FOUNDER</p>
                   <p className="flex items-center gap-1 text-[15px] font-extrabold leading-tight">M Divakar Reddy <BadgeCheck className="h-4 w-4 shrink-0 text-sky-600" /></p>
                   <p className="text-[11px] font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
-                  <p className="text-[11px] leading-snug text-slate-600">9+ Years Pharma Experience • Ex-Business Development Manager, Wallace Pharmaceuticals Pvt. Ltd.</p>
+                  <p className="text-[11px] leading-snug text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
                   <p className="mt-1 text-[10px] font-semibold text-slate-500">50K+ MRs • 2,400+ Verified Jobs • 18K Placements</p>
                 </div>
               </div>
@@ -1471,7 +1471,7 @@ export default function App() {
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
                   <p className="text-sm font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Business Development Manager at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ MRs.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ MRs.</p>
                   <div className="mt-2 flex gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">📞 +91 98XXX XXXXX (Pro unlock)</span>
                     <BadgeCheck className="h-5 w-5 text-emerald-600" />
@@ -1976,7 +1976,7 @@ export default function App() {
             <div className="rounded-2xl bg-white/10 p-4">
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
-              <p className="text-xs opacity-80">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience • Ex-Business Development Manager, Wallace Pharmaceuticals Pvt. Ltd.</p>
+              <p className="text-xs opacity-80">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
               <p className="mt-3 text-xs opacity-80">© 2025 MR Vacancies Hub. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
