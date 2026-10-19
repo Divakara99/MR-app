@@ -155,6 +155,35 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
+  // Fix: refresh should start at top, not bottom (disable scroll restoration + clear hash)
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
+    // Clear hash that can keep browser at bottom (e.g. #vacancies, #ai on reload)
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+    // Ensure we start at top on full reload
+    window.scrollTo(0, 0)
+    // Also handle back/forward navigation to not restore bottom position
+    const onBeforeUnload = () => window.scrollTo(0, 0)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
+  // Prevent AI auto-scroll from pulling whole page to bottom on refresh
+  const prevAiLenRef = useRef(aiMessages.length)
+  useEffect(() => {
+    const prevLen = prevAiLenRef.current
+    const newLen = aiMessages.length
+    prevAiLenRef.current = newLen
+    // Only auto-scroll AI panel if a NEW message was added (not on initial load)
+    if (newLen > 1 && newLen > prevLen) {
+      aiEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [aiMessages])
+
   useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(null), 3000)
@@ -162,7 +191,7 @@ export default function App() {
     }
   }, [toast])
 
-  useEffect(() => { aiEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [aiMessages])
+  // (AI scroll handled above with prevAiLenRef to avoid jump-to-bottom on refresh)
 
   const handleInstall = async () => {
     if (deferredPrompt) {
