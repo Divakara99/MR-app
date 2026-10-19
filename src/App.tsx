@@ -39,6 +39,8 @@ type Job = {
 }
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string }
+type EntryRole = 'seeker' | 'recruiter'
+type Account = { role: EntryRole; name: string; mobile: string; email: string; createdAt: string }
 
 // MOCK DATA
 const JOBS: Job[] = [
@@ -90,6 +92,33 @@ const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
+const ACCOUNTS_KEY = 'mr-accounts-v1'
+const SESSION_KEY = 'mr-session-v1'
+const normalizeMobile = (value: string) => {
+  const digits = value.replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1)
+  return digits
+}
+const isValidMobile = (value: string) => /^[6-9]\d{9}$/.test(normalizeMobile(value))
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim())
+const loadAccounts = (): Account[] => {
+  try {
+    const raw = localStorage.getItem(ACCOUNTS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return (parsed as Account[]).filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
+  } catch { return [] }
+}
+const loadSessionAccount = (): Account | null => {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { role: EntryRole; mobile: string }
+    return loadAccounts().find(a => a.role === parsed.role && a.mobile === parsed.mobile) || null
+  } catch { return null }
+}
 
 // AD COMPONENTS
 function BannerAd({ label = 'Advertisement', className = '' }: { label?: string, className?: string }) {
@@ -160,8 +189,8 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'welcome' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('welcome')
-  const [entryRole, setEntryRole] = useState<'seeker' | 'recruiter' | null>(null)
+  const [page, setPage] = useState<'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('welcome')
+  const [entryRole, setEntryRole] = useState<EntryRole | null>(null)
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
@@ -194,6 +223,19 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(pendingJobs)) } catch { /* ignore */ } }, [pendingJobs])
   const [recruiterJob, setRecruiterJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
   const [recruiterSubmitted, setRecruiterSubmitted] = useState(false)
+  // User accounts (Job Seeker / Recruiter) — register once, then mobile-only login (no password)
+  const [accounts, setAccounts] = useState<Account[]>(() => loadAccounts())
+  const [currentUser, setCurrentUser] = useState<Account | null>(() => loadSessionAccount())
+  const [hasAuthenticated, setHasAuthenticated] = useState(false)
+  const [authStep, setAuthStep] = useState<'mobile' | 'register'>('mobile')
+  const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
+  const [authError, setAuthError] = useState('')
+  useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
+  useEffect(() => {
+    if (currentUser?.role === 'recruiter') {
+      setRecruiterJob(prev => ({ ...prev, contactPerson: currentUser.name, phone: `+91 ${currentUser.mobile}`, email: currentUser.email }))
+    }
+  }, [currentUser])
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
@@ -286,10 +328,68 @@ export default function App() {
     if (s.count === 4) setToast('1 more tap…')
     return false
   }
-  const enterAs = (r: 'seeker' | 'recruiter') => {
+  const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
+  const completeUserAuth = (account: Account, isNewAccount: boolean) => {
+    setCurrentUser(account)
+    setHasAuthenticated(true)
+    setEntryRole(account.role)
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role: account.role, mobile: account.mobile })) } catch { /* ignore */ }
+    setAuthError('')
+    setAuthStep('mobile')
+    setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! Logged in with mobile number ✅`)
+    navigate(destinationForRole(account.role))
+  }
+  const enterAs = (r: EntryRole) => {
     setEntryRole(r)
-    if (r === 'recruiter') { setToast('Welcome, Recruiter! Post a vacancy — it goes live after Admin approval'); navigate('recruiters') }
-    else { setToast('Welcome! Find your verified MR vacancy 🎯'); navigate('home') }
+    const existingForRole = currentUser?.role === r ? currentUser : (currentUser ? accounts.find(a => a.role === r && a.mobile === currentUser.mobile) : undefined)
+    if (hasAuthenticated && existingForRole) { completeUserAuth(existingForRole, false); return }
+    setAuthStep('mobile')
+    setAuthError('')
+    if (existingForRole) {
+      setAuthForm(prev => ({ name: prev.name || existingForRole.name, mobile: existingForRole.mobile, email: prev.email || existingForRole.email }))
+    } else if (currentUser && currentUser.role !== r) {
+      setAuthForm(prev => ({ name: prev.name || currentUser.name, mobile: currentUser.mobile, email: prev.email || currentUser.email }))
+    }
+    navigate('auth')
+  }
+  const handleMobileContinue = () => {
+    const selectedRole = entryRole ?? 'seeker'
+    const mobile = normalizeMobile(authForm.mobile)
+    if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number (starting with 6, 7, 8 or 9).'); return }
+    const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
+    if (existing) { completeUserAuth(existing, false); return }
+    const otherRoleAccount = accounts.find(a => a.mobile === mobile)
+    setAuthForm(prev => ({ name: prev.name || otherRoleAccount?.name || '', mobile, email: prev.email || otherRoleAccount?.email || '' }))
+    setAuthError('')
+    setAuthStep('register')
+    setToast(otherRoleAccount ? 'Mobile found — create your account for this role to continue.' : 'New user — register once with name and email. No password.')
+  }
+  const handleRegister = () => {
+    const selectedRole = entryRole ?? 'seeker'
+    const mobile = normalizeMobile(authForm.mobile)
+    const name = authForm.name.trim().replace(/\s+/g, ' ')
+    const email = authForm.email.trim().toLowerCase()
+    if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
+    if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
+    if (!isValidEmail(email)) { setAuthError('Enter a correct email ID, e.g. yourname@gmail.com'); return }
+    const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
+    if (existing) { completeUserAuth(existing, false); return }
+    const account: Account = { role: selectedRole, name, mobile, email, createdAt: new Date().toISOString() }
+    const updatedAccounts = [...accounts, account]
+    setAccounts(updatedAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    completeUserAuth(account, true)
+  }
+  const handleUserLogout = () => {
+    setCurrentUser(null)
+    setHasAuthenticated(false)
+    try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+    setAuthForm({ name: '', mobile: '', email: '' })
+    setAuthStep('mobile')
+    setAuthError('')
+    setShowMobileMenu(false)
+    setToast('Logged out successfully')
+    navigate('welcome')
   }
   const handleAdminLogin = () => {
     const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
@@ -393,7 +493,7 @@ export default function App() {
     setToast('Vacancy submitted! It will go LIVE after Admin (Divakar Reddy) approval ✅')
   }
   const resetRecruiterForm = () => {
-    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
+    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: currentUser?.role === 'recruiter' ? currentUser.name : '', phone: currentUser?.role === 'recruiter' ? `+91 ${currentUser.mobile}` : '', email: currentUser?.role === 'recruiter' ? currentUser.email : '', urgent: false })
     setRecruiterSubmitted(false)
   }
   const handleApproveJob = (pend: PendingJob) => {
@@ -521,13 +621,15 @@ export default function App() {
     } finally { setAiLoading(false) }
   }
 
+  const authExistingAccount = entryRole ? accounts.find(a => a.role === entryRole && a.mobile === normalizeMobile(authForm.mobile)) : undefined
+
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
 
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
       {/* TOP AD BANNER (AdMob Adaptive) — hidden for ad-free plans */}
-      {page !== 'welcome' && !isAdFree && (
+      {page !== 'welcome' && page !== 'auth' && !isAdFree && (
       <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
           <div className="flex items-center gap-2 text-[11px]">
@@ -544,7 +646,7 @@ export default function App() {
       )}
 
       {/* NAVBAR */}
-      {page !== 'welcome' && (
+      {page !== 'welcome' && page !== 'auth' && (
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
@@ -583,6 +685,16 @@ export default function App() {
                 <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
                 <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
               </div>
+              {currentUser && hasAuthenticated && (
+                <div className="hidden max-w-[205px] items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-1.5 xl:flex" title={`${currentUser.name} • ${currentUser.email}`}>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
+                    <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
+                  </span>
+                  <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
+                </div>
+              )}
               <button onClick={handleInstall} className="hidden items-center gap-2 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-sky-700 sm:inline-flex">
                 <Download className="h-4 w-4" /> Install PWA
               </button>
@@ -642,6 +754,19 @@ export default function App() {
                   </div>
                   <User className="h-4 w-4 text-slate-400" />
                 </div>
+                {currentUser && hasAuthenticated && (
+                  <div className="mt-2 rounded-xl border border-sky-100 bg-white px-3 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-extrabold leading-tight">{currentUser.name}</p>
+                        <p className="text-[11px] font-bold text-sky-700">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
+                        <p className="truncate text-[11px] text-slate-500">{currentUser.email}</p>
+                      </div>
+                      <button onClick={handleUserLogout} className="flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Nav */}
@@ -711,7 +836,7 @@ export default function App() {
 
       {/* INSTALL BANNER */}
       <AnimatePresence>
-        {showInstallBanner && page !== 'welcome' && (
+        {showInstallBanner && page !== 'welcome' && page !== 'auth' && (
           <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="mx-auto max-w-[1280px] px-4 pt-4">
             <div className="flex flex-col gap-3 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-600 to-indigo-600 p-3 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -778,9 +903,88 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Free to browse • No signup needed • Every vacancy verified</p>
+              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Register once with mobile • Login with mobile only • No password</p>
             </div>
             <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2025 MR Vacancies Hub • Managed by M Divakar Reddy</p>
+          </div>
+        </section>
+      )}
+      {/* USER LOGIN / REGISTER — first time: name + mobile + email; after that: mobile only (no password) */}
+      {page === 'auth' && (
+        <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
+          <div className="w-full max-w-md">
+            <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
+              <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
+              <div className="mt-3 text-center">
+                <button onClick={() => handleSecretTap()} aria-label="MR Vacancies Hub" className="mx-auto flex h-14 w-14 select-none items-center justify-center rounded-2xl bg-sky-600 text-white shadow-lg transition active:scale-95">
+                  <Briefcase className="h-7 w-7" />
+                </button>
+                <h1 className="mt-3 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Registered users login directly. New users register in the next step.' : 'Create your account once. Next time, login only with your mobile number.'}</p>
+                <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-1 rounded-full bg-slate-100 p-1">
+                <button type="button" onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError('') }} className={`flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold ${entryRole !== 'recruiter' ? 'bg-white text-slate-900 shadow' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker</button>
+                <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className={`flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold ${entryRole === 'recruiter' ? 'bg-white text-slate-900 shadow' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter</button>
+              </div>
+
+              {authStep === 'mobile' ? (
+                <form className="mt-5" onSubmit={e => { e.preventDefault(); handleMobileContinue() }}>
+                  <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
+                    <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="Enter 10-digit mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                  </div>
+                  {authExistingAccount ? (
+                    <div className="mt-3 flex items-center gap-3 rounded-2xl bg-emerald-50 p-3 text-left">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-extrabold">Welcome back, {authExistingAccount.name}!</p>
+                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingAccount.email}</p>
+                      </div>
+                      <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? After entering your mobile, we will ask only your <b>name</b> and <b>correct email ID</b> to create your account.</p>
+                  )}
+                  {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
+                  <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> {authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
+                </form>
+              ) : (
+                <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
+                  <div className="rounded-2xl bg-sky-50 p-3 text-center">
+                    <p className="text-sm font-extrabold text-sky-900">New {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account</p>
+                    <p className="text-[11px] font-medium text-sky-700">Register once — no password. Next time login with mobile only.</p>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Full Name *</label>
+                      <input value={authForm.name} onChange={e => { setAuthForm(prev => ({ ...prev, name: e.target.value })); setAuthError('') }} autoComplete="name" placeholder="Enter your full name" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
+                        <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *</label>
+                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} type="email" autoComplete="email" placeholder="yourname@gmail.com" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                  </div>
+                  {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
+                  <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700"><Check className="h-4 w-4" /> Register &amp; Continue</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError('') }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
+                </form>
+              )}
+
+              <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
+                <span>Step 1: Mobile</span><span>→</span><span>Step 2: Register (first time only)</span><span>→</span><span>Enter App</span>
+              </div>
+            </div>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR Vacancies Hub • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -1737,7 +1941,7 @@ export default function App() {
                   <li><b>2.</b> Enter Admin ID <b>divakar</b> and your password</li>
                   <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
                 </ol>
-                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Normal MR users do not need this login — they simply browse jobs. This demo lock works on this device/browser; a real backend login (Firebase/Supabase) is needed before Play Store launch.</p>
+                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters use their own mobile-number account login (no password). These demo logins work on this device/browser; a real backend (Firebase/Supabase) is needed before Play Store launch.</p>
               </div>
             </div>
           ) : (
@@ -1942,7 +2146,7 @@ export default function App() {
       )}
       {/* FOOTER - always visible */}
       {/* FOOTER */}
-      {page !== 'welcome' && (
+      {page !== 'welcome' && page !== 'auth' && (
       <footer className="border-t bg-slate-900 text-slate-300">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
@@ -2252,7 +2456,7 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
       </AnimatePresence>
 
       {/* Bottom nav for mobile (app-like) - page navigation */}
-      {page !== 'welcome' && (
+      {page !== 'welcome' && page !== 'auth' && (
       <>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-[1280px] items-center justify-around px-2 py-2">
