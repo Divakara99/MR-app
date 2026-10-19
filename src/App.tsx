@@ -316,25 +316,124 @@ export default function App() {
                 <Download className="h-4 w-4" /> Install PWA
               </button>
               <div className="hidden h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white lg:flex"> <User className="h-4 w-4" /> </div>
-              <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="rounded-full border p-2 lg:hidden"><Menu className="h-5 w-5" /></button>
+              <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
             </div>
           </div>
-          {/* mobile menu */}
-          <AnimatePresence>
-            {showMobileMenu && (
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden border-t lg:hidden">
-                <div className="grid gap-2 py-3">
-                  <a href="#vacancies" onClick={() => setShowMobileMenu(false)} className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold">Browse Jobs</a>
-                  <a href="#pricing" onClick={() => setShowMobileMenu(false)} className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold">Subscription Plans</a>
-                  <a href="#ai" onClick={() => setShowMobileMenu(false)} className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold">AI Assistant</a>
-                  <button onClick={() => { setShowAndroidModal(true); setShowMobileMenu(false) }} className="rounded-xl bg-emerald-500 px-4 py-3 text-left text-sm font-bold text-white">Get Android App for Play Store</button>
-                  <button onClick={() => { handleInstall(); setShowMobileMenu(false) }} className="rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-white">Install PWA</button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </header>
+
+      {/* RIGHT SIDE SLIDING MENU (Mobile) */}
+      <AnimatePresence>
+        {showMobileMenu && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setShowMobileMenu(false)}
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+            />
+            {/* Drawer */}
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 260 }}
+              className="fixed right-0 top-0 z-50 flex h-[100dvh] w-[86%] max-w-[360px] flex-col bg-white shadow-2xl lg:hidden"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sky-600"><Briefcase className="h-5 w-5" /></div>
+                  <div>
+                    <p className="text-sm font-extrabold leading-none">MR Vacancies Hub</p>
+                    <p className="text-[11px] font-semibold opacity-90">M Divakar Reddy • Verified</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* User tier card */}
+              <div className="border-b bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
+                    <span className="text-sm font-extrabold capitalize">{tier}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{dailyUnlocks}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks</span>
+                  </div>
+                  <User className="h-4 w-4 text-slate-400" />
+                </div>
+              </div>
+
+              {/* Nav */}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                <p className="mb-2 text-[11px] font-bold tracking-widest text-slate-400">NAVIGATION</p>
+                <div className="grid gap-2">
+                  {[
+                    { label: 'Browse Vacancies', sub: `${JOBS.length} verified jobs`, icon: Layers, href: '#vacancies' },
+                    { label: 'Subscription Plans', sub: 'Free → Starter ₹199 → Pro ₹499', icon: Crown, href: '#pricing' },
+                    { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, href: '#recruiters' },
+                    { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, href: '#ai' },
+                    { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, href: '#', action: () => { setShowAndroidModal(true); setShowMobileMenu(false) } },
+                  ].map(item => (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      onClick={(e) => {
+                        if (item.action) { e.preventDefault(); item.action() }
+                        else setShowMobileMenu(false)
+                      }}
+                      className="flex items-center gap-3 rounded-2xl border bg-white px-3 py-3 hover:bg-slate-50 active:scale-[0.98] transition"
+                    >
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600"><item.icon className="h-5 w-5" /></div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold leading-none">{item.label}</p>
+                        <p className="text-xs text-slate-500">{item.sub}</p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-slate-400" />
+                    </a>
+                  ))}
+                </div>
+
+                <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
+                  <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Watch a 5-sec rewarded video to reveal 1 recruiter contact. Starter/Pro = ad-free unlimited.</p>
+                </div>
+
+                <div className="mt-4 grid gap-2">
+                  <button onClick={() => { setShowAndroidModal(true); setShowMobileMenu(false) }} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white shadow hover:bg-emerald-600">
+                    <Smartphone className="h-5 w-5" /> Get Android App (Play Store)
+                  </button>
+                  <button onClick={() => { handleInstall(); setShowMobileMenu(false) }} className="flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-white shadow hover:bg-sky-700">
+                    <Download className="h-5 w-5" /> Install PWA
+                  </button>
+                  <button onClick={() => { setShowMobileMenu(false); document.getElementById('vacancies')?.scrollIntoView({ behavior: 'smooth' }) }} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
+                    <Search className="h-4 w-4" /> Browse Jobs
+                  </button>
+                </div>
+
+                <div className="mt-5 flex items-center justify-center gap-3 text-xs text-slate-500">
+                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Verified</span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1"><BadgeCheck className="h-3.5 w-3.5 text-sky-600" /> M Divakar Reddy</span>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-500">© 2025 MR Vacancies Hub</span>
+                  <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">PWA • TWA Ready</span>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* INSTALL BANNER */}
       <AnimatePresence>
