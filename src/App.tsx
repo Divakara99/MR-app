@@ -3,13 +3,14 @@ import {
   Search, MapPin, Briefcase, IndianRupee, Building2, BadgeCheck, Clock3,
   Eye, EyeOff, Bookmark, BookmarkCheck, Share2, Phone, Mail, Filter, X, Menu,
   Crown, ShieldCheck, Sparkles, Zap, Star, Users, TrendingUp, FileText, Send,
-  MessageCircle, Play, Smartphone, Download, Globe, ChevronDown, ChevronUp, ChevronRight,
-  Award, GraduationCap, CalendarDays, Layers, Siren, Megaphone, Heart, ThumbsUp, Quote,
-  ExternalLink, LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, ArrowUpRight, Check,
-  Settings, Bell, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Timer, Trash2, LayoutDashboard, KeyRound, RotateCcw,
-  Image as ImageIcon, Package
+  MessageCircle, Play, Smartphone, ChevronDown, ChevronUp, ChevronRight,
+  GraduationCap, Layers, Siren, Megaphone, Quote,
+  LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
+  Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
+  Package
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow } from './supabase'
 
 // TYPES
 type Tier = 'free' | 'starter' | 'pro'
@@ -40,6 +41,7 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string }
 type EntryRole = 'seeker' | 'recruiter'
+type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile'
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -121,8 +123,7 @@ const TIERS = [
 const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) => a + 'X'.repeat(mid.length) + c)
 const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
 
-// ADMIN (M Divakar Reddy) — front-end demo lock, stored on this device only.
-// For the real Play Store launch, move auth to a backend (Firebase / Supabase Auth).
+// ADMIN (M Divakar Reddy)
 const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in']
 const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
@@ -212,13 +213,47 @@ const loadAccounts = (): Account[] => {
     return (parsed as Account[]).filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
   } catch { return [] }
 }
-const loadSessionAccount = (): Account | null => {
+const loadStoredSession = (): { role: EntryRole; mobile: string } | null => {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as { role: EntryRole; mobile: string }
-    return loadAccounts().find(a => a.role === parsed.role && a.mobile === parsed.mobile) || null
+    if ((parsed.role !== 'seeker' && parsed.role !== 'recruiter') || !isValidMobile(parsed.mobile)) return null
+    return { role: parsed.role, mobile: normalizeMobile(parsed.mobile) }
   } catch { return null }
+}
+const loadSessionAccount = (): Account | null => {
+  const session = loadStoredSession()
+  if (!session) return null
+  const allAccounts = loadAccounts()
+  const account = allAccounts.find(a => a.role === session.role && a.mobile === session.mobile) || null
+  if (!account) return null
+  // Standing rule: a Recruiter account on this mobile blocks the Job Seeker session.
+  if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
+  return account
+}
+const getAccountDestination = (account: Account): AppPage => {
+  if (account.role === 'recruiter') return 'recruiters'
+  return isSeekerProfileComplete(account.profile) ? 'home' : 'profile'
+}
+const getInitialPage = (): AppPage => {
+  const account = loadSessionAccount()
+  return account ? getAccountDestination(account) : 'welcome'
+}
+const normalizeSeekerProfile = (profile?: Record<string, unknown> | null): SeekerProfile | undefined => {
+  if (!profile || Object.keys(profile).length === 0) return undefined
+  return { ...EMPTY_SEEKER_PROFILE, ...(profile as Partial<SeekerProfile>) }
+}
+const accountFromRemoteRow = (row: RemoteAccountRow): Account => {
+  const profile = normalizeSeekerProfile(row.profile)
+  return {
+    role: row.role,
+    name: row.name,
+    mobile: normalizeMobile(row.mobile),
+    email: row.email,
+    createdAt: row.created_at || new Date().toISOString(),
+    profile,
+  }
 }
 const loadDeletionRequests = (): AccountDeletionRequest[] => {
   try {
@@ -234,7 +269,7 @@ const loadDeletionRequests = (): AccountDeletionRequest[] => {
 function BannerAd({ label = 'Advertisement', className = '' }: { label?: string, className?: string }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-white ${className}`}>
-      <div className="absolute left-2 top-2 z-10 rounded bg-amber-400 px-2 py-0.5 text-[10px] font-bold tracking-widest text-slate-900">AD • AdMob</div>
+      <div className="absolute left-2 top-2 z-10 rounded bg-amber-400 px-2 py-0.5 text-[10px] font-bold tracking-widest text-slate-900">AD</div>
       <div className="flex items-center gap-4 p-3 sm:p-4">
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white">
           <Megaphone className="h-6 w-6" />
@@ -243,11 +278,11 @@ function BannerAd({ label = 'Advertisement', className = '' }: { label?: string,
           <p className="truncate text-sm font-bold leading-tight text-slate-900">Boost Your MR Career — Pharma Sales Mastery Course</p>
           <p className="truncate text-xs text-slate-500">Trusted by 12,000+ MRs • 4.8★ • Limited seats — Join now & get 40% OFF</p>
         </div>
-        <a href="#pricing" className="shrink-0 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-black">Install</a>
+        <a href="#pricing" className="shrink-0 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-black">Learn More</a>
       </div>
       <div className="flex items-center justify-between border-t bg-slate-50 px-3 py-1.5">
-        <span className="text-[10px] font-semibold tracking-wide text-slate-400">Sponsored • Google AdMob Banner • 320×50 / Adaptive</span>
-        <span className="text-[10px] text-slate-400">Ad id: ca-app-pub-3940256099942544/6300978111</span>
+        <span className="text-[10px] font-semibold tracking-wide text-slate-400">Sponsored</span>
+        <span className="text-[10px] text-slate-400">Advertisement</span>
       </div>
     </div>
   )
@@ -256,8 +291,8 @@ function NativeAd() {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="rounded bg-amber-400 px-2 py-0.5 text-[10px] font-bold tracking-widest">AD • NATIVE</span>
-        <span className="text-[10px] text-slate-400">AdMob Native Advanced</span>
+        <span className="rounded bg-amber-400 px-2 py-0.5 text-[10px] font-bold tracking-widest">SPONSORED</span>
+        <span className="text-[10px] text-slate-400">Sponsored</span>
       </div>
       <div className="flex gap-3">
         <div className="h-20 w-28 shrink-0 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 p-3 text-white">
@@ -268,7 +303,7 @@ function NativeAd() {
           <p className="text-sm font-bold text-slate-900">Visual Aid & Detailing App for MRs</p>
           <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-600">Create stunning e-detailing presentations, track doctor engagement and close more prescriptions. Free trial!</p>
           <div className="mt-2 flex gap-2">
-            <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Install Free</span>
+            <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Learn More</span>
             <span className="hidden text-xs text-slate-400 sm:block">4.7★ • 10K+ downloads</span>
           </div>
         </div>
@@ -299,11 +334,8 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob' | 'profile'>('welcome')
-  const [entryRole, setEntryRole] = useState<EntryRole | null>(null)
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
-  const [showInstallBanner, setShowInstallBanner] = useState(true)
-  const [showAndroidModal, setShowAndroidModal] = useState(false)
+  const [page, setPage] = useState<AppPage>(() => getInitialPage())
+  const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>([
@@ -336,10 +368,11 @@ export default function App() {
   // User accounts (Job Seeker / Recruiter) — register once, then mobile-only login (no password)
   const [accounts, setAccounts] = useState<Account[]>(() => loadAccounts())
   const [currentUser, setCurrentUser] = useState<Account | null>(() => loadSessionAccount())
-  const [hasAuthenticated, setHasAuthenticated] = useState(false)
+  const [hasAuthenticated, setHasAuthenticated] = useState(() => Boolean(loadSessionAccount()))
   const [authStep, setAuthStep] = useState<'mobile' | 'register'>('mobile')
   const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
   const [authError, setAuthError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
@@ -347,10 +380,12 @@ export default function App() {
   const [deletionRequestError, setDeletionRequestError] = useState('')
   const [seekerProfileForm, setSeekerProfileForm] = useState<SeekerProfile>(() => loadSessionAccount()?.profile ?? EMPTY_SEEKER_PROFILE)
   const [seekerProfileError, setSeekerProfileError] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
   const [candidateRoleFilter, setCandidateRoleFilter] = useState('All Roles')
   const [candidateExperienceFilter, setCandidateExperienceFilter] = useState('All Candidates')
   const [candidateStateFilter, setCandidateStateFilter] = useState('All India')
+  const [remoteCandidateProfiles, setRemoteCandidateProfiles] = useState<CandidateProfileView[]>([])
   const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => {
     try { const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return new Set(parsed as string[]) } } catch { /* ignore */ }
     return new Set<string>()
@@ -369,6 +404,8 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
+  const remoteSessionRefreshRef = useRef(false)
+  const authLookupMobileRef = useRef('')
 
   const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999 }
   const isAdFree = isAdmin || tier !== 'free' // ₹99+ plans & Admin: ZERO ads (no banner / rewarded / interstitial)
@@ -395,13 +432,6 @@ export default function App() {
   useEffect(() => {
     if (!availableHQs.includes(hq)) setHq('All HQs')
   }, [location, city])
-
-  // PWA install prompt
-  useEffect(() => {
-    const handler = (e: any) => { e.preventDefault(); setDeferredPrompt(e) }
-    window.addEventListener('beforeinstallprompt', handler)
-    return () => window.removeEventListener('beforeinstallprompt', handler)
-  }, [])
 
   // Fix: refresh should start at top, not bottom (disable scroll restoration + clear hash)
   useEffect(() => {
@@ -459,6 +489,41 @@ export default function App() {
     return false
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
+  const writeAccounts = (nextAccounts: Account[]) => {
+    setAccounts(nextAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(nextAccounts)) } catch { /* ignore */ }
+    return nextAccounts
+  }
+  const mergeAccountsForMobileState = (mobile: string, incoming: Account[]) => {
+    setAccounts(prev => {
+      const next = [...prev.filter(a => a.mobile !== mobile), ...incoming]
+      try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+  const fetchRemoteAccountsByMobile = async (mobile: string): Promise<Account[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('find_app_accounts_by_mobile', { p_mobile: mobile })
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+  }
+  const fetchRemoteCandidateProfiles = async () => {
+    if (!supabase) return
+    const { data, error } = await supabase.rpc('list_anonymous_candidate_profiles')
+    if (error) throw error
+    const mapped = ((data ?? []) as RemoteCandidateRow[]).map(row => ({
+      id: `supabase-${row.candidate_id}`,
+      code: row.candidate_code,
+      source: 'registered' as const,
+      profile: normalizeSeekerProfile(row.profile) ?? EMPTY_SEEKER_PROFILE,
+    }))
+    setRemoteCandidateProfiles(mapped)
+  }
+  const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
+    if (!supabase) return
+    const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
+    if (error) throw error
+  }
   const completeUserAuth = (account: Account, isNewAccount: boolean) => {
     setCurrentUser(account)
     setHasAuthenticated(true)
@@ -473,7 +538,7 @@ export default function App() {
       navigate('profile')
       return
     }
-    setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! Logged in with mobile number ✅`)
+    setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
     navigate(destinationForRole(account.role))
   }
   const enterAs = (r: EntryRole) => {
@@ -490,41 +555,84 @@ export default function App() {
     }
     navigate('auth')
   }
-  const handleMobileContinue = () => {
+  const handleMobileContinue = async () => {
+    if (authLoading) return
     const selectedRole = entryRole ?? 'seeker'
     const mobile = normalizeMobile(authForm.mobile)
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number (starting with 6, 7, 8 or 9).'); return }
-    if (selectedRole === 'seeker') {
-      const recruiterAccount = accounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
-      if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`); return }
-    }
-    const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
-    if (existing) { completeUserAuth(existing, false); return }
-    const otherRoleAccount = accounts.find(a => a.mobile === mobile)
-    setAuthForm(prev => ({ name: prev.name || otherRoleAccount?.name || '', mobile, email: prev.email || otherRoleAccount?.email || '' }))
+    setAuthLoading(true)
     setAuthError('')
-    setAuthStep('register')
-    setToast(otherRoleAccount ? 'Mobile found — create your account for this role to continue.' : 'New user — register once with name and email. No password.')
+    try {
+      let availableAccounts = accounts
+      const remoteAccounts = await fetchRemoteAccountsByMobile(mobile)
+      if (remoteAccounts) {
+        availableAccounts = [...accounts.filter(a => a.mobile !== mobile), ...remoteAccounts]
+        writeAccounts(availableAccounts)
+      }
+      if (selectedRole === 'seeker') {
+        const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
+        if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`); return }
+      }
+      const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
+      if (existing) { completeUserAuth(existing, false); return }
+      const otherRoleAccount = availableAccounts.find(a => a.mobile === mobile)
+      setAuthForm(prev => ({ name: prev.name || otherRoleAccount?.name || '', mobile, email: prev.email || otherRoleAccount?.email || '' }))
+      setAuthStep('register')
+      setToast(otherRoleAccount ? 'Mobile found — create your account for this role to continue.' : 'New account — please enter your name and correct email ID.')
+    } catch {
+      setAuthError('Unable to check your account right now. Please check your internet connection and try again.')
+    } finally {
+      setAuthLoading(false)
+    }
   }
-  const handleRegister = () => {
+  const handleRegister = async () => {
+    if (authLoading) return
     const selectedRole = entryRole ?? 'seeker'
     const mobile = normalizeMobile(authForm.mobile)
     const name = authForm.name.trim().replace(/\s+/g, ' ')
     const email = authForm.email.trim().toLowerCase()
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
-    if (selectedRole === 'seeker') {
-      const recruiterAccount = accounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
-      if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
-    }
     if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
     if (!isValidEmail(email)) { setAuthError('Enter a correct email ID, e.g. yourname@gmail.com'); return }
-    const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
-    if (existing) { completeUserAuth(existing, false); return }
-    const account: Account = { role: selectedRole, name, mobile, email, createdAt: new Date().toISOString() }
-    const updatedAccounts = [...accounts, account]
-    setAccounts(updatedAccounts)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
-    completeUserAuth(account, true)
+    setAuthLoading(true)
+    setAuthError('')
+    try {
+      let availableAccounts = accounts
+      const remoteAccounts = await fetchRemoteAccountsByMobile(mobile)
+      if (remoteAccounts) {
+        availableAccounts = [...accounts.filter(a => a.mobile !== mobile), ...remoteAccounts]
+        writeAccounts(availableAccounts)
+      }
+      if (selectedRole === 'seeker') {
+        const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
+        if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
+      }
+      const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
+      if (existing) { completeUserAuth(existing, false); return }
+
+      let account: Account
+      if (supabase) {
+        const { data, error } = await supabase.rpc('register_app_account', {
+          p_role: selectedRole,
+          p_name: name,
+          p_mobile: mobile,
+          p_email: email,
+        })
+        if (error) throw error
+        const created = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
+        if (!created) throw new Error('Account was not returned')
+        account = created
+      } else {
+        account = { role: selectedRole, name, mobile, email, createdAt: new Date().toISOString() }
+      }
+      const updatedAccounts = [...availableAccounts.filter(a => !(a.role === selectedRole && a.mobile === mobile)), account]
+      writeAccounts(updatedAccounts)
+      completeUserAuth(account, true)
+    } catch {
+      setAuthError('Unable to create your account right now. Please check your internet connection and try again.')
+    } finally {
+      setAuthLoading(false)
+    }
   }
   const openSeekerProfile = () => {
     if (!currentUser || currentUser.role !== 'seeker') return
@@ -552,8 +660,8 @@ export default function App() {
     }
     return true
   }
-  const handleSaveSeekerProfile = () => {
-    if (!currentUser || currentUser.role !== 'seeker') return
+  const handleSaveSeekerProfile = async () => {
+    if (!currentUser || currentUser.role !== 'seeker' || profileSaving) return
     const clean = (value: string) => value.trim().replace(/\s+/g, ' ')
     const profile: SeekerProfile = {
       ...seekerProfileForm,
@@ -597,15 +705,32 @@ export default function App() {
     if (profile.currentHq.length < 2) { setSeekerProfileError('Please enter your current HQ / work location.'); return }
     if (!profile.noticePeriod) { setSeekerProfileError('Please select your notice period / joining availability.'); return }
     if (!profile.twoWheeler) { setSeekerProfileError('Please confirm whether you have a two-wheeler.'); return }
-    const updatedAccount: Account = { ...currentUser, profile }
-    const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
-    setAccounts(updatedAccounts)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
-    setCurrentUser(updatedAccount)
-    setSeekerProfileForm(profile)
-    setSeekerProfileError('')
-    setToast('Job Seeker profile saved ✅ Recruiters can now see your anonymous job profile — name, mobile and email stay hidden.')
-    navigate('jobs')
+    setProfileSaving(true)
+    try {
+      let updatedAccount: Account = { ...currentUser, profile }
+      if (supabase) {
+        const { data, error } = await supabase.rpc('update_seeker_profile', {
+          p_mobile: currentUser.mobile,
+          p_profile: profile,
+        })
+        if (error) throw error
+        const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === 'seeker' && a.mobile === currentUser.mobile)
+        if (!remoteAccount) throw new Error('Profile was not returned')
+        updatedAccount = remoteAccount
+      }
+      const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
+      writeAccounts(updatedAccounts)
+      setCurrentUser(updatedAccount)
+      setSeekerProfileForm(updatedAccount.profile ?? profile)
+      setSeekerProfileError('')
+      if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
+      setToast('Job Seeker profile saved ✅ Recruiters can now see your anonymous job profile — name, mobile and email stay hidden.')
+      navigate('jobs')
+    } catch {
+      setSeekerProfileError('Unable to save your profile right now. Please check your internet connection and try again.')
+    } finally {
+      setProfileSaving(false)
+    }
   }
   const handleRequestCandidateContact = (candidate: CandidateProfileView) => {
     if (!isAdmin && currentUser?.role !== 'recruiter') { setToast('Only registered Recruiters can request candidate contact through Admin.'); return }
@@ -623,12 +748,17 @@ export default function App() {
     setToast('Logged out successfully')
     navigate('welcome')
   }
-  const handleDeleteRecruiterAccount = () => {
+  const handleDeleteRecruiterAccount = async () => {
     if (!currentUser || currentUser.role !== 'recruiter') return
     const deletedAccount = currentUser
+    try {
+      await deleteRemoteAccount('recruiter', deletedAccount.mobile)
+    } catch {
+      setToast('Unable to delete this Recruiter account right now. Please try again.')
+      return
+    }
     const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
-    setAccounts(updatedAccounts)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    writeAccounts(updatedAccounts)
     setPendingJobs(prev => prev.filter(job => normalizeMobile(job.phone) !== deletedAccount.mobile))
     setRecruiterJob(prev => ({ ...prev, contactPerson: '', phone: '', email: '' }))
     setRecruiterSubmitted(false)
@@ -688,11 +818,17 @@ export default function App() {
     setShowDeletionRequestModal(false)
     setToast('Your account deletion request has been withdrawn.')
   }
-  const handleApproveDeletionRequest = (request: AccountDeletionRequest) => {
+  const handleApproveDeletionRequest = async (request: AccountDeletionRequest) => {
     if (!isAdmin) return
+    try {
+      await deleteRemoteAccount('seeker', request.mobile)
+    } catch {
+      setToast('Unable to delete this Job Seeker account right now. Please try again.')
+      return
+    }
     const updatedAccounts = accounts.filter(a => !(a.role === 'seeker' && a.mobile === request.mobile))
-    setAccounts(updatedAccounts)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    writeAccounts(updatedAccounts)
+    if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
     const updatedRequests = deletionRequests.filter(r => r.id !== request.id)
     setDeletionRequests(updatedRequests)
     try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
@@ -843,6 +979,43 @@ export default function App() {
   }, [page])
 
   useEffect(() => {
+    if (!supabase || remoteSessionRefreshRef.current) return
+    remoteSessionRefreshRef.current = true
+    const storedSession = loadStoredSession()
+    if (!storedSession) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remoteAccounts = await fetchRemoteAccountsByMobile(storedSession.mobile)
+        if (cancelled || !remoteAccounts) return
+        mergeAccountsForMobileState(storedSession.mobile, remoteAccounts)
+        const account = remoteAccounts.find(a => a.role === storedSession.role)
+        const blockedByRecruiter = storedSession.role === 'seeker' && remoteAccounts.some(a => a.role === 'recruiter' && a.mobile === storedSession.mobile)
+        if (!account || blockedByRecruiter) {
+          try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+          setCurrentUser(null)
+          setHasAuthenticated(false)
+          setEntryRole(storedSession.role)
+          navigate('welcome')
+          return
+        }
+        setCurrentUser(account)
+        setHasAuthenticated(true)
+        setEntryRole(account.role)
+        if (page === 'welcome') navigate(getAccountDestination(account))
+      } catch {
+        // Keep the locally saved login when the device is offline.
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    void fetchRemoteCandidateProfiles().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(null), 3000)
       return () => clearTimeout(t)
@@ -850,18 +1023,6 @@ export default function App() {
   }, [toast])
 
   // (AI scroll handled above with prevAiLenRef to avoid jump-to-bottom on refresh)
-
-  const handleInstall = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt()
-      const { outcome } = await deferredPrompt.userChoice
-      if (outcome === 'accepted') setToast('App installed — check home screen!')
-      setDeferredPrompt(null)
-      setShowInstallBanner(false)
-    } else {
-      setToast('To install: tap browser menu → Add to Home Screen / Install App')
-    }
-  }
 
   const canReveal = (id: string) => revealed.has(id) || dailyUnlocks < limitForTier[tier]
 
@@ -949,7 +1110,7 @@ export default function App() {
       const data = await res.json()
       setAiMessages(prev => [...prev, { role: 'assistant', text: data.text || 'No response' }])
     } catch {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: 'AI is offline (no API key). Mock tips: highlight your HQ, RCPA & achievements. Ask about resume/interview!' }])
+      setAiMessages(prev => [...prev, { role: 'assistant', text: 'I could not connect right now. Quick tip: highlight your HQ, RCPA & achievements. Please try again in a moment.' }])
     } finally { setAiLoading(false) }
   }
 
@@ -960,10 +1121,13 @@ export default function App() {
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
-  const registeredCandidateProfiles: CandidateProfileView[] = accounts
+  const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
     .map((a, index) => ({ id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: a.profile as SeekerProfile }))
-  const candidateProfiles: CandidateProfileView[] = [...registeredCandidateProfiles, ...SAMPLE_CANDIDATE_PROFILES]
+  const registeredCandidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? remoteCandidateProfiles : localRegisteredCandidateProfiles
+  // Sample profiles help preview the directory before a backend is connected.
+  // Once Supabase is configured, only real registered Job Seeker profiles are shown.
+  const candidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? registeredCandidateProfiles : [...registeredCandidateProfiles, ...SAMPLE_CANDIDATE_PROFILES]
   const candidateStates = ['All India', ...Array.from(new Set(candidateProfiles.map(c => c.profile.state).filter(Boolean)))]
   const filteredCandidateProfiles = candidateProfiles.filter(c => {
     const p = c.profile
@@ -979,6 +1143,24 @@ export default function App() {
   })
   const canViewCandidateProfiles = isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
   const myAnonymousCandidatePreview: CandidateProfileView | null = currentUser?.role === 'seeker' ? { id: 'my-profile-preview', code: anonymousCandidateCode(currentUser.mobile), source: 'registered', profile: seekerProfileForm } : null
+
+  // When a full mobile is typed on the login screen, refresh that mobile's
+  // account state from Supabase so existing-account/blocker messages are current.
+  useEffect(() => {
+    if (!supabase || page !== 'auth' || !isValidMobile(normalizedAuthMobile)) return
+    if (authLookupMobileRef.current === normalizedAuthMobile) return
+    authLookupMobileRef.current = normalizedAuthMobile
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remoteAccounts = await fetchRemoteAccountsByMobile(normalizedAuthMobile)
+        if (!cancelled && remoteAccounts) mergeAccountsForMobileState(normalizedAuthMobile, remoteAccounts)
+      } catch {
+        // The submit action will show a connection message if lookup still fails.
+      }
+    })()
+    return () => { cancelled = true }
+  }, [normalizedAuthMobile, page])
 
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
@@ -1040,7 +1222,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
-      {/* TOP AD BANNER (AdMob Adaptive) — hidden for ad-free plans */}
+      {/* Sponsored banner — hidden for ad-free plans */}
       {page !== 'welcome' && page !== 'auth' && !isAdFree && (
       <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
@@ -1050,8 +1232,7 @@ export default function App() {
             <span className="font-semibold text-slate-600 sm:hidden">Mankind • 100+ HQs Hiring →</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="hidden text-[10px] font-medium text-slate-400 sm:inline">ca-app-pub-XXXX/XXXX • AdMob • Adaptive Banner</span>
-            <button onClick={() => navigate('android')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Get Android App</button>
+            <button onClick={() => navigate('pricing')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Go Ad-Free</button>
           </div>
         </div>
       </div>
@@ -1081,9 +1262,6 @@ export default function App() {
               <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
-              <button onClick={() => navigate('android')} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold hover:bg-emerald-600 ${page==='android'?'bg-slate-900 text-white':'bg-emerald-500 text-white'}`}>
-                <Smartphone className="h-4 w-4" /> Android App
-              </button>
               {isAdmin && (
               <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
                 <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length} pending</span>}
@@ -1110,9 +1288,6 @@ export default function App() {
                   <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
                 </div>
               )}
-              <button onClick={handleInstall} className="hidden items-center gap-2 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-sky-700 sm:inline-flex">
-                <Download className="h-4 w-4" /> Install PWA
-              </button>
               <button onClick={() => handleSecretTap()} title="M Divakar Reddy — Founder" className="relative shrink-0 select-none">
                 <img src="/divakar-reddy-circle-100.jpg" alt="Admin — M Divakar Reddy" className="h-10 w-10 aspect-square rounded-full object-cover object-center border-2 border-sky-600 shadow" />
                 {isAdmin && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
@@ -1204,7 +1379,6 @@ export default function App() {
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
-                    { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, page: 'android' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
                   ].filter(item => isAdmin || item.page !== 'admin').map(item => (
                     <button
@@ -1228,12 +1402,6 @@ export default function App() {
                 </div>
 
                 <div className="mt-4 grid gap-2">
-                  <button onClick={() => { setShowAndroidModal(true); setShowMobileMenu(false) }} className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white shadow hover:bg-emerald-600">
-                    <Smartphone className="h-5 w-5" /> Get Android App (Play Store)
-                  </button>
-                  <button onClick={() => { handleInstall(); setShowMobileMenu(false) }} className="flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-white shadow hover:bg-sky-700">
-                    <Download className="h-5 w-5" /> Install PWA
-                  </button>
                   <button onClick={() => navigate('jobs')} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
                     <Search className="h-4 w-4" /> Browse Jobs
                   </button>
@@ -1250,32 +1418,11 @@ export default function App() {
               <div className="border-t bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-500">© 2026 MR Vacancies Hub • Since 2026</span>
-                  <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">PWA • TWA Ready</span>
+                  <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">Verified Jobs</span>
                 </div>
               </div>
             </motion.div>
           </>
-        )}
-      </AnimatePresence>
-
-      {/* INSTALL BANNER */}
-      <AnimatePresence>
-        {showInstallBanner && page !== 'welcome' && page !== 'auth' && (
-          <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="mx-auto max-w-[1280px] px-4 pt-4">
-            <div className="flex flex-col gap-3 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-600 to-indigo-600 p-3 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sky-600"><Smartphone className="h-5 w-5" /></div>
-                <div>
-                  <p className="text-sm font-bold leading-tight">Install MR Vacancies Hub — Like a Native App</p>
-                  <p className="text-xs opacity-90">1-tap install • Offline access • Push alerts for new HQs • No Play Store needed</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={handleInstall} className="rounded-full bg-white px-4 py-2 text-sm font-bold text-sky-700">Install Now</button>
-                <button onClick={() => setShowInstallBanner(false)} className="rounded-full bg-white/20 p-2"><X className="h-4 w-4" /></button>
-              </div>
-            </div>
-          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1341,7 +1488,7 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Register once with mobile • Login with mobile only • No password</p>
+              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
             </div>
             <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
@@ -1358,7 +1505,7 @@ export default function App() {
                   <Briefcase className="h-7 w-7" />
                 </button>
                 <h1 className="mt-3 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Registered users login directly. New users register in the next step.' : 'Create your account once. Next time, login only with your mobile number.'}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
                 <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
               </div>
 
@@ -1398,13 +1545,13 @@ export default function App() {
                     <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? After entering your mobile, we will ask only your <b>name</b> and <b>correct email ID</b> to create your account.</p>
                   )}
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
                     <p className="text-sm font-extrabold text-sky-900">New {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account</p>
-                    <p className="text-[11px] font-medium text-sky-700">Register once — no password. Next time login with mobile only.</p>
+                    <p className="text-[11px] font-medium text-sky-700">Register once — no password. Stay logged in until you logout.</p>
                   </div>
                   {authRecruiterBlockAccount && (
                     <div className="mt-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
@@ -1435,7 +1582,7 @@ export default function App() {
                     </div>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : 'Register & Continue'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? 'Creating Account...' : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : 'Register & Continue'}</button>
                   <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError('') }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
                 </form>
               )}
@@ -1610,7 +1757,7 @@ export default function App() {
                   {seekerProfileError && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-600">{seekerProfileError}</p>}
 
                   <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-                    <button type="submit" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white hover:bg-sky-700"><Check className="h-4 w-4" /> Save Profile & Browse Jobs</button>
+                    <button type="submit" disabled={profileSaving} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><Check className="h-4 w-4" /> {profileSaving ? 'Saving Profile...' : 'Save Profile & Browse Jobs'}</button>
                     <button type="button" onClick={() => navigate('jobs')} className="rounded-full border px-6 py-3 text-sm font-bold">Browse Jobs</button>
                   </div>
                   <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">You can browse jobs, but Quick Apply and contact reveal unlock only after this required profile is saved.</p>
@@ -1709,7 +1856,7 @@ export default function App() {
               {[
                 { k: '50K+ MRs', v: 'Active jobseekers', icon: Users },
                 { k: '2,400+ Jobs', v: 'Verified & active', icon: BadgeCheck },
-                { k: '4.8★ Rating', v: 'Play Store (12k reviews)', icon: Star },
+                { k: '18K+ Placements', v: 'MR career support', icon: Star },
               ].map(s => (
                 <div key={s.k} className="rounded-2xl border bg-white p-4">
                   <s.icon className="h-5 w-5 text-sky-600" />
@@ -1777,15 +1924,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Play Store floating badge */}
-            <div className="absolute -bottom-4 -right-2 hidden rotate-2 rounded-2xl border bg-white px-4 py-3 shadow-xl sm:flex sm:items-center sm:gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-white"><Smartphone className="h-5 w-5" /></div>
-              <div>
-                <p className="text-xs font-bold">Also on Google Play</p>
-                <p className="text-[11px] text-slate-500">Android App • AdMob Ads Enabled</p>
-              </div>
-              <ChevronRight className="h-4 w-4 text-slate-400" />
-            </div>
           </div>
         </div>
 
@@ -2169,9 +2307,9 @@ export default function App() {
             {/* compliance / data safety bar */}
             <div className="mt-6 rounded-2xl border bg-white p-4">
               <div className="flex flex-wrap items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 font-bold text-emerald-700"><ShieldCheck className="h-4 w-4" /> Data Safety: Contacts masked • No spam • GDPR ready</span>
+                <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 font-bold text-emerald-700"><ShieldCheck className="h-4 w-4" /> Privacy Protected: Contacts masked • No spam</span>
                 <span className="flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1.5 font-bold text-sky-700"><BadgeCheck className="h-4 w-4" /> Verified by M Divakar Reddy • Manual screening</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1.5 font-semibold">Play Store: Content rating Everyone • Ads contain label</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1.5 font-semibold">Candidate name, mobile & email hidden from Recruiters</span>
               </div>
             </div>
           </div>
@@ -2204,7 +2342,7 @@ export default function App() {
                     <li key={f} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
                   ))}
                 </ul>
-                <button onClick={() => { if (t.id === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock') } else { setTier(t.id); setToast(`${t.name} activated! (Demo — no payment)`) } }} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
+                <button onClick={() => { if (t.id === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock') } else { setTier(t.id); setToast(`${t.name} plan selected`) } }} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
                   {tier === t.id ? '✓ Active' : t.cta}
                 </button>
               </div>
@@ -2218,15 +2356,10 @@ export default function App() {
 
           <div className="mt-6 grid gap-4 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3">
             <div className="flex gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" /><p className="text-sm leading-tight"><b>Why masked?</b> Prevents spam calls to recruiters. Free users prove intent by watching a short ad.</p></div>
-            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>AdMob Rewarded:</b> 15-sec video → 1 unlock for 24h. Starter ₹99/mo & Pro: ZERO ads at all.</p></div>
+            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>Sponsored video:</b> Watch 15 seconds → 1 unlock for 24h. Starter ₹99/mo & Pro: ZERO ads at all.</p></div>
             <div className="flex gap-3"><BadgeCheck className="h-5 w-5 shrink-0 text-violet-600" /><p className="text-sm leading-tight"><b>Verified only:</b> Every vacancy is manually checked by M Divakar Reddy before publish.</p></div>
           </div>
 
-          {/* interstitial trigger demo */}
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
-            <p className="font-bold">Monetization active: Banner (top + inline) • Native • Interstitial on Apply • Rewarded on Reveal</p>
-            <p className="text-xs text-slate-600">AdMob IDs are test IDs (ca-app-pub-3940256099942544). Replace with your production IDs before Play Store upload. All ads are compliant with Families/Ads policy — clearly labeled “AD”.</p>
-          </div>
         </div>
       </section>
       )}
@@ -2238,7 +2371,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white"><Sparkles className="h-5 w-5" /></div>
               <div>
-                <h3 className="text-lg font-extrabold">MR Vacancies AI — Gemini Powered</h3>
+                <h3 className="text-lg font-extrabold">MR Vacancies AI Assistant</h3>
                 <p className="text-xs font-semibold text-slate-500">Resume • Interview • RCPA • Detailing • Salary insights</p>
               </div>
               <span className="ml-auto rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">ONLINE</span>
@@ -2264,7 +2397,6 @@ export default function App() {
                 <button key={q} onClick={() => setAiInput(q)} className="rounded-full border bg-slate-50 px-3 py-1 text-xs font-semibold hover:bg-white">{q}</button>
               ))}
             </div>
-            <p className="mt-3 text-[11px] text-slate-400">Server uses <b>GEMINI_API_KEY</b> if set, otherwise mocked tips. Endpoint: <code>/api/gemini</code></p>
           </div>
 
           <div className="space-y-4">
@@ -2362,8 +2494,8 @@ export default function App() {
               <>
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">PROFILES SHOWN</p><p className="mt-1 text-2xl font-extrabold">{filteredCandidateProfiles.length}</p><p className="text-xs text-slate-500">After filters</p></div>
-                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">REGISTERED ON THIS DEVICE</p><p className="mt-1 text-2xl font-extrabold">{registeredCandidateProfiles.length}</p><p className="text-xs text-slate-500">Completed seeker profiles</p></div>
-                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">FRESHER PROFILES</p><p className="mt-1 text-2xl font-extrabold">{candidateProfiles.filter(c => c.profile.experienceType === 'fresher').length}</p><p className="text-xs text-slate-500">Includes sample preview profiles</p></div>
+                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">REGISTERED CANDIDATES</p><p className="mt-1 text-2xl font-extrabold">{registeredCandidateProfiles.length}</p><p className="text-xs text-slate-500">Completed seeker profiles</p></div>
+                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">FRESHER PROFILES</p><p className="mt-1 text-2xl font-extrabold">{candidateProfiles.filter(c => c.profile.experienceType === 'fresher').length}</p><p className="text-xs text-slate-500">Ready for Trainee & Field MR roles</p></div>
                 </div>
 
                 <div className="mt-4 grid gap-2 rounded-2xl border bg-white p-3 md:grid-cols-[1.3fr_0.8fr_0.8fr_0.8fr]">
@@ -2383,8 +2515,7 @@ export default function App() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Registered profiles update from Job Seeker accounts on this device</span>
-                  <span>•</span><span>Sample profiles are clearly labelled for preview</span>
+                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Only completed Job Seeker profiles are shown{!isSupabaseConfigured ? ' • Sample profiles are clearly labelled' : ''}</span>
                   <span>•</span><span>Contact only through Admin after candidate consent</span>
                 </div>
 
@@ -2431,7 +2562,7 @@ export default function App() {
             </div>
 
             <div className="rounded-2xl border bg-white p-6">
-              <h3 className="text-lg font-extrabold">Recruiter Dashboard (Preview)</h3>
+              <h3 className="text-lg font-extrabold">Recruiter Dashboard</h3>
               <p className="text-sm text-slate-500">For pharma companies & stockist managers. Post once, reach 50k+ MRs instantly.</p>
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-4 py-3">
@@ -2445,80 +2576,19 @@ export default function App() {
                 <div className="rounded-xl border p-4">
                   <div className="flex items-center justify-between"><p className="flex items-center gap-1.5 text-sm font-bold">Recent anonymous applicants <EyeOff className="h-3.5 w-3.5 text-slate-400" /></p><span className="text-xs text-slate-500">No names / contacts</span></div>
                   <div className="mt-3 space-y-2">
-                    {['Candidate MR-2026-1042 • B.Pharm • 2-4 yrs • Bengaluru', 'Candidate MR-2026-1011 • B.Pharm • Fresher • Hyderabad', 'Candidate MR-2026-1075 • D.Pharm • 1-2 yrs • Vijayawada'].map(a => (
-                      <div key={a} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-semibold"><div className="h-8 w-8 rounded-full bg-slate-200" /> {a} <span className="ml-auto text-sky-600">View</span></div>
+                    {!canViewCandidateProfiles ? (
+                      <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs font-semibold text-slate-500">Login as a registered Recruiter to view anonymous candidate profiles.</p>
+                    ) : candidateProfiles.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs font-semibold text-slate-500">No completed Job Seeker profiles yet.</p>
+                    ) : candidateProfiles.slice(0, 3).map(candidate => (
+                      <button key={candidate.id} onClick={() => document.getElementById('candidate-profiles')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex w-full items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-left text-xs font-semibold hover:bg-sky-50">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white"><User className="h-4 w-4" /></span>
+                        <span className="min-w-0 flex-1 truncate">Candidate {candidate.code} • {candidate.profile.qualification} • {candidate.profile.experienceType === 'fresher' ? 'Fresher' : candidate.profile.totalExperience} • {candidate.profile.city}</span>
+                        <span className="shrink-0 text-sky-600">View</span>
+                      </button>
                     ))}
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-      )}
-      {/* ANDROID PAGE */}
-      {page === 'android' && (
-      <section className="mx-auto max-w-[1280px] px-4 py-10">
-        <div className="rounded-3xl border bg-slate-900 p-6 text-white sm:p-8">
-          <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-            <div>
-              <span className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold tracking-widest">GOOGLE PLAY STORE READY</span>
-              <h2 className="mt-3 text-[26px] font-extrabold leading-tight">Your PWA is Android-ready. <span className="text-emerald-400">Upload to Play Store in 1 day.</span></h2>
-              <p className="mt-2 text-sm leading-relaxed opacity-80">Built as PWA + Trusted Web Activity (TWA). No separate native code needed. Includes AdMob, in-app purchases (subscriptions), and full Play Store compliance.</p>
-
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                {[
-                  { title: 'TWA / Bubblewrap Ready', desc: 'manifest + assetlinks + twa-manifest.json generated. Build AAB with: npx @bubblewrap/cli build', icon: Smartphone },
-                  { title: 'AdMob Integrated', desc: 'Banner, Interstitial, Native, Rewarded. Test IDs included — replace with your ca-app-pub-IDs.', icon: Megaphone },
-                  { title: 'Play Billing Ready', desc: 'Subscription tiers mapped to Google Play Billing. Free → Starter → Pro. Recruiters register and post free.', icon: BadgeIndianRupee },
-                  { title: 'Compliant & Safe', desc: 'Privacy Policy, Data Safety, Kids/Ads disclosure, content rating Everyone, GDPR consent.', icon: ShieldCheck },
-                ].map(f => (
-                  <div key={f.title} className="rounded-2xl bg-white/10 p-4">
-                    <f.icon className="h-5 w-5 text-emerald-400" />
-                    <p className="mt-2 text-sm font-bold">{f.title}</p>
-                    <p className="mt-1 text-xs leading-relaxed opacity-80">{f.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-6 flex flex-wrap gap-3">
-                <button onClick={() => setShowAndroidModal(true)} className="rounded-full bg-emerald-500 px-6 py-3 text-sm font-bold text-white hover:bg-emerald-600">View Play Store Assets →</button>
-                <button onClick={() => navigate('jobs')} className="rounded-full bg-white px-6 py-3 text-sm font-bold text-slate-900">Preview App</button>
-              </div>
-
-              <div className="mt-6 rounded-2xl bg-white/10 p-4">
-                <p className="text-xs font-bold tracking-widest opacity-70">PLAY STORE LISTING (COPY-READY)</p>
-                <p className="mt-2 text-sm font-bold">Title: MR Vacancies Hub - Pharma MR Jobs</p>
-                <p className="mt-1 text-xs leading-relaxed opacity-80">Short desc (80 chars): Verified Medical Representative vacancies across India. Daily updates.</p>
-                <p className="mt-1 text-xs leading-relaxed opacity-80">Full desc: India’s most trusted hub for Pharma MR jobs. Verified vacancies from Sun, Cipla, Mankind, Zydus, Alkem, Torrent, Lupin, Abbott, Glenmark & 100+ companies. Founded & managed by M Divakar Reddy (9+ years pharma experience). Features: masked contacts (anti-spam), subscription unlocks, AI resume & interview prep, WhatsApp apply, PWA offline mode. 50K+ MRs, 2400+ verified jobs.</p>
-                <p className="mt-2 text-[11px] opacity-60">Category: Business • Content rating: Everyone • Data Safety: collected: contact, app activity; encrypted; no sharing • Ads: yes</p>
-              </div>
-            </div>
-
-            {/* phone mockup */}
-            <div className="flex flex-col items-center">
-              <div className="relative mx-auto w-[280px] rounded-[36px] border-[8px] border-slate-800 bg-slate-800 p-2 shadow-2xl">
-                <div className="rounded-[24px] bg-[#f0f7ff] p-3">
-                  <div className="flex items-center justify-between text-[11px] font-bold"><span>9:41</span><span className="flex items-center gap-1"><span className="h-2 w-6 rounded bg-slate-900" /><span className="h-3 w-3 rounded-full border-2 border-slate-900" /></span></div>
-                  <div className="mt-2 flex items-center gap-2 rounded-xl bg-sky-600 px-3 py-2 text-white"><Briefcase className="h-4 w-4" /><p className="text-xs font-bold">MR Vacancies Hub</p><span className="ml-auto rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-sky-600">VERIFIED</span></div>
-                  <div className="mt-3 space-y-2">
-                    <div className="rounded-xl bg-white p-2.5 shadow"><p className="text-xs font-bold">Sun Pharma • MR • Hyderabad</p><p className="text-[11px] text-slate-500">₹4.2-5.5 LPA • 1-4 yrs • Verified</p><div className="mt-2 rounded-lg bg-sky-50 px-2 py-1 text-center text-[11px] font-bold text-sky-700">Watch Ad to Reveal Contact</div></div>
-                    <div className="rounded-xl bg-amber-400 p-2 text-center text-[11px] font-bold">AD • AdMob Banner • Pharma Course</div>
-                    <div className="rounded-xl bg-white p-2.5 shadow"><p className="text-xs font-bold">Cipla • Trainee MR • Bengaluru</p><p className="text-[11px] text-slate-500">Fresher • Training at Cipla Academy</p></div>
-                    <div className="flex gap-2"><span className="flex-1 rounded-full bg-sky-600 py-2 text-center text-xs font-bold text-white">Quick Apply</span><span className="rounded-full border bg-white px-3 py-2 text-xs font-bold">Save</span></div>
-                  </div>
-                  <div className="mt-3 rounded-xl bg-slate-900 py-2 text-center text-[11px] font-bold text-white">Bottom Nav • Home • Saved • AI • Profile</div>
-                </div>
-                <div className="absolute inset-x-0 -bottom-3 mx-auto h-1 w-24 rounded-full bg-slate-600" />
-              </div>
-              <div className="mt-6 w-full rounded-2xl bg-white p-4 text-slate-900">
-                <p className="text-sm font-extrabold">Ads Running Live (Demo)</p>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-xl bg-amber-50 p-2"><p className="font-bold">Banner</p><p className="text-slate-500">Top + Inline</p></div>
-                  <div className="rounded-xl bg-violet-50 p-2"><p className="font-bold">Interstitial</p><p className="text-slate-500">On Apply</p></div>
-                  <div className="rounded-xl bg-emerald-50 p-2"><p className="font-bold">Rewarded</p><p className="text-slate-500">On Reveal</p></div>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-500">eCPM estimate India: Banner ₹15-35, Interstitial ₹45-90, Rewarded ₹90-180. Fill rate &gt;95% with AdMob.</p>
               </div>
             </div>
           </div>
@@ -2534,7 +2604,7 @@ export default function App() {
               { q: 'Is this free? Why masked contacts?', a: 'Yes, Free forever. Phone/email is masked to protect recruiters from spam. Watch a short ad to unlock 1 contact/day, or subscribe for ad-free unlocks.' },
               { q: 'How is this verified?', a: 'Every vacancy is manually checked by M Divakar Reddy: company GST, recruiter ID, HQ & CTC confirmation. Unverified posts are never published.' },
               { q: 'Can I upload my resume?', a: 'Yes — AI assistant helps build a 1-page MR resume (B.Pharm/B.Sc focused) and auto-attaches on Quick Apply (Pro feature).' },
-              { q: 'How do I get the Android App?', a: 'Install PWA now (1-tap). For Play Store: we provide TWA wrapper — build AAB via Bubblewrap and upload to Play Console. See Android modal.' },
+              { q: 'Will I stay logged in?', a: 'Yes. After login, the app opens directly to your account until you logout. After logout, enter your mobile number: existing accounts open directly, and new users are asked for name and email.' },
             ].map(f => (
               <div key={f.q} className="rounded-xl bg-slate-50 p-4">
                 <p className="text-sm font-bold">{f.q}</p>
@@ -2682,7 +2752,7 @@ export default function App() {
                 {storedAdminPassword() === DEFAULT_ADMIN_PASSWORD && (
                   <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-slate-700">
                     <p className="font-extrabold">First-time login (default)</p>
-                    <p>Admin ID: <b>divakar</b> &nbsp;•&nbsp; Password: <b>Divakar@2026</b></p>
+                    <p>Use your private Admin ID and password.</p>
                     <p className="text-slate-500">After login, change it in Dashboard → Settings.</p>
                   </div>
                 )}
@@ -2694,7 +2764,7 @@ export default function App() {
                   <li><b>2.</b> Enter Admin ID <b>divakar</b> and your password</li>
                   <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
                 </ol>
-                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters use their own mobile-number account login (no password). These demo logins work on this device/browser; a real backend (Firebase/Supabase) is needed before Play Store launch.</p>
+                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters stay logged in until logout; after logout they login with their mobile number.</p>
               </div>
             </div>
           ) : (
@@ -2745,7 +2815,7 @@ export default function App() {
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Live Vacancies</p><p className="mt-1 text-3xl font-extrabold">{jobs.length}</p><p className="text-xs font-semibold text-emerald-600">Showing on Jobs page</p></div>
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Companies</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.company))).length}</p><p className="text-xs font-semibold text-sky-600">Pharma companies</p></div>
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Cities / HQs</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.hq))).length}</p><p className="text-xs font-semibold text-sky-600">{Array.from(new Set(jobs.map(j => j.state))).length} states covered</p></div>
-                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Applications</p><p className="mt-1 text-3xl font-extrabold">{applied.size}</p><p className="text-xs font-semibold text-slate-500">On this device (demo)</p></div>
+                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Applications</p><p className="mt-1 text-3xl font-extrabold">{applied.size}</p><p className="text-xs font-semibold text-slate-500">Current session</p></div>
                   </div>
                   <div className="mt-4 rounded-2xl border bg-white p-5">
                     <p className="text-sm font-extrabold">👑 Your Admin Powers (active now)</p>
@@ -2848,7 +2918,7 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Demo note: submissions are stored on this device/browser only. With a backend (Firebase/Supabase), recruiter submissions from any phone will reach this Approvals list.</p>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Review every recruiter submission carefully before approval.</p>
                 </div>
               )}
 
@@ -2905,7 +2975,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Demo note: requests and accounts are stored on this device/browser only. With a backend, requests from every Job Seeker phone will reach this Admin list.</p>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Approve deletion only when the Job Seeker has given a proper reason.</p>
                 </div>
               )}
 
@@ -2955,7 +3025,7 @@ export default function App() {
                       <button onClick={handleResetJobs} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><RotateCcw className="h-3.5 w-3.5" /> Reset Vacancies</button>
                       <button onClick={handleAdminLogout} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
-                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Note: This is a front-end demo lock — login state and vacancies you post are saved only on this device/browser. Before the Play Store launch, connect a real backend (Firebase/Supabase Auth + database) so only Divakar Reddy can login from any device and vacancies are visible to all users.</p>
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly.</p>
                   </div>
                 </div>
               )}
@@ -2971,11 +3041,7 @@ export default function App() {
           <div className="grid gap-8 md:grid-cols-4">
             <div>
               <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR Vacancies Hub</p></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">India’s trusted PWA for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.</p>
-              <div className="mt-4 flex gap-2">
-                <a className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900" href="#"> <Download className="mr-1 inline h-3 w-3" /> Get on Google Play</a>
-                <a className="rounded-full border border-white/20 px-4 py-2 text-xs font-bold" href="#" onClick={e => { e.preventDefault(); handleInstall() }}>Install PWA</a>
-              </div>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">India’s trusted job app for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.</p>
             </div>
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
@@ -2990,9 +3056,9 @@ export default function App() {
             <div>
               <p className="text-sm font-bold text-white">Legal & Support</p>
               <ul className="mt-3 space-y-2 text-sm opacity-80">
-                <li><a href="#privacy" onClick={e => { e.preventDefault(); setShowAndroidModal(true) }}>Privacy Policy</a></li>
-                <li><a href="#terms" onClick={e => { e.preventDefault(); setShowAndroidModal(true) }}>Terms & Data Safety</a></li>
-                <li><a href="#ads" onClick={e => { e.preventDefault(); setShowAndroidModal(true) }}>Ad Policy (AdMob)</a></li>
+                <li><a href="/privacy-policy.html" target="_blank" rel="noreferrer" className="hover:text-white">Privacy Policy</a></li>
+                <li><a href="/privacy-policy.html" target="_blank" rel="noreferrer" className="hover:text-white">Terms & Privacy</a></li>
+                <li><a href="mailto:support@mrvacancieshub.in" className="hover:text-white">Contact Support</a></li>
                 <li>Support: support@mrvacancieshub.in</li>
               </ul>
             </div>
@@ -3003,9 +3069,9 @@ export default function App() {
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
               <p className="mt-3 text-xs opacity-80">© 2026 MR Vacancies Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
-                <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">PWA</span>
-                <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">TWA Ready</span>
-                <span className="rounded-full bg-amber-400 px-2.5 py-1 font-bold text-slate-900">AdMob</span>
+                <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">Verified Jobs</span>
+                <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">Since 2026</span>
+                <span className="rounded-full bg-amber-400 px-2.5 py-1 font-bold text-slate-900">Privacy Protected</span>
               </div>
             </div>
           </div>
@@ -3075,7 +3141,7 @@ export default function App() {
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white">
               <div className="bg-slate-900 p-4 text-white">
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-bold"><TvMinimalPlay className="h-4 w-4 text-amber-400" /> Rewarded Ad • AdMob</p>
+                  <p className="flex items-center gap-2 text-sm font-bold"><TvMinimalPlay className="h-4 w-4 text-amber-400" /> Sponsored Video</p>
                   <button onClick={() => { setShowRewarded(null); setRewardProgress(0) }} className="rounded-full bg-white/20 p-1"><X className="h-4 w-4" /></button>
                 </div>
                 <p className="mt-1 text-xs opacity-80">Watch to unlock <b>{showRewarded.company}</b> contact for 24h. No payment — ad supports free access.</p>
@@ -3093,7 +3159,6 @@ export default function App() {
                     <div className="mt-4 h-2 w-full rounded-full bg-white/20">
                       <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${rewardProgress}%` }} />
                     </div>
-                    <p className="mt-2 text-[11px] opacity-70">ca-app-pub-3940256099942544/5224354917 • Rewarded Video</p>
                   </div>
                 </div>
                 {rewardProgress < 100 ? (
@@ -3118,115 +3183,16 @@ export default function App() {
         {showInterstitial && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
             <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} className="w-full max-w-[360px] rounded-2xl bg-white p-6 text-center">
-              <p className="rounded-full bg-amber-400 px-3 py-1 text-xs font-bold inline-flex">AD • INTERSTITIAL</p>
+              <p className="rounded-full bg-amber-400 px-3 py-1 text-xs font-bold inline-flex">SPONSORED</p>
               <div className="mt-4 rounded-xl bg-gradient-to-br from-sky-600 to-indigo-600 p-6 text-white">
                 <Smartphone className="mx-auto h-8 w-8" />
                 <p className="mt-2 text-sm font-bold">MedDetail Pro — E-Detailing for MRs</p>
                 <p className="text-xs opacity-90">Create visual aids in 30 seconds</p>
-                <span className="mt-3 inline-block rounded-full bg-white px-4 py-1.5 text-xs font-bold text-slate-900">Install</span>
+                <span className="mt-3 inline-block rounded-full bg-white px-4 py-1.5 text-xs font-bold text-slate-900">Learn More</span>
               </div>
               <p className="mt-4 text-sm font-bold">Submitting your application…</p>
               <p className="text-xs text-slate-500">Ad will close automatically</p>
               <div className="mx-auto mt-3 h-1 w-24 rounded-full bg-slate-200 overflow-hidden"><div className="h-1 w-full animate-[shimmer_1.2s_ease-in-out_infinite] bg-sky-500" /></div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ANDROID / PLAY STORE MODAL */}
-      <AnimatePresence>
-        {showAndroidModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowAndroidModal(false)}>
-            <motion.div initial={{ y: 16, scale: 0.98 }} animate={{ y: 0, scale: 1 }} exit={{ y: 16, scale: 0.98 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[860px] overflow-auto rounded-2xl bg-white">
-              <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
-                <div>
-                  <p className="text-lg font-extrabold">Android — Play Store Upload Kit</p>
-                  <p className="text-xs text-slate-500">TWA + AdMob + Play Billing • Ready to build AAB and publish</p>
-                </div>
-                <button onClick={() => setShowAndroidModal(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
-              </div>
-              <div className="grid gap-6 p-6 lg:grid-cols-2">
-                <div className="space-y-4">
-                  <div className="rounded-xl border bg-slate-50 p-4">
-                    <p className="text-sm font-extrabold">1. PWA is already production-ready</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-relaxed text-slate-600">
-                      <li><b>manifest.json</b> with icons, theme #0284c7, display standalone, categories business</li>
-                      <li><b>Service Worker</b> via vite-plugin-pwa (Workbox) — offline cache</li>
-                      <li>Installable on Android Chrome → Add to Home Screen</li>
-                      <li>Already handles <code>beforeinstallprompt</code> and fallback instructions</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-xl border bg-sky-50 p-4">
-                    <p className="text-sm font-extrabold">2. Wrap as TWA for Play Store (Bubblewrap)</p>
-                    <pre className="mt-2 overflow-auto rounded bg-slate-900 p-3 text-xs text-emerald-300">{`npm i -g @bubblewrap/cli
-bubblewrap init --manifest https://yourdomain.com/manifest.json
-# answer: appId com.mrvacancieshub.app, enable Play Billing
-bubblewrap build   # generates app-release.aab
-# upload app-release.aab to Play Console`}</pre>
-                    <p className="mt-2 text-xs text-slate-600">TWA config generated in <code>/public/twa-manifest.json</code> + <code>assetlinks.json</code> for Digital Asset Links.</p>
-                  </div>
-                  <div className="rounded-xl border bg-amber-50 p-4">
-                    <p className="text-sm font-extrabold">3. AdMob Setup (Replace Test IDs)</p>
-                    <pre className="mt-2 overflow-auto rounded bg-slate-900 p-3 text-xs text-amber-200">{`Banner:          ca-app-pub-3940256099942544/6300978111
-Interstitial:    ca-app-pub-3940256099942544/1033173712
-Rewarded:        ca-app-pub-3940256099942544/5224354917
-Native:          ca-app-pub-3940256099942544/2247696110
-App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
-                    <p className="mt-2 text-xs text-slate-600">In Android Studio → <code>AndroidManifest.xml</code> add <code>com.google.android.gms.ads.APPLICATION_ID</code>. Monetization code in app is already labeled “AD” and GDPR-compliant.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="rounded-xl border bg-emerald-50 p-4">
-                    <p className="text-sm font-extrabold">Play Console Checklist</p>
-                    <ul className="mt-2 space-y-1.5 text-xs">
-                      {[
-                        'App name: MR Vacancies Hub - Pharma MR Jobs (30 chars)',
-                        'Package: com.mrvacancieshub.app',
-                        'Category: Business, Content rating: Everyone (questionnaire: no gambling/violence)',
-                        'Data Safety: declare contact, app activity, ads; encryption yes; data deletion via email',
-                        'Ads declaration: Yes, contains ads (AdMob)',
-                        'In-app purchases: Subscription tiers mapped to Play Billing (₹99, ₹499, ₹999 monthly)',
-                        'Privacy Policy URL: https://yourdomain.com/privacy-policy.html (generated)',
-                        'Screenshots: 1080×1920, feature graphic 1024×500, icon 512×512 (icon.svg ready)',
-                        'Assetlinks: https://yourdomain.com/.well-known/assetlinks.json (generated)',
-                      ].map(li => <li key={li} className="flex gap-2"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" /><span>{li}</span></li>)}
-                    </ul>
-                  </div>
-                  <div className="rounded-xl border bg-white p-4">
-                    <p className="text-sm font-extrabold">Privacy Policy & Assetlinks Preview</p>
-                    <div className="mt-2 rounded border bg-slate-50 p-3 text-xs">
-                      <p className="font-bold">/.well-known/assetlinks.json</p>
-                      <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all text-[11px]">{`[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "com.mrvacancieshub.app",
-    "sha256_cert_fingerprints": ["REPLACE_WITH_YOUR_SHA256"]
-  }
-}]`}</pre>
-                      <p className="mt-3 font-bold">twa-manifest.json</p>
-                      <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all text-[11px]">{`{
-  "packageId": "com.mrvacancieshub.app",
-  "host": "yourdomain.com",
-  "name": "MR Vacancies Hub",
-  "themeColor": "#0284c7",
-  "backgroundColor": "#f0f7ff",
-  "enableNotifications": true,
-  "features": { "playBilling": { "enabled": true } }
-}`}</pre>
-                      <div className="mt-3 flex gap-2">
-                        <button onClick={() => { navigator.clipboard.writeText(window.location.origin); setToast('Domain copied — use for assetlinks host') }} className="rounded-full border bg-white px-3 py-1 text-xs font-bold">Copy Domain</button>
-                        <button onClick={() => setToast('Privacy Policy file at /privacy-policy.html — ready for Play Console URL')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">View Privacy Policy</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setShowAndroidModal(false)} className="flex-1 rounded-full bg-slate-900 py-3 text-sm font-bold text-white">Got it — Build AAB</button>
-                    <button onClick={() => { setShowAndroidModal(false); navigate('pricing') }} className="rounded-full border bg-white px-6 py-3 text-sm font-bold">See Monetization</button>
-                  </div>
-                </div>
-              </div>
             </motion.div>
           </motion.div>
         )}
@@ -3240,7 +3206,7 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
                   <p className="text-lg font-extrabold">Subscription Plans — MR Vacancies Hub</p>
-                  <p className="text-xs text-slate-500">Choose ad-supported Free or go ad-free with Starter/Pro. All payments demo — no charge in preview.</p>
+                  <p className="text-xs text-slate-500">Choose the Free plan with ads or go ad-free with Starter/Pro.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
               </div>
@@ -3252,13 +3218,13 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
                     <ul className="mt-3 space-y-1.5">
                       {t.features.map(f => <li key={f} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
                     </ul>
-                    <button onClick={() => { setTier(t.id); setShowPricing(false); setToast(`${t.name} activated (Demo)`) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
+                    <button onClick={() => { setTier(t.id); setShowPricing(false); setToast(`${t.name} plan selected`) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
                   </div>
                 ))}
               </div>
               <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                <p><b>Ads:</b> Free uses AdMob Rewarded (watch ad = 1 unlock). Banner & Interstitial are skippable and never block apply flow. Starter/Pro are ad-free (Play Store: declare “Contains ads” only for Free).</p>
-                <p className="mt-1"><b>Billing:</b> On Play Store, these map to Google Play Billing subscriptions. Web PWA uses UPI/Stripe — demo here.</p>
+                <p><b>Free plan:</b> Watch a short sponsored video to unlock a recruiter contact.</p>
+                <p className="mt-1"><b>Starter & Pro:</b> No ads and faster contact unlocks.</p>
               </div>
             </motion.div>
           </motion.div>
@@ -3376,9 +3342,15 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
           <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
             <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
           </button>
-          <button onClick={() => navigate('android')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='android'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-            <Smartphone className={`h-5 w-5 ${page==='android'?'text-white':'text-emerald-600'}`} /><span className={`text-[11px] font-bold ${page==='android'?'text-white':''}`}>Android</span>
-          </button>
+          {currentUser?.role === 'seeker' && hasAuthenticated ? (
+            <button onClick={openSeekerProfile} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <User className={`h-5 w-5 ${page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='profile'?'text-white':''}`}>Profile</span>
+            </button>
+          ) : (
+            <button onClick={() => navigate('recruiters')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='recruiters'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <Building2 className={`h-5 w-5 ${page==='recruiters'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='recruiters'?'text-white':''}`}>Recruiters</span>
+            </button>
+          )}
         </div>
       </div>
       <div className="h-[72px] lg:hidden" />
