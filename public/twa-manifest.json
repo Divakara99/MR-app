@@ -1,0 +1,24 @@
+{
+  "packageId": "com.mrvacancieshub.app",
+  "host": "mrvacancieshub.in",
+  "name": "MR Vacancies Hub",
+  "launcherName": "MR Vacancies Hub",
+  "display": "standalone",
+  "themeColor": "#0284c7",
+  "navigationColor": "#0284c7",
+  "backgroundColor": "#f0f7ff",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://mrvacancieshub.in/icon-512.png",
+  "maskableIconUrl": "https://mrvacancieshub.in/icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": { "path": "./android.keystore", "alias": "android" },
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "features": {
+    "playBilling": { "enabled": true },
+    "locationDelegation": { "enabled": true }
+  },
+  "shortcuts": [],
+  "generatorApp": "bubblewrap"
+}
