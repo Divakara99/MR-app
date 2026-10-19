@@ -12,7 +12,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 
 // TYPES
-type Tier = 'free' | 'starter' | 'pro' | 'recruiter'
+type Tier = 'free' | 'starter' | 'pro'
 type Job = {
   id: string
   company: string
@@ -40,7 +40,32 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string }
 type EntryRole = 'seeker' | 'recruiter'
-type Account = { role: EntryRole; name: string; mobile: string; email: string; createdAt: string }
+type SeekerProfile = {
+  experienceType: 'fresher' | 'experienced'
+  desiredRole: string
+  qualification: string
+  passingYear: string
+  totalExperience: string
+  currentCompany: string
+  currentRole: string
+  currentPackage: string
+  expectedPackage: string
+  state: string
+  city: string
+  currentHq: string
+  preferredHq: string
+  noticePeriod: string
+  twoWheeler: string
+  skills: string
+  updatedAt?: string
+}
+type CandidateProfileView = {
+  id: string
+  code: string
+  source: 'registered' | 'sample'
+  profile: SeekerProfile
+}
+type Account = { role: EntryRole; name: string; mobile: string; email: string; createdAt: string; profile?: SeekerProfile }
 type AccountDeletionRequest = {
   id: string
   name: string
@@ -90,7 +115,6 @@ const TIERS = [
   { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['View 3 contacts/day (15-sec ad to unlock)', 'Blurred phone & email', 'Apply to jobs', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3/day' },
   { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — ZERO ads', 'No 15-sec ad videos — instant unlock', 'Unmasked phone + email', 'WhatsApp Apply button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
   { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited contacts (Ad-free)', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips', 'Early access 2hrs before free'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
-  { id: 'recruiter' as Tier, name: 'Recruiter', price: '₹1,999', period: '/month', color: 'amber', icon: Building2, features: ['Post vacancies (Admin approval before live)', 'Access 50k+ MR database', 'Verified badge & top rank', 'Applicant tracking dashboard', 'Managed by M Divakar Reddy'], cta: 'Post Jobs', popular: false, limit: 'Unlimited posts' },
 ]
 
 // Helpers
@@ -115,6 +139,61 @@ const DELETION_REASON_OPTIONS = [
   'I created this account by mistake',
   'Privacy / personal reasons',
   'Other proper reason',
+]
+const CANDIDATE_INTERESTS_KEY = 'mr-candidate-interests-v1'
+const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
+const SEEKER_EXPERIENCE_OPTIONS = ['0-6 months', '6 months - 1 year', '1-2 years', '2-4 years', '4-7 years', '7+ years']
+const EMPTY_SEEKER_PROFILE: SeekerProfile = {
+  experienceType: 'fresher',
+  desiredRole: 'Trainee MR',
+  qualification: '',
+  passingYear: '',
+  totalExperience: '',
+  currentCompany: '',
+  currentRole: '',
+  currentPackage: '',
+  expectedPackage: '',
+  state: '',
+  city: '',
+  currentHq: '',
+  preferredHq: '',
+  noticePeriod: '',
+  twoWheeler: '',
+  skills: '',
+}
+const seekerProfileRequiredValues = (profile?: SeekerProfile): string[] => {
+  if (!profile) return ['']
+  const common = [profile.experienceType, profile.desiredRole, profile.qualification, profile.expectedPackage, profile.state, profile.city, profile.currentHq, profile.noticePeriod, profile.twoWheeler]
+  return profile.experienceType === 'fresher'
+    ? [...common, profile.passingYear]
+    : [...common, profile.totalExperience, profile.currentCompany, profile.currentRole, profile.currentPackage]
+}
+const isSeekerProfileComplete = (profile?: SeekerProfile) => {
+  if (!profile) return false
+  if (!seekerProfileRequiredValues(profile).every(v => v.trim().length > 0)) return false
+  if (profile.experienceType === 'fresher') {
+    const year = Number(profile.passingYear)
+    return /^\d{4}$/.test(profile.passingYear.trim()) && year >= 1990 && year <= 2026 && (profile.desiredRole === 'Trainee MR' || profile.desiredRole === 'Field MR')
+  }
+  return true
+}
+const seekerProfileProgress = (profile?: SeekerProfile) => {
+  const values = seekerProfileRequiredValues(profile)
+  if (!values.length) return 0
+  return Math.round((values.filter(v => v.trim().length > 0).length / values.length) * 100)
+}
+const anonymousCandidateCode = (mobile: string) => {
+  let hash = 0
+  for (let i = 0; i < mobile.length; i++) hash = ((hash << 5) - hash + mobile.charCodeAt(i)) | 0
+  return `MR-2026-${1000 + (Math.abs(hash) % 9000)}`
+}
+const SAMPLE_CANDIDATE_PROFILES: CandidateProfileView[] = [
+  { id: 'sample-mr-2026-1011', code: 'MR-2026-1011', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Trainee MR', qualification: 'B.Pharm', passingYear: '2026', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹3.0 - 3.6 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Ameerpet', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Communication, Product Knowledge, MS Excel' } },
+  { id: 'sample-mr-2026-1042', code: 'MR-2026-1042', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '2-4 years', currentCompany: 'Sun Pharma', currentRole: 'Field MR', currentPackage: '₹4.8 LPA', expectedPackage: '₹5.5 - 6.0 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Jayanagar', preferredHq: 'Bengaluru', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'RCPA, Doctor Calling, Stockist Handling' } },
+  { id: 'sample-mr-2026-1075', code: 'MR-2026-1075', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'D.Pharm', passingYear: '', totalExperience: '1-2 years', currentCompany: 'Mankind Pharma', currentRole: 'Field MR', currentPackage: '₹3.9 LPA', expectedPackage: '₹4.5 LPA', state: 'Andhra Pradesh', city: 'Vijayawada', currentHq: 'Vijayawada', preferredHq: 'Vijayawada / Guntur', noticePeriod: '15 days', twoWheeler: 'Yes', skills: 'Chemist Relations, Local HQ Knowledge, Order Booking' } },
+  { id: 'sample-mr-2026-1108', code: 'MR-2026-1108', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Field MR', qualification: 'B.Sc', passingYear: '2025', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹2.8 - 3.4 LPA', state: 'Maharashtra', city: 'Pune', currentHq: 'Pune - Kothrud', preferredHq: 'Pune', noticePeriod: 'Immediate', twoWheeler: 'Will arrange', skills: 'Communication, Field Work, Hindi / Marathi / English' } },
+  { id: 'sample-mr-2026-1136', code: 'MR-2026-1136', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ASM', qualification: 'B.Sc + MBA', passingYear: '', totalExperience: '4-7 years', currentCompany: "Dr. Reddy's", currentRole: 'Field MR', currentPackage: '₹6.8 LPA', expectedPackage: '₹8.0 - 9.0 LPA', state: 'Tamil Nadu', city: 'Chennai', currentHq: 'Chennai - T Nagar', preferredHq: 'Chennai', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'Team Handling, KOL Management, Sales Planning' } },
+  { id: 'sample-mr-2026-1164', code: 'MR-2026-1164', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '6 months - 1 year', currentCompany: 'Cipla Ltd', currentRole: 'Trainee MR', currentPackage: '₹3.2 LPA', expectedPackage: '₹3.8 - 4.2 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Kukatpally', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Product Detailing, Sampling, SFA Reporting' } },
 ]
 const normalizeMobile = (value: string) => {
   const digits = value.replace(/\D/g, '')
@@ -220,7 +299,7 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('welcome')
+  const [page, setPage] = useState<'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob' | 'profile'>('welcome')
   const [entryRole, setEntryRole] = useState<EntryRole | null>(null)
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
@@ -266,8 +345,22 @@ export default function App() {
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
   const [deletionRequestForm, setDeletionRequestForm] = useState({ category: '', details: '' })
   const [deletionRequestError, setDeletionRequestError] = useState('')
+  const [seekerProfileForm, setSeekerProfileForm] = useState<SeekerProfile>(() => loadSessionAccount()?.profile ?? EMPTY_SEEKER_PROFILE)
+  const [seekerProfileError, setSeekerProfileError] = useState('')
+  const [candidateSearch, setCandidateSearch] = useState('')
+  const [candidateRoleFilter, setCandidateRoleFilter] = useState('All Roles')
+  const [candidateExperienceFilter, setCandidateExperienceFilter] = useState('All Candidates')
+  const [candidateStateFilter, setCandidateStateFilter] = useState('All India')
+  const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => {
+    try { const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return new Set(parsed as string[]) } } catch { /* ignore */ }
+    return new Set<string>()
+  })
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
+  useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
+  useEffect(() => {
+    if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+  }, [currentUser])
   useEffect(() => {
     if (currentUser?.role === 'recruiter') {
       setRecruiterJob(prev => ({ ...prev, contactPerson: currentUser.name, phone: `+91 ${currentUser.mobile}`, email: currentUser.email }))
@@ -277,7 +370,7 @@ export default function App() {
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
 
-  const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999, recruiter: 9999 }
+  const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999 }
   const isAdFree = isAdmin || tier !== 'free' // ₹99+ plans & Admin: ZERO ads (no banner / rewarded / interstitial)
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
@@ -373,6 +466,13 @@ export default function App() {
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role: account.role, mobile: account.mobile })) } catch { /* ignore */ }
     setAuthError('')
     setAuthStep('mobile')
+    if (account.role === 'seeker' && !isSeekerProfileComplete(account.profile)) {
+      setSeekerProfileForm(account.profile ?? EMPTY_SEEKER_PROFILE)
+      setSeekerProfileError('')
+      setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
+      navigate('profile')
+      return
+    }
     setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! Logged in with mobile number ✅`)
     navigate(destinationForRole(account.role))
   }
@@ -426,6 +526,92 @@ export default function App() {
     try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
     completeUserAuth(account, true)
   }
+  const openSeekerProfile = () => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setSeekerProfileError('')
+    setShowMobileMenu(false)
+    navigate('profile')
+  }
+  const updateSeekerProfileField = (field: keyof SeekerProfile, value: string) => {
+    setSeekerProfileForm(prev => {
+      const next = { ...prev, [field]: value } as SeekerProfile
+      if (field === 'experienceType' && value === 'fresher' && (next.desiredRole === 'ASM' || next.desiredRole === 'RSM')) next.desiredRole = 'Trainee MR'
+      return next
+    })
+    setSeekerProfileError('')
+  }
+  const requireCompletedSeekerProfile = () => {
+    if (isAdmin) return true
+    if (currentUser?.role === 'seeker' && !isSeekerProfileComplete(currentUser.profile)) {
+      setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+      setSeekerProfileError('')
+      setToast('Complete your required Job Seeker profile before applying or revealing recruiter contacts.')
+      navigate('profile')
+      return false
+    }
+    return true
+  }
+  const handleSaveSeekerProfile = () => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    const clean = (value: string) => value.trim().replace(/\s+/g, ' ')
+    const profile: SeekerProfile = {
+      ...seekerProfileForm,
+      desiredRole: clean(seekerProfileForm.desiredRole),
+      qualification: clean(seekerProfileForm.qualification),
+      passingYear: clean(seekerProfileForm.passingYear),
+      totalExperience: clean(seekerProfileForm.totalExperience),
+      currentCompany: clean(seekerProfileForm.currentCompany),
+      currentRole: clean(seekerProfileForm.currentRole),
+      currentPackage: clean(seekerProfileForm.currentPackage),
+      expectedPackage: clean(seekerProfileForm.expectedPackage),
+      state: clean(seekerProfileForm.state),
+      city: clean(seekerProfileForm.city),
+      currentHq: clean(seekerProfileForm.currentHq),
+      preferredHq: clean(seekerProfileForm.preferredHq),
+      noticePeriod: clean(seekerProfileForm.noticePeriod),
+      twoWheeler: clean(seekerProfileForm.twoWheeler),
+      skills: clean(seekerProfileForm.skills),
+      updatedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+    }
+    if (!profile.qualification) { setSeekerProfileError('Please select your qualification.'); return }
+    if (!profile.desiredRole) { setSeekerProfileError('Please select the role you are looking for.'); return }
+    if (profile.experienceType === 'fresher') {
+      const year = Number(profile.passingYear)
+      if (!/^\d{4}$/.test(profile.passingYear) || year < 1990 || year > 2026) { setSeekerProfileError('Freshers: please enter a correct passing year, for example 2025 or 2026.'); return }
+      if (profile.desiredRole !== 'Trainee MR' && profile.desiredRole !== 'Field MR') { setSeekerProfileError('Freshers can apply for Trainee MR or Field MR roles. ASM/RSM requires experience.'); return }
+      profile.totalExperience = 'Fresher (0 years)'
+      profile.currentCompany = 'Fresher — No current company'
+      profile.currentRole = 'Fresher'
+      profile.currentPackage = 'Not applicable'
+    } else {
+      if (!profile.totalExperience) { setSeekerProfileError('Experienced candidates: please select your total pharma experience.'); return }
+      if (profile.currentCompany.length < 2) { setSeekerProfileError('Experienced candidates: please enter your current company name.'); return }
+      if (!profile.currentRole) { setSeekerProfileError('Experienced candidates: please select your current role.'); return }
+      if (profile.currentPackage.length < 3) { setSeekerProfileError('Experienced candidates: please enter your current package, for example ₹4.5 LPA.'); return }
+      profile.passingYear = ''
+    }
+    if (profile.expectedPackage.length < 3) { setSeekerProfileError('Please enter your expected package, for example ₹4.0 - 4.5 LPA.'); return }
+    if (!profile.state) { setSeekerProfileError('Please select your current state.'); return }
+    if (profile.city.length < 2) { setSeekerProfileError('Please enter your current city.'); return }
+    if (profile.currentHq.length < 2) { setSeekerProfileError('Please enter your current HQ / work location.'); return }
+    if (!profile.noticePeriod) { setSeekerProfileError('Please select your notice period / joining availability.'); return }
+    if (!profile.twoWheeler) { setSeekerProfileError('Please confirm whether you have a two-wheeler.'); return }
+    const updatedAccount: Account = { ...currentUser, profile }
+    const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
+    setAccounts(updatedAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    setCurrentUser(updatedAccount)
+    setSeekerProfileForm(profile)
+    setSeekerProfileError('')
+    setToast('Job Seeker profile saved ✅ Recruiters can now see your anonymous job profile — name, mobile and email stay hidden.')
+    navigate('jobs')
+  }
+  const handleRequestCandidateContact = (candidate: CandidateProfileView) => {
+    if (!isAdmin && currentUser?.role !== 'recruiter') { setToast('Only registered Recruiters can request candidate contact through Admin.'); return }
+    setRequestedCandidates(prev => new Set([...prev, candidate.id]))
+    setToast(`Request sent to Admin Divakar Reddy for Candidate ${candidate.code}. Contact will be shared only after candidate consent.`)
+  }
   const handleUserLogout = () => {
     setCurrentUser(null)
     setHasAuthenticated(false)
@@ -446,7 +632,6 @@ export default function App() {
     setPendingJobs(prev => prev.filter(job => normalizeMobile(job.phone) !== deletedAccount.mobile))
     setRecruiterJob(prev => ({ ...prev, contactPerson: '', phone: '', email: '' }))
     setRecruiterSubmitted(false)
-    if (tier === 'recruiter') setTier('free')
     setCurrentUser(null)
     setHasAuthenticated(false)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
@@ -681,6 +866,7 @@ export default function App() {
   const canReveal = (id: string) => revealed.has(id) || dailyUnlocks < limitForTier[tier]
 
   const attemptReveal = (job: Job) => {
+    if (!requireCompletedSeekerProfile()) return
     if (revealed.has(job.id)) return
     if (isAdmin) { setRevealed(prev => new Set([...prev, job.id])); setToast('👑 Admin access: contact revealed (no ad, no unlock used)'); return }
     if (tier === 'free') {
@@ -712,6 +898,7 @@ export default function App() {
   }
 
   const handleApply = (job: Job) => {
+    if (!requireCompletedSeekerProfile()) return
     if (!isAdmin && tier === 'free' && !revealed.has(job.id)) {
       setToast('Unlock contact first to apply (Free: watch ad to reveal)')
       attemptReveal(job)
@@ -773,9 +960,83 @@ export default function App() {
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
+  const registeredCandidateProfiles: CandidateProfileView[] = accounts
+    .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
+    .map((a, index) => ({ id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: a.profile as SeekerProfile }))
+  const candidateProfiles: CandidateProfileView[] = [...registeredCandidateProfiles, ...SAMPLE_CANDIDATE_PROFILES]
+  const candidateStates = ['All India', ...Array.from(new Set(candidateProfiles.map(c => c.profile.state).filter(Boolean)))]
+  const filteredCandidateProfiles = candidateProfiles.filter(c => {
+    const p = c.profile
+    if (candidateRoleFilter !== 'All Roles' && p.desiredRole !== candidateRoleFilter) return false
+    if (candidateExperienceFilter === 'Freshers' && p.experienceType !== 'fresher') return false
+    if (candidateExperienceFilter === 'Experienced' && p.experienceType !== 'experienced') return false
+    if (candidateStateFilter !== 'All India' && p.state !== candidateStateFilter) return false
+    if (candidateSearch) {
+      const hay = `${c.code} ${p.desiredRole} ${p.qualification} ${p.currentCompany} ${p.currentRole} ${p.currentHq} ${p.preferredHq} ${p.city} ${p.state} ${p.skills}`.toLowerCase()
+      if (!hay.includes(candidateSearch.toLowerCase())) return false
+    }
+    return true
+  })
+  const canViewCandidateProfiles = isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
+  const myAnonymousCandidatePreview: CandidateProfileView | null = currentUser?.role === 'seeker' ? { id: 'my-profile-preview', code: anonymousCandidateCode(currentUser.mobile), source: 'registered', profile: seekerProfileForm } : null
 
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
+
+  const renderAnonymousCandidateCard = (candidate: CandidateProfileView, isPreview = false) => {
+    const profile = candidate.profile
+    const isFresher = profile.experienceType === 'fresher'
+    const requested = requestedCandidates.has(candidate.id)
+    const detailItems = [
+      { label: 'Experience', value: isFresher ? 'Fresher (0 years)' : (profile.totalExperience || 'Not filled') },
+      { label: 'Current Company', value: isFresher ? 'Fresher — No current company' : (profile.currentCompany || 'Not filled') },
+      { label: 'Current Role', value: isFresher ? 'Fresher' : (profile.currentRole || 'Not filled') },
+      { label: 'Current Package', value: isFresher ? 'Not applicable' : (profile.currentPackage || 'Not filled') },
+      { label: 'Expected Package', value: profile.expectedPackage || 'Not filled' },
+      { label: 'Qualification', value: profile.qualification ? (isFresher && profile.passingYear ? `${profile.qualification} • ${profile.passingYear}` : profile.qualification) : 'Not filled' },
+      { label: 'Current HQ', value: profile.currentHq || 'Not filled' },
+      { label: 'Preferred HQ', value: profile.preferredHq || profile.currentHq || 'Not filled' },
+      { label: 'Notice / Joining', value: profile.noticePeriod || 'Not filled' },
+      { label: 'Two-Wheeler', value: profile.twoWheeler || 'Not filled' },
+    ]
+    const skillList = profile.skills.split(',').map(v => v.trim()).filter(Boolean)
+    return (
+      <article key={candidate.id} className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white"><User className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-extrabold">Candidate {candidate.code}</p>
+            <p className="truncate text-xs font-semibold text-slate-500">{profile.desiredRole || 'Role not filled'} • {profile.city || 'City not filled'}{profile.state ? `, ${profile.state}` : ''}</p>
+          </div>
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isFresher ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700'}`}>{isFresher ? 'FRESHER' : 'EXPERIENCED'}</span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-extrabold text-sky-700">{candidate.source === 'registered' ? 'REGISTERED JOB SEEKER' : 'SAMPLE PROFILE'}</span>
+          <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-extrabold text-slate-600"><EyeOff className="h-3 w-3" /> Name • Mobile • Email hidden</span>
+        </div>
+        <div className="mt-4 grid flex-1 grid-cols-2 gap-2">
+          {detailItems.map(item => (
+            <div key={item.label} className="rounded-xl bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-extrabold tracking-wide text-slate-400">{item.label}</p>
+              <p className="mt-0.5 break-words text-xs font-bold leading-snug text-slate-800">{item.value}</p>
+            </div>
+          ))}
+        </div>
+        {skillList.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {skillList.slice(0, 5).map(skill => <span key={skill} className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[10px] font-bold text-sky-700">{skill}</span>)}
+          </div>
+        )}
+        {isPreview ? (
+          <p className="mt-4 flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-emerald-800"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" /> This is exactly what Recruiters see. Your name, mobile number and email ID are never shown.</p>
+        ) : requested ? (
+          <button disabled className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-2.5 text-sm font-bold text-white opacity-90"><Check className="h-4 w-4" /> Contact Requested via Admin</button>
+        ) : (
+          <button onClick={() => handleRequestCandidateContact(candidate)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white hover:bg-slate-800"><LockKeyhole className="h-4 w-4" /> Request Contact via Admin</button>
+        )}
+      </article>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
@@ -810,7 +1071,7 @@ export default function App() {
                   <p className="text-[17px] font-extrabold leading-none tracking-tight">MR Vacancies Hub</p>
                   <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white sm:inline-flex">VERIFIED</span>
                 </div>
-                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">India’s Trusted Pharma Jobs • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
+                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">India’s Trusted Pharma Jobs • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
               </div>
             </button>
 
@@ -843,6 +1104,7 @@ export default function App() {
                     <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
                     <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
                   </span>
+                  {currentUser.role === 'seeker' && <button onClick={openSeekerProfile} title={isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile (Required)'} className="shrink-0 rounded-full bg-sky-600 p-1.5 text-white shadow-sm hover:bg-sky-700"><User className="h-3.5 w-3.5" /></button>}
                   {currentUser.role === 'seeker' && <button onClick={openDeletionRequest} title={myDeletionRequest?.status === 'pending' ? 'Account deletion request pending' : 'Request Account Deletion'} className="shrink-0 rounded-full bg-white p-1.5 text-amber-600 shadow-sm hover:bg-amber-50 hover:text-amber-700"><FileText className="h-3.5 w-3.5" /></button>}
                   {currentUser.role === 'recruiter' && <button onClick={() => setShowDeleteAccountConfirm(true)} title="Delete Recruiter Account" className="shrink-0 rounded-full bg-white p-1.5 text-red-500 shadow-sm hover:bg-red-50 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>}
                   <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
@@ -922,7 +1184,10 @@ export default function App() {
                       <button onClick={() => { setShowMobileMenu(false); setShowDeleteAccountConfirm(true) }} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 py-2 text-[11px] font-extrabold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Delete Recruiter Account</button>
                     )}
                     {currentUser.role === 'seeker' && (
-                      <button onClick={openDeletionRequest} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 py-2 text-[11px] font-extrabold text-amber-700"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</button>
+                      <>
+                        <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
+                        <button onClick={openDeletionRequest} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 py-2 text-[11px] font-extrabold text-amber-700"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</button>
+                      </>
                     )}
                   </div>
                 )}
@@ -984,7 +1249,7 @@ export default function App() {
               {/* Footer */}
               <div className="border-t bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-500">© 2025 MR Vacancies Hub</span>
+                  <span className="font-semibold text-slate-500">© 2026 MR Vacancies Hub • Since 2026</span>
                   <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">PWA • TWA Ready</span>
                 </div>
               </div>
@@ -1014,6 +1279,19 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {page !== 'welcome' && page !== 'auth' && page !== 'profile' && currentUser?.role === 'seeker' && hasAuthenticated && !isSeekerProfileComplete(currentUser.profile) && (
+        <div className="mx-auto max-w-[1280px] px-4 pt-4">
+          <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400 text-slate-900"><AlertTriangle className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold text-amber-900">Complete your required Job Seeker profile ({seekerProfileProgress(currentUser.profile)}%)</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-amber-800">Freshers and experienced MRs must fill role, experience, qualification, package and HQ details before applying. Recruiters will see this job data anonymously — never your name, mobile or email.</p>
+            </div>
+            <button onClick={openSeekerProfile} className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white"><User className="h-4 w-4" /> Complete Profile</button>
+          </div>
+        </div>
+      )}
+
       {/* WELCOME / MAIN SCREEN — first screen when app opens */}
       {page === 'welcome' && (
         <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
@@ -1026,6 +1304,7 @@ export default function App() {
                 <div className="mt-3 flex items-center justify-center gap-2">
                   <h1 className="text-[24px] font-extrabold leading-none tracking-tight">MR Vacancies Hub</h1>
                   <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">SINCE 2026</span>
                 </div>
                 <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Jobs for Medical Representatives</p>
               </div>
@@ -1036,7 +1315,7 @@ export default function App() {
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20"><User className="h-5 w-5" /></span>
                   <span className="flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR)</span>
-                    <span className="block text-xs opacity-90">Find verified vacancies • Unlock recruiter contacts</span>
+                    <span className="block text-xs opacity-90">Complete job profile • Find verified vacancies • Apply faster</span>
                   </span>
                   <ChevronRight className="h-5 w-5 shrink-0" />
                 </button>
@@ -1044,7 +1323,7 @@ export default function App() {
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600"><Building2 className="h-5 w-5" /></span>
                   <span className="flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
-                    <span className="block text-xs text-slate-500">Post a vacancy • Goes LIVE after Admin approval</span>
+                    <span className="block text-xs text-slate-500">Post a vacancy • View anonymous MR profiles • Admin approval</span>
                   </span>
                   <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                 </button>
@@ -1064,7 +1343,7 @@ export default function App() {
 
               <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Register once with mobile • Login with mobile only • No password</p>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2025 MR Vacancies Hub • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -1162,11 +1441,199 @@ export default function App() {
               )}
 
               <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
-                <span>Step 1: Mobile</span><span>→</span><span>Step 2: Register (first time only)</span><span>→</span><span>Enter App</span>
+                <span>Step 1: Mobile</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
               </div>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR Vacancies Hub • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
+        </section>
+      )}
+      {/* JOB SEEKER PROFILE — required job data; Recruiters see it anonymously */}
+      {page === 'profile' && (
+        <section className="mx-auto max-w-[1120px] px-4 py-8">
+          {!currentUser || !hasAuthenticated ? (
+            <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+              <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><User className="h-7 w-7" /></span>
+              <h2 className="mt-3 text-xl font-extrabold">Job Seeker Login Required</h2>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">Login or register as a Job Seeker to complete your required job profile.</p>
+              <button onClick={() => enterAs('seeker')} className="mt-5 rounded-full bg-sky-600 px-6 py-3 text-sm font-bold text-white">Continue as Job Seeker</button>
+            </div>
+          ) : currentUser.role !== 'seeker' ? (
+            <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+              <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><Building2 className="h-7 w-7" /></span>
+              <h2 className="mt-3 text-xl font-extrabold">This Profile is for Job Seekers</h2>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">Recruiters can browse completed Job Seeker profiles anonymously from the Recruiters page. Candidate name, mobile number and email ID are hidden.</p>
+              <button onClick={() => navigate('recruiters')} className="mt-5 rounded-full bg-slate-900 px-6 py-3 text-sm font-bold text-white">View Anonymous Candidate Profiles</button>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-white shadow-lg sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-white px-3 py-1 text-[10px] font-extrabold tracking-widest text-sky-700">JOB SEEKER PROFILE</span>
+                    <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-extrabold tracking-widest">SINCE 2026</span>
+                    <span className="rounded-full bg-amber-400 px-3 py-1 text-[10px] font-extrabold tracking-widest text-slate-900">REQUIRED TO APPLY</span>
+                  </div>
+                  <h2 className="mt-3 text-[26px] font-extrabold leading-tight">Complete your job profile</h2>
+                  <p className="mt-1 max-w-2xl text-sm leading-relaxed opacity-90">Fill the required data once. Freshers choose the Fresher option. Experienced MRs add current company, current role and current package.</p>
+                </div>
+                <div className="w-full shrink-0 rounded-2xl bg-white/15 p-4 sm:w-[220px]">
+                  <div className="flex items-center justify-between text-xs font-bold"><span>Profile completion</span><span>{seekerProfileProgress(seekerProfileForm)}%</span></div>
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/25"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${seekerProfileProgress(seekerProfileForm)}%` }} /></div>
+                  <p className="mt-2 text-[11px] font-semibold opacity-90">{isSeekerProfileComplete(seekerProfileForm) ? '✅ Ready to save and apply' : 'Fill all fields marked *'}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid items-start gap-5 lg:grid-cols-[1.12fr_0.88fr]">
+                <form onSubmit={e => { e.preventDefault(); handleSaveSeekerProfile() }} className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                    <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700"><LockKeyhole className="h-4 w-4" /> PRIVATE ACCOUNT DETAILS — ONLY FOR YOU & ADMIN</p>
+                    <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">NAME</p><p className="truncate font-extrabold">{currentUser.name}</p></div>
+                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p></div>
+                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">EMAIL</p><p className="truncate font-extrabold">{currentUser.email}</p></div>
+                    </div>
+                    <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-sky-800"><EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Recruiters will NOT see these three details anywhere in candidate profiles.</p>
+                  </div>
+
+                  <p className="mt-6 text-sm font-extrabold">1. Are you a Fresher or Experienced? *</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                      <GraduationCap className={`h-6 w-6 ${seekerProfileForm.experienceType === 'fresher' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <span className="mt-2 block text-sm font-extrabold">Fresher</span>
+                      <span className="block text-xs text-slate-500">No pharma MR job experience</span>
+                    </button>
+                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                      <Briefcase className={`h-6 w-6 ${seekerProfileForm.experienceType === 'experienced' ? 'text-violet-600' : 'text-slate-400'}`} />
+                      <span className="mt-2 block text-sm font-extrabold">Experienced</span>
+                      <span className="block text-xs text-slate-500">Currently / previously working</span>
+                    </button>
+                  </div>
+
+                  <p className="mt-6 text-sm font-extrabold">2. Required job details</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Qualification *</label>
+                      <select value={seekerProfileForm.qualification} onChange={e => updateSeekerProfileField('qualification', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        <option value="">Select qualification</option>
+                        {SEEKER_QUALIFICATIONS.map(q => <option key={q} value={q}>{q}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Role You Are Looking For *</label>
+                      <select value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        {(seekerProfileForm.experienceType === 'fresher' ? ['Trainee MR', 'Field MR'] : ['Field MR', 'Trainee MR', 'ASM', 'RSM']).map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                      </select>
+                    </div>
+
+                    {seekerProfileForm.experienceType === 'fresher' ? (
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-slate-600">Passing Year *</label>
+                        <input value={seekerProfileForm.passingYear} onChange={e => updateSeekerProfileField('passingYear', e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="e.g. 2026" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                        <p className="mt-1 text-[11px] font-semibold text-emerald-700">Fresher selected — current company & current package are not required.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-xs font-bold text-slate-600">Total Pharma Experience *</label>
+                          <select value={seekerProfileForm.totalExperience} onChange={e => updateSeekerProfileField('totalExperience', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                            <option value="">Select experience</option>
+                            {SEEKER_EXPERIENCE_OPTIONS.map(exp => <option key={exp} value={exp}>{exp}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Company *</label>
+                          <input value={seekerProfileForm.currentCompany} onChange={e => updateSeekerProfileField('currentCompany', e.target.value)} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Role *</label>
+                          <select value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                            <option value="">Select current role</option>
+                            {['Trainee MR', 'Field MR', 'ASM', 'RSM', 'Other Pharma Role'].map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Package ( CTC ) *</label>
+                          <input value={seekerProfileForm.currentPackage} onChange={e => updateSeekerProfileField('currentPackage', e.target.value)} placeholder="e.g. ₹4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                        </div>
+                      </>
+                    )}
+
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Expected Package *</label>
+                      <input value={seekerProfileForm.expectedPackage} onChange={e => updateSeekerProfileField('expectedPackage', e.target.value)} placeholder="e.g. ₹4.0 - 4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Current State *</label>
+                      <select value={seekerProfileForm.state} onChange={e => updateSeekerProfileField('state', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        <option value="">Select state</option>
+                        {LOCATIONS.slice(1).map(st => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Current City *</label>
+                      <input value={seekerProfileForm.city} onChange={e => updateSeekerProfileField('city', e.target.value)} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Current HQ / Work Location *</label>
+                      <input value={seekerProfileForm.currentHq} onChange={e => updateSeekerProfileField('currentHq', e.target.value)} placeholder="e.g. Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Preferred HQ (Optional)</label>
+                      <input value={seekerProfileForm.preferredHq} onChange={e => updateSeekerProfileField('preferredHq', e.target.value)} placeholder="e.g. Hyderabad / Bengaluru" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Notice Period / Joining *</label>
+                      <select value={seekerProfileForm.noticePeriod} onChange={e => updateSeekerProfileField('noticePeriod', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        <option value="">Select availability</option>
+                        {['Immediate', '15 days', '30 days', '45 days', '60 days'].map(np => <option key={np} value={np}>{np}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Two-Wheeler Available? *</label>
+                      <select value={seekerProfileForm.twoWheeler} onChange={e => updateSeekerProfileField('twoWheeler', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        <option value="">Select option</option>
+                        {['Yes', 'No', 'Will arrange'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Skills (Optional, comma separated)</label>
+                      <input value={seekerProfileForm.skills} onChange={e => updateSeekerProfileField('skills', e.target.value)} placeholder="e.g. RCPA, Doctor Calling, Stockist Handling" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <EyeOff className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                    <p className="text-sm leading-relaxed text-emerald-900"><b>Privacy protection:</b> Recruiters can see only role, experience, current company, packages, qualification, HQ, joining and skills. Your <b>name, mobile number and email ID will not be shown</b>. Contact can be requested only through Admin Divakar Reddy.</p>
+                  </div>
+
+                  {seekerProfileError && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-600">{seekerProfileError}</p>}
+
+                  <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                    <button type="submit" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white hover:bg-sky-700"><Check className="h-4 w-4" /> Save Profile & Browse Jobs</button>
+                    <button type="button" onClick={() => navigate('jobs')} className="rounded-full border px-6 py-3 text-sm font-bold">Browse Jobs</button>
+                  </div>
+                  <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">You can browse jobs, but Quick Apply and contact reveal unlock only after this required profile is saved.</p>
+                </form>
+
+                <div className="lg:sticky lg:top-24">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-extrabold tracking-widest text-sky-700">RECRUITER PREVIEW</p>
+                      <h3 className="text-lg font-extrabold">What Recruiters See</h3>
+                    </div>
+                    <span className="rounded-full bg-slate-900 px-3 py-1 text-[10px] font-extrabold text-white">ANONYMOUS</span>
+                  </div>
+                  {myAnonymousCandidatePreview && renderAnonymousCandidateCard(myAnonymousCandidatePreview, true)}
+                  <div className="mt-4 rounded-2xl border bg-white p-4 text-sm leading-relaxed text-slate-600">
+                    <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Fresher profiles clearly show <b>Fresher</b>, qualification and passing year.</p>
+                    <p className="mt-2 flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Experienced profiles show current company, current role, experience and both packages.</p>
+                    <p className="mt-2 flex gap-2"><EyeOff className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /> No name, phone number or email ID is included in this recruiter view.</p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </section>
       )}
       {page === 'home' && (
@@ -1721,7 +2188,7 @@ export default function App() {
             <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies & quick apply. Masked phone/email protects recruiters from spam. Go ad-free anytime.</p>
           </div>
 
-          <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="mx-auto mt-8 grid max-w-5xl gap-4 md:grid-cols-3">
             {TIERS.map(t => (
               <div key={t.id} className={`relative rounded-2xl border p-5 ${t.popular ? 'border-sky-500 bg-sky-50 shadow-lg' : 'bg-slate-50'} ${tier === t.id ? 'ring-2 ring-sky-500' : ''}`}>
                 {t.popular && <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MOST POPULAR</span>}
@@ -1740,9 +2207,13 @@ export default function App() {
                 <button onClick={() => { if (t.id === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock') } else { setTier(t.id); setToast(`${t.name} activated! (Demo — no payment)`) } }} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
                   {tier === t.id ? '✓ Active' : t.cta}
                 </button>
-                {t.id === 'recruiter' && <p className="mt-2 text-center text-xs font-semibold text-slate-500">Managed by M Divakar Reddy • WhatsApp support</p>}
               </div>
             ))}
+          </div>
+
+          <div className="mx-auto mt-5 flex max-w-5xl items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left">
+            <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+            <p className="text-sm leading-relaxed text-emerald-900"><b>Recruiter plan removed:</b> Recruiters do not need a paid subscription plan. Register free, post vacancies for Admin approval, and browse anonymous Job Seeker job profiles without names or contact details.</p>
           </div>
 
           <div className="mt-6 grid gap-4 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3">
@@ -1848,6 +2319,7 @@ export default function App() {
                 <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button onClick={() => document.getElementById('candidate-profiles')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-slate-800"><Users className="h-3.5 w-3.5" /> Candidate Profiles</button>
                 <button onClick={() => navigate('postjob')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-3.5 w-3.5" /> Post Vacancy</button>
                 <button onClick={() => setShowDeleteAccountConfirm(true)} className="flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-extrabold text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /> Delete Account</button>
               </div>
@@ -1856,12 +2328,82 @@ export default function App() {
           <div className="mb-6 flex flex-col items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-center text-white shadow-xl sm:flex-row sm:text-left">
             <div className="flex-1">
               <p className="text-[22px] font-extrabold leading-tight">Hiring Medical Representatives?</p>
-              <p className="mt-1 text-sm opacity-90">Post your vacancy FREE and reach 50K+ MRs — it goes LIVE after Admin verification.</p>
+              <p className="mt-1 text-sm opacity-90">Post FREE, reach 50K+ MRs, and shortlist anonymous Job Seeker profiles by experience, company, package, role & HQ. Vacancies go LIVE after Admin verification.</p>
             </div>
             <button onClick={() => navigate('postjob')} className="flex shrink-0 items-center gap-2 rounded-full bg-amber-400 px-8 py-4 text-lg font-extrabold text-slate-900 shadow-lg transition hover:bg-amber-300 active:scale-95">
               <Plus className="h-6 w-6" /> Post Vacancy
             </button>
           </div>
+          <div id="candidate-profiles" className="mb-6 rounded-3xl border border-sky-100 bg-[#f8fbff] p-5 shadow-sm sm:p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-slate-900 px-3 py-1 text-[10px] font-extrabold tracking-widest text-white">RECRUITER ONLY</span>
+                  <span className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-extrabold tracking-widest text-sky-700">SINCE 2026</span>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-extrabold tracking-widest text-emerald-700">NO RECRUITER PLAN NEEDED</span>
+                </div>
+                <h3 className="mt-3 text-[24px] font-extrabold leading-tight">Anonymous Job Seeker Profiles</h3>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">Recruiters can shortlist candidates by role, experience, current company, current package, expected package, qualification and HQ. Freshers are clearly marked.</p>
+              </div>
+              <div className="flex shrink-0 items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
+                <EyeOff className="mt-0.5 h-5 w-5 shrink-0" />
+                <span>Name, mobile number & email ID are hidden</span>
+              </div>
+            </div>
+
+            {!canViewCandidateProfiles ? (
+              <div className="mt-5 rounded-3xl border bg-white p-8 text-center">
+                <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-700"><LockKeyhole className="h-7 w-7" /></span>
+                <h4 className="mt-3 text-lg font-extrabold">Login as a Recruiter to view candidate job profiles</h4>
+                <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-slate-600">For candidate privacy, profiles are visible only to registered Recruiters. Even after login, candidate name, contact number and email ID will not be displayed.</p>
+                <button onClick={() => enterAs('recruiter')} className="mt-5 rounded-full bg-sky-600 px-6 py-3 text-sm font-extrabold text-white hover:bg-sky-700">Recruiter Login / Register</button>
+              </div>
+            ) : (
+              <>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">PROFILES SHOWN</p><p className="mt-1 text-2xl font-extrabold">{filteredCandidateProfiles.length}</p><p className="text-xs text-slate-500">After filters</p></div>
+                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">REGISTERED ON THIS DEVICE</p><p className="mt-1 text-2xl font-extrabold">{registeredCandidateProfiles.length}</p><p className="text-xs text-slate-500">Completed seeker profiles</p></div>
+                  <div className="rounded-2xl border bg-white p-4"><p className="text-[11px] font-extrabold tracking-wide text-slate-400">FRESHER PROFILES</p><p className="mt-1 text-2xl font-extrabold">{candidateProfiles.filter(c => c.profile.experienceType === 'fresher').length}</p><p className="text-xs text-slate-500">Includes sample preview profiles</p></div>
+                </div>
+
+                <div className="mt-4 grid gap-2 rounded-2xl border bg-white p-3 md:grid-cols-[1.3fr_0.8fr_0.8fr_0.8fr]">
+                  <div className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2.5">
+                    <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                    <input value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} placeholder="Search company, HQ, qualification, skill..." className="w-full bg-transparent text-sm outline-none" />
+                  </div>
+                  <select value={candidateRoleFilter} onChange={e => setCandidateRoleFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500">
+                    {['All Roles', 'Field MR', 'Trainee MR', 'ASM', 'RSM'].map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                  </select>
+                  <select value={candidateExperienceFilter} onChange={e => setCandidateExperienceFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500">
+                    {['All Candidates', 'Freshers', 'Experienced'].map(expType => <option key={expType} value={expType}>{expType}</option>)}
+                  </select>
+                  <select value={candidateStateFilter} onChange={e => setCandidateStateFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500">
+                    {candidateStates.map(st => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Registered profiles update from Job Seeker accounts on this device</span>
+                  <span>•</span><span>Sample profiles are clearly labelled for preview</span>
+                  <span>•</span><span>Contact only through Admin after candidate consent</span>
+                </div>
+
+                {filteredCandidateProfiles.length === 0 ? (
+                  <div className="mt-5 rounded-3xl border bg-white p-10 text-center">
+                    <SearchX className="mx-auto h-10 w-10 text-slate-300" />
+                    <p className="mt-2 text-sm font-extrabold">No candidate profiles match these filters</p>
+                    <p className="mt-1 text-xs text-slate-500">Try another role, state, company or HQ.</p>
+                    <button onClick={() => { setCandidateSearch(''); setCandidateRoleFilter('All Roles'); setCandidateExperienceFilter('All Candidates'); setCandidateStateFilter('All India') }} className="mt-4 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">Clear Filters</button>
+                  </div>
+                ) : (
+                  <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {filteredCandidateProfiles.map(candidate => renderAnonymousCandidateCard(candidate))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-indigo-50 p-6">
               <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MANAGED BY</span>
@@ -1898,12 +2440,12 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Active Posts</p><p className="mt-1 text-2xl font-extrabold">{jobs.length}</p><p className="text-xs text-emerald-600">↑ 3 this week</p></div>
-                  <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Applicants</p><p className="mt-1 text-2xl font-extrabold">348</p><p className="text-xs text-sky-600">24 new today</p></div>
+                  <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Candidate Profiles</p><p className="mt-1 text-2xl font-extrabold">{candidateProfiles.length}</p><p className="text-xs text-sky-600">{registeredCandidateProfiles.length} registered • Anonymous view</p></div>
                 </div>
                 <div className="rounded-xl border p-4">
-                  <div className="flex items-center justify-between"><p className="text-sm font-bold">Recent applicants</p><span className="text-xs text-slate-500">Top 3</span></div>
+                  <div className="flex items-center justify-between"><p className="flex items-center gap-1.5 text-sm font-bold">Recent anonymous applicants <EyeOff className="h-3.5 w-3.5 text-slate-400" /></p><span className="text-xs text-slate-500">No names / contacts</span></div>
                   <div className="mt-3 space-y-2">
-                    {['Amit P • B.Pharm • 2 yrs • Hyderabad', 'Sneha R • B.Sc • Fresher • Bengaluru', 'Vikash K • D.Pharm • 1 yr • Pune'].map(a => (
+                    {['Candidate MR-2026-1042 • B.Pharm • 2-4 yrs • Bengaluru', 'Candidate MR-2026-1011 • B.Pharm • Fresher • Hyderabad', 'Candidate MR-2026-1075 • D.Pharm • 1-2 yrs • Vijayawada'].map(a => (
                       <div key={a} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-semibold"><div className="h-8 w-8 rounded-full bg-slate-200" /> {a} <span className="ml-auto text-sky-600">View</span></div>
                     ))}
                   </div>
@@ -1928,7 +2470,7 @@ export default function App() {
                 {[
                   { title: 'TWA / Bubblewrap Ready', desc: 'manifest + assetlinks + twa-manifest.json generated. Build AAB with: npx @bubblewrap/cli build', icon: Smartphone },
                   { title: 'AdMob Integrated', desc: 'Banner, Interstitial, Native, Rewarded. Test IDs included — replace with your ca-app-pub-IDs.', icon: Megaphone },
-                  { title: 'Play Billing Ready', desc: 'Subscription tiers mapped to Google Play Billing. Free → Starter → Pro → Recruiter.', icon: BadgeIndianRupee },
+                  { title: 'Play Billing Ready', desc: 'Subscription tiers mapped to Google Play Billing. Free → Starter → Pro. Recruiters register and post free.', icon: BadgeIndianRupee },
                   { title: 'Compliant & Safe', desc: 'Privacy Policy, Data Safety, Kids/Ads disclosure, content rating Everyone, GDPR consent.', icon: ShieldCheck },
                 ].map(f => (
                   <div key={f.title} className="rounded-2xl bg-white/10 p-4">
@@ -2016,8 +2558,12 @@ export default function App() {
                 <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
                 <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
                 <p className="mt-1 text-[11px] font-semibold text-slate-600">{myDeletionRequest?.status === 'pending' ? '⏳ Account deletion request pending with Admin.' : myDeletionRequest?.status === 'rejected' ? 'Previous deletion request was rejected by Admin.' : 'Account deletion is available only after Admin approves a proper reason.'}</p>
+                <p className="mt-1 text-[11px] font-bold text-sky-800">{isSeekerProfileComplete(currentUser.profile) ? '✅ Job profile complete — visible anonymously to Recruiters.' : `⚠️ Job profile ${seekerProfileProgress(currentUser.profile)}% complete — required before applying.`}</p>
               </div>
-              <button onClick={openDeletionRequest} className="flex shrink-0 items-center justify-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-extrabold text-amber-700 hover:bg-amber-50"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'View Request' : 'Request Account Deletion'}</button>
+              <div className="flex shrink-0 flex-col gap-2">
+                <button onClick={openSeekerProfile} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-sky-700"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</button>
+                <button onClick={openDeletionRequest} className="flex items-center justify-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-extrabold text-amber-700 hover:bg-amber-50"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'View Request' : 'Request Account Deletion'}</button>
+              </div>
             </div>
           )}
           <div className="mt-4 grid gap-4">
@@ -2425,7 +2971,7 @@ export default function App() {
           <div className="grid gap-8 md:grid-cols-4">
             <div>
               <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR Vacancies Hub</p></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">India’s trusted PWA for Medical Representatives. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.</p>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">India’s trusted PWA for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.</p>
               <div className="mt-4 flex gap-2">
                 <a className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900" href="#"> <Download className="mr-1 inline h-3 w-3" /> Get on Google Play</a>
                 <a className="rounded-full border border-white/20 px-4 py-2 text-xs font-bold" href="#" onClick={e => { e.preventDefault(); handleInstall() }}>Install PWA</a>
@@ -2455,7 +3001,7 @@ export default function App() {
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
               <p className="text-xs opacity-80">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
-              <p className="mt-3 text-xs opacity-80">© 2025 MR Vacancies Hub. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
+              <p className="mt-3 text-xs opacity-80">© 2026 MR Vacancies Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">PWA</span>
                 <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">TWA Ready</span>
@@ -2698,7 +3244,7 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
               </div>
-              <div className="grid gap-4 p-6 md:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-4 p-6 md:grid-cols-3">
                 {TIERS.map(t => (
                   <div key={t.id} className={`rounded-2xl border p-4 ${tier === t.id ? 'border-sky-600 bg-sky-50' : 'bg-slate-50'}`}>
                     <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p></div>
