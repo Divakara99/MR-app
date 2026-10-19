@@ -38,6 +38,8 @@ type Job = {
   perks: string[]
 }
 
+type PendingJob = Job & { submittedAt: string; submittedBy: string }
+
 // MOCK DATA
 const JOBS: Job[] = [
   { id:'1', company:'Sun Pharma', color:'#ef4444', division:'Sunrise - Cardio Diabetic', title:'Medical Representative', hq:'Hyderabad - Ameerpet', state:'Telangana', exp:'1-4 yrs', ctc:'₹4.2 - 5.5 LPA + TA/DA', vacancies:3, qual:'B.Pharm / B.Sc / D.Pharm', type:'Field MR', posted:'2 hrs ago', verified:true, urgent:true, hot:true, desc:'Handling GP, Consulting Physicians & Cardiologists. RCPA, detailing & stockist management. Immediate joiners preferred with 2-wheeler.', contactPerson:'Ramesh Reddy - Regional Manager', phone:'+91 98490 23456', email:'ramesh.reddy@sunpharma.com', skills:['Doctor Calling','RCPA','Stockist Handling'], perks:['Incentives Qtrly','Mobile Allowance','Field TA/DA ₹18k'] },
@@ -70,10 +72,10 @@ const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 mont
 }
 
 const TIERS = [
-  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['View 3 contacts/day (Ad to unlock)', 'Blurred phone & email', 'Apply to jobs', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3/day' },
-  { id: 'starter' as Tier, name: 'Starter', price: '₹199', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day (No Ads)', 'Unmasked phone + email', 'WhatsApp Apply button', 'Priority listing in recruiter view', 'AI Resume builder'], cta: 'Go Starter', popular: true, limit: '15/day' },
+  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['View 3 contacts/day (15-sec ad to unlock)', 'Blurred phone & email', 'Apply to jobs', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3/day' },
+  { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — ZERO ads', 'No 15-sec ad videos — instant unlock', 'Unmasked phone + email', 'WhatsApp Apply button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
   { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited contacts (Ad-free)', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips', 'Early access 2hrs before free'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
-  { id: 'recruiter' as Tier, name: 'Recruiter', price: '₹1,999', period: '/month', color: 'amber', icon: Building2, features: ['Post unlimited vacancies', 'Access 50k+ MR database', 'Verified badge & top rank', 'Applicant tracking dashboard', 'Managed by M Divakar Reddy'], cta: 'Post Jobs', popular: false, limit: 'Unlimited posts' },
+  { id: 'recruiter' as Tier, name: 'Recruiter', price: '₹1,999', period: '/month', color: 'amber', icon: Building2, features: ['Post vacancies (Admin approval before live)', 'Access 50k+ MR database', 'Verified badge & top rank', 'Applicant tracking dashboard', 'Managed by M Divakar Reddy'], cta: 'Post Jobs', popular: false, limit: 'Unlimited posts' },
 ]
 
 // Helpers
@@ -87,6 +89,7 @@ const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
+const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 
 // AD COMPONENTS
 function BannerAd({ label = 'Advertisement', className = '' }: { label?: string, className?: string }) {
@@ -157,7 +160,7 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin'>('home')
+  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('home')
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
@@ -179,13 +182,22 @@ export default function App() {
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
   const [adminError, setAdminError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'manage' | 'settings'>('overview')
   const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
   const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
+  // Recruiter-submitted vacancies — LIVE only after Admin approval
+  const [pendingJobs, setPendingJobs] = useState<PendingJob[]>(() => {
+    try { const raw = localStorage.getItem(PENDING_JOBS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return parsed as PendingJob[] } } catch { /* ignore */ }
+    return []
+  })
+  useEffect(() => { try { localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(pendingJobs)) } catch { /* ignore */ } }, [pendingJobs])
+  const [recruiterJob, setRecruiterJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
+  const [recruiterSubmitted, setRecruiterSubmitted] = useState(false)
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
 
   const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999, recruiter: 9999 }
+  const isAdFree = isAdmin || tier !== 'free' // ₹99+ plans & Admin: ZERO ads (no banner / rewarded / interstitial)
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -322,6 +334,55 @@ export default function App() {
     setPassForm({ current: '', next: '', confirm: '' })
     setToast('Admin password changed successfully 🔐 Use it from next login')
   }
+  // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
+  const handleRecruiterSubmit = () => {
+    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Your Name and Mobile Number'); return }
+    const cityName = recruiterJob.city.trim() || 'Hyderabad'
+    const pending: PendingJob = {
+      id: 'pending-' + Date.now(),
+      company: recruiterJob.company.trim(),
+      color: '#0284c7',
+      division: recruiterJob.division.trim() || (recruiterJob.company.trim() + ' — General Division'),
+      title: recruiterJob.title.trim() || 'Medical Representative',
+      hq: recruiterJob.area.trim() ? `${cityName} - ${recruiterJob.area.trim()}` : cityName,
+      state: recruiterJob.state,
+      exp: recruiterJob.exp,
+      ctc: recruiterJob.ctc.trim(),
+      vacancies: Math.max(1, parseInt(recruiterJob.vacancies) || 1),
+      qual: recruiterJob.qual.trim() || 'B.Pharm / B.Sc',
+      type: recruiterJob.type,
+      posted: 'Pending approval',
+      verified: false,
+      urgent: recruiterJob.urgent,
+      hot: false,
+      desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by recruiter — under verification by M Divakar Reddy.`,
+      contactPerson: recruiterJob.contactPerson.trim(),
+      phone: recruiterJob.phone.trim(),
+      email: recruiterJob.email.trim() || 'hr@mrvacancieshub.in',
+      skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
+      perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
+      submittedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      submittedBy: recruiterJob.contactPerson.trim(),
+    }
+    setPendingJobs(prev => [pending, ...prev])
+    setRecruiterSubmitted(true)
+    setToast('Vacancy submitted! It will go LIVE after Admin (Divakar Reddy) approval ✅')
+  }
+  const resetRecruiterForm = () => {
+    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
+    setRecruiterSubmitted(false)
+  }
+  const handleApproveJob = (pend: PendingJob) => {
+    const { submittedAt, submittedBy, ...rest } = pend
+    const job: Job = { ...rest, id: 'job-' + Date.now(), posted: 'Just now', verified: true, hot: true }
+    setJobs(prev => [job, ...prev])
+    setPendingJobs(prev => prev.filter(x => x.id !== pend.id))
+    setToast(`Approved & LIVE ✅ ${job.company} • ${job.hq} is now visible to all job seekers`)
+  }
+  const handleRejectJob = (id: string) => {
+    setPendingJobs(prev => prev.filter(x => x.id !== id))
+    setToast('Vacancy rejected by Admin — it will not go live')
+  }
   useEffect(() => {
     if (page !== 'jobs') setShowFilters(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -387,12 +448,16 @@ export default function App() {
       attemptReveal(job)
       return
     }
-    // interstitial ad simulation before apply
+    const finishApply = () => {
+      setApplied(prev => new Set([...prev, job.id]))
+      setToast(`Applied to ${job.company} — recruiter will contact you within 24h ✅`)
+    }
+    if (isAdFree) { finishApply(); return } // ₹99+ plans & Admin: ZERO ads — instant apply
+    // interstitial ad simulation before apply (Free plan only)
     setShowInterstitial(true)
     setTimeout(() => {
       setShowInterstitial(false)
-      setApplied(prev => new Set([...prev, job.id]))
-      setToast(`Applied to ${job.company} — recruiter will contact you within 24h ✅`)
+      finishApply()
     }, 2200)
   }
 
@@ -437,7 +502,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
-      {/* TOP AD BANNER (AdMob Adaptive) */}
+      {/* TOP AD BANNER (AdMob Adaptive) — hidden for ad-free plans */}
+      {!isAdFree && (
       <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
           <div className="flex items-center gap-2 text-[11px]">
@@ -451,9 +517,10 @@ export default function App() {
           </div>
         </div>
       </div>
+      )}
 
       {/* NAVBAR */}
-      <header className="sticky top-[37px] z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
             <button onClick={() => navigate('home')} className="flex items-center gap-3 text-left">
@@ -479,7 +546,7 @@ export default function App() {
                 <Smartphone className="h-4 w-4" /> Android App
               </button>
               <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                {isAdmin ? <><LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" /></> : <><LockKeyhole className="h-4 w-4" /> Admin Login</>}
+                {isAdmin ? <><LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length} pending</span>}</> : <><LockKeyhole className="h-4 w-4" /> Admin Login{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</>}
               </button>
             </nav>
 
@@ -556,8 +623,9 @@ export default function App() {
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
                     { label: 'Browse Vacancies', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
-                    { label: 'Subscription Plans', sub: 'Free → Starter ₹199 → Pro ₹499', icon: Crown, page: 'pricing' as const },
+                    { label: 'Subscription Plans', sub: 'Free → Starter ₹99 → Pro ₹499', icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
+                    { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, page: 'android' as const },
                     { label: isAdmin ? 'Admin Dashboard' : 'Admin Login', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
@@ -579,7 +647,7 @@ export default function App() {
 
                 <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
                   <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Watch a 5-sec rewarded video to reveal 1 recruiter contact. Starter/Pro = ad-free unlimited.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Watch a 15-sec rewarded video to reveal 1 recruiter contact. Starter ₹99/mo = ZERO ads, instant unlocks.</p>
                 </div>
 
                 <div className="mt-4 grid gap-2">
@@ -788,9 +856,11 @@ export default function App() {
         </div>
 
         {/* Banner ad after hero */}
+        {!isAdFree && (
         <div className="mt-6">
           <BannerAd />
         </div>
+        )}
       </section>
       </>
       )}
@@ -828,7 +898,7 @@ export default function App() {
             <button onClick={() => navigate('pricing')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
               <Crown className="h-5 w-5 text-amber-500" />
               <p className="mt-2 text-sm font-bold">Subscription Plans</p>
-              <p className="text-xs text-slate-500">Free vs Starter ₹199 vs Pro ₹499</p>
+              <p className="text-xs text-slate-500">Free vs Starter ₹99 vs Pro ₹499</p>
             </button>
             <button onClick={() => navigate('ai')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
               <Sparkles className="h-5 w-5 text-violet-600" />
@@ -923,7 +993,7 @@ export default function App() {
                 </div>
               </div>
 
-              <NativeAd />
+              {!isAdFree && <NativeAd />}
 
               <div className="rounded-2xl border bg-white p-4">
                 <p className="text-sm font-extrabold">Subscription</p>
@@ -1020,7 +1090,7 @@ export default function App() {
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-white"><Crown className="h-5 w-5" /></div>
                 <div>
                   <p className="text-sm font-extrabold">Unlock hidden contacts — watch ad (Free) or go ad-free</p>
-                  <p className="text-xs text-slate-600">Starter ₹199/mo: 15 unlocks/day • No ads • WhatsApp Apply. Pro ₹499/mo: Unlimited + recruiter chat.</p>
+                  <p className="text-xs text-slate-600">Starter ₹99/mo: 15 unlocks/day • No ads • WhatsApp Apply. Pro ₹499/mo: Unlimited + recruiter chat.</p>
                 </div>
               </div>
               <button onClick={() => setShowPricing(true)} className="shrink-0 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">View Plans</button>
@@ -1129,7 +1199,7 @@ export default function App() {
                         </div>
                         {!revealed.has(job.id) && (
                           <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11px] font-semibold text-slate-500">
-                            <Info className="h-3.5 w-3.5" /> {tier === 'free' ? 'Free: Watch a 5-sec rewarded ad to unlock. No payment needed.' : `Your ${tier} plan: ${limitForTier[tier]} unlocks/day • Ad-free`}
+                            <Info className="h-3.5 w-3.5" /> {tier === 'free' ? 'Free: Watch a 15-sec ad to unlock — or go ad-free with Starter ₹99/mo.' : `Your ${tier} plan: ${limitForTier[tier]} unlocks/day • Ad-free`}
                           </p>
                         )}
                       </div>
@@ -1152,7 +1222,7 @@ export default function App() {
                     </motion.div>
 
                     {/* inject ads every 4th */}
-                    {(idx + 1) % 4 === 0 && idx !== filtered.length - 1 && (
+                    {!isAdFree && (idx + 1) % 4 === 0 && idx !== filtered.length - 1 && (
                       <div className="my-4">
                         <BannerAd label={`Sponsored • Appears after ${idx + 1} jobs`} />
                       </div>
@@ -1210,7 +1280,7 @@ export default function App() {
 
           <div className="mt-6 grid gap-4 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3">
             <div className="flex gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" /><p className="text-sm leading-tight"><b>Why masked?</b> Prevents spam calls to recruiters. Free users prove intent by watching a short ad.</p></div>
-            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>AdMob Rewarded:</b> 5-sec skippable video → 1 unlock for 24h. Starter/Pro: no ads at all.</p></div>
+            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>AdMob Rewarded:</b> 15-sec video → 1 unlock for 24h. Starter ₹99/mo & Pro: ZERO ads at all.</p></div>
             <div className="flex gap-3"><BadgeCheck className="h-5 w-5 shrink-0 text-violet-600" /><p className="text-sm leading-tight"><b>Verified only:</b> Every vacancy is manually checked by M Divakar Reddy before publish.</p></div>
           </div>
 
@@ -1293,7 +1363,7 @@ export default function App() {
               </div>
             </div>
 
-            <BannerAd />
+            {!isAdFree && <BannerAd />}
           </div>
         </div>
       </section>
@@ -1324,7 +1394,7 @@ export default function App() {
               </div>
               <div className="mt-4 flex gap-2">
                 <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
-                <button onClick={() => openAdmin('post')} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Vacancy</button>
+                <button onClick={() => navigate('postjob')} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Vacancy</button>
               </div>
             </div>
 
@@ -1333,8 +1403,8 @@ export default function App() {
               <p className="text-sm text-slate-500">For pharma companies & stockist managers. Post once, reach 50k+ MRs instantly.</p>
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-4 py-3">
-                  <div><p className="text-sm font-bold">Post New Vacancy</p><p className="text-xs text-slate-500">Takes 2 mins • Verified badge in 2h</p></div>
-                  <button onClick={() => openAdmin('post')} className="rounded-full bg-sky-600 px-4 py-2 text-xs font-bold text-white">Post Job</button>
+                  <div><p className="text-sm font-bold">Post New Vacancy</p><p className="text-xs text-slate-500">Takes 2 mins • Goes LIVE after Admin approval</p></div>
+                  <button onClick={() => navigate('postjob')} className="rounded-full bg-sky-600 px-4 py-2 text-xs font-bold text-white">Post Job</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Active Posts</p><p className="mt-1 text-2xl font-extrabold">{jobs.length}</p><p className="text-xs text-emerald-600">↑ 3 this week</p></div>
@@ -1470,6 +1540,69 @@ export default function App() {
           </div>
         </section>
       )}
+      {/* POST A VACANCY PAGE — Recruiters submit, Admin approves before LIVE */}
+      {page === 'postjob' && (
+        <section className="mx-auto max-w-[1280px] px-4 py-10">
+          <div className="mx-auto max-w-3xl">
+            <div className="text-center">
+              <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">FOR RECRUITERS</span>
+              <h2 className="mt-3 text-[26px] font-extrabold leading-tight">Post a Vacancy</h2>
+              <p className="mx-auto mt-1 max-w-xl text-sm leading-relaxed text-slate-600">Free to submit. Your vacancy goes <b>LIVE only after verification &amp; approval by M Divakar Reddy (Admin)</b> — usually within 2 hours.</p>
+            </div>
+            <div className="mt-5 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-sky-600">1</p><p className="text-xs font-bold">Fill the Form</p><p className="text-[11px] text-slate-500">Takes 2 minutes</p></div>
+              <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-amber-500">2</p><p className="text-xs font-bold">Admin Verifies</p><p className="text-[11px] text-slate-500">Divakar Reddy calls you</p></div>
+              <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-emerald-600">3</p><p className="text-xs font-bold">Goes LIVE ✅</p><p className="text-[11px] text-slate-500">Visible to 50K+ MRs</p></div>
+            </div>
+
+            {recruiterSubmitted ? (
+              <div className="mt-5 rounded-3xl border bg-white p-8 text-center shadow-lg">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100"><Check className="h-8 w-8 text-emerald-600" /></div>
+                <h3 className="mt-3 text-xl font-extrabold">Submitted Successfully! 🎉</h3>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">Your <b>{recruiterJob.company}</b> vacancy is now <b className="text-amber-600">⏳ Pending Admin Approval</b>. It is <b>not live yet</b>.</p>
+                <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-slate-600">M Divakar Reddy will call <b>{recruiterJob.contactPerson}</b> on <b>{recruiterJob.phone}</b> to verify. After approval, it appears on the Jobs page with a Verified badge.</p>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  <button onClick={resetRecruiterForm} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-5 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Another Vacancy</button>
+                  <button onClick={() => navigate('jobs')} className="rounded-full border px-5 py-2.5 text-sm font-bold">See Live Jobs</button>
+                </div>
+              </div>
+            ) : (
+              <form className="mt-5 rounded-3xl border bg-white p-5 shadow-lg sm:p-6" onSubmit={e => { e.preventDefault(); handleRecruiterSubmit() }}>
+                <p className="text-sm font-extrabold text-slate-900">📋 Vacancy Details</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Company Name *</label><input value={recruiterJob.company} onChange={e => setRecruiterJob({ ...recruiterJob, company: e.target.value })} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Job Title</label><input value={recruiterJob.title} onChange={e => setRecruiterJob({ ...recruiterJob, title: e.target.value })} placeholder="Medical Representative" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Division</label><input value={recruiterJob.division} onChange={e => setRecruiterJob({ ...recruiterJob, division: e.target.value })} placeholder="e.g. Cardio Diabetic" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={recruiterJob.type} onChange={e => setRecruiterJob({ ...recruiterJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Field MR">Field MR</option><option value="Trainee MR">Trainee MR</option><option value="ASM">ASM</option><option value="RSM">RSM</option></select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">State</label><select value={recruiterJob.state} onChange={e => setRecruiterJob({ ...recruiterJob, state: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{LOCATIONS.slice(1).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">City (HQ)</label><input value={recruiterJob.city} onChange={e => setRecruiterJob({ ...recruiterJob, city: e.target.value })} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">HQ Area (optional)</label><input value={recruiterJob.area} onChange={e => setRecruiterJob({ ...recruiterJob, area: e.target.value })} placeholder="e.g. Ameerpet → Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience Required</label><select value={recruiterJob.exp} onChange={e => setRecruiterJob({ ...recruiterJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option>0-2 yrs (Freshers can apply)</option><option>0.5-2 yrs</option><option>1-3 yrs</option><option>1-4 yrs</option><option>2-5 yrs</option><option>4-7 yrs</option><option>6-10 yrs</option></select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">CTC / Salary *</label><input value={recruiterJob.ctc} onChange={e => setRecruiterJob({ ...recruiterJob, ctc: e.target.value })} placeholder="e.g. ₹3.5 - 4.5 LPA + TA/DA" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">No. of Openings</label><input type="number" min="1" value={recruiterJob.vacancies} onChange={e => setRecruiterJob({ ...recruiterJob, vacancies: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={recruiterJob.qual} onChange={e => setRecruiterJob({ ...recruiterJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Job Description</label><textarea value={recruiterJob.desc} onChange={e => setRecruiterJob({ ...recruiterJob, desc: e.target.value })} rows={3} placeholder="Role details, HQ coverage, requirements..." className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2"><input type="checkbox" checked={recruiterJob.urgent} onChange={e => setRecruiterJob({ ...recruiterJob, urgent: e.target.checked })} className="h-4 w-4" /> Mark as Urgent Hiring</label>
+                </div>
+                <p className="mt-5 text-sm font-extrabold text-slate-900">👤 Your Contact Details <span className="text-xs font-semibold text-slate-500">(Admin will call to verify • shown to candidates only after they unlock)</span></p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Your Name &amp; Designation *</label><input value={recruiterJob.contactPerson} onChange={e => setRecruiterJob({ ...recruiterJob, contactPerson: e.target.value })} placeholder="e.g. Ramesh Reddy - Regional Manager" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label><input value={recruiterJob.phone} onChange={e => setRecruiterJob({ ...recruiterJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Email</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                </div>
+                <button type="submit" className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Send className="h-4 w-4" /> Submit for Admin Approval</button>
+                <p className="mt-2 text-center text-xs text-slate-500">By submitting, you confirm this is a genuine vacancy. Fake/duplicate posts are rejected by Admin.</p>
+              </form>
+            )}
+
+            <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
+              <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (Admin &amp; Founder, 15+ yrs pharma recruitment) before it goes live — that is why 50K+ MRs trust MR Vacancies Hub.</p>
+              <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
+            </div>
+          </div>
+        </section>
+      )}
       {/* ADMIN PAGE — M Divakar Reddy */}
       {page === 'admin' && (
         <section className="mx-auto max-w-[1280px] px-4 py-10">
@@ -1538,12 +1671,20 @@ export default function App() {
               <div className="mt-5 flex gap-2 overflow-x-auto pb-1">
                 <button onClick={() => setAdminTab('overview')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='overview' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><LayoutDashboard className="h-4 w-4" /> Overview</button>
                 <button onClick={() => setAdminTab('post')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='post' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Plus className="h-4 w-4" /> Post Vacancy</button>
+                <button onClick={() => setAdminTab('approvals')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='approvals' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Clock3 className="h-4 w-4" /> Approvals{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</button>
                 <button onClick={() => setAdminTab('manage')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='manage' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Briefcase className="h-4 w-4" /> Manage Vacancies ({jobs.length})</button>
                 <button onClick={() => setAdminTab('settings')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='settings' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Settings className="h-4 w-4" /> Settings</button>
               </div>
 
               {adminTab === 'overview' && (
                 <div>
+                  {pendingJobs.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+                      <Clock3 className="h-6 w-6 shrink-0 text-amber-600" />
+                      <p className="flex-1 text-sm"><b>{pendingJobs.length} recruiter {pendingJobs.length === 1 ? 'vacancy is' : 'vacancies are'} waiting for your approval.</b> <span className="text-slate-600">They are NOT live yet — approve to publish.</span></p>
+                      <button onClick={() => setAdminTab('approvals')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Now</button>
+                    </div>
+                  )}
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Live Vacancies</p><p className="mt-1 text-3xl font-extrabold">{jobs.length}</p><p className="text-xs font-semibold text-emerald-600">Showing on Jobs page</p></div>
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Companies</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.company))).length}</p><p className="text-xs font-semibold text-sky-600">Pharma companies</p></div>
@@ -1556,6 +1697,7 @@ export default function App() {
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Post a new vacancy — goes LIVE instantly</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Unlimited contact reveal — no ad, no unlock limit</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Delete / remove any vacancy</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Approve / reject recruiter-submitted vacancies</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Change admin password anytime</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -1585,7 +1727,7 @@ export default function App() {
               {adminTab === 'post' && (
                 <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handlePostJob() }}>
                   <p className="text-base font-extrabold">Post New Vacancy</p>
-                  <p className="text-xs text-slate-500">Fields marked * are required. The vacancy appears instantly on the Jobs page, Home hero and inside the State → City → HQ → Role filters.</p>
+                  <p className="text-xs text-slate-500">Fields marked * are required. As ADMIN, your vacancy goes LIVE instantly (recruiters' vacancies come to the Approvals tab first).</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Company Name *</label><input value={newJob.company} onChange={e => setNewJob({ ...newJob, company: e.target.value })} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Job Title</label><input value={newJob.title} onChange={e => setNewJob({ ...newJob, title: e.target.value })} placeholder="Medical Representative" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
@@ -1606,6 +1748,51 @@ export default function App() {
                   </div>
                   <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Plus className="h-4 w-4" /> Publish Vacancy (Go Live)</button>
                 </form>
+              )}
+
+              {adminTab === 'approvals' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <p className="flex items-center gap-2 text-base font-extrabold"><Clock3 className="h-5 w-5 text-amber-600" /> Pending Approvals ({pendingJobs.length})</p>
+                  <p className="mt-1 text-xs text-slate-500">Recruiters submitted these vacancies. They are <b>NOT live</b> and job seekers cannot see them. Verify the recruiter (call/WhatsApp), then <b>Approve &amp; Publish</b> to make it live — or Reject.</p>
+                  <div className="mt-4 space-y-3">
+                    {pendingJobs.length === 0 && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <BadgeCheck className="mx-auto h-9 w-9 text-emerald-500" />
+                        <p className="mt-2 text-sm font-bold">No pending vacancies</p>
+                        <p className="text-xs text-slate-500">When a recruiter posts a vacancy, it will appear here for your approval.</p>
+                      </div>
+                    )}
+                    {pendingJobs.map(job => (
+                      <div key={job.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</div>
+                          <div className="min-w-[220px] flex-1">
+                            <p className="text-sm font-extrabold">{job.company} • {job.title} <span className="ml-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-extrabold text-slate-900">⏳ PENDING</span>{job.urgent && <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">Urgent</span>}</p>
+                            <p className="text-xs text-slate-600">{job.division} • {job.hq} ({job.state}) • {job.type} • {job.exp}</p>
+                            <p className="text-xs font-semibold text-slate-700">{job.ctc} • {job.vacancies} opening{job.vacancies > 1 ? 's' : ''} • {job.qual}</p>
+                          </div>
+                        </div>
+                        <p className="mt-2 text-sm leading-relaxed text-slate-700">{job.desc}</p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-xs">
+                          <span><b>Submitted by:</b> {job.submittedBy}</span><span className="text-slate-300">|</span>
+                          <span><b>Phone:</b> {job.phone}</span><span className="text-slate-300">|</span>
+                          <span><b>Email:</b> {job.email}</span><span className="text-slate-300">|</span>
+                          <span className="text-slate-500">{job.submittedAt}</span>
+                          <span className="ml-auto flex gap-2">
+                            <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 font-bold text-white"><Phone className="h-3 w-3" /> Call to Verify</a>
+                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from MR Vacancies Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button onClick={() => setSelected(job)} className="rounded-full border bg-white px-4 py-2 text-xs font-bold">View Full Details</button>
+                          <button onClick={() => handleRejectJob(job.id)} className="ml-auto flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white"><X className="h-3.5 w-3.5" /> Reject</button>
+                          <button onClick={() => handleApproveJob(job)} className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow"><Check className="h-3.5 w-3.5" /> Approve &amp; Publish LIVE</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Demo note: submissions are stored on this device/browser only. With a backend (Firebase/Supabase), recruiter submissions from any phone will reach this Approvals list.</p>
+                </div>
               )}
 
               {adminTab === 'manage' && (
@@ -1781,7 +1968,7 @@ export default function App() {
                 <div className="rounded-xl bg-black p-3 text-white">
                   <div className="flex items-center justify-between text-xs">
                     <span className="rounded bg-amber-400 px-2 py-1 font-bold text-black">AD • VIDEO</span>
-                    <span className="rounded bg-white/20 px-2 py-1">{Math.max(0, 5 - Math.floor(rewardProgress / 20))}s</span>
+                    <span className="rounded bg-white/20 px-2 py-1">{Math.max(0, Math.ceil(15 - (rewardProgress * 15) / 100))}s</span>
                   </div>
                   <div className="mt-4 flex flex-col items-center justify-center py-6">
                     <Megaphone className="h-10 w-10 text-amber-400" />
@@ -1794,15 +1981,16 @@ export default function App() {
                   </div>
                 </div>
                 {rewardProgress < 100 ? (
-                  <button onClick={() => { let p = 0; const id = setInterval(() => { p += 10; setRewardProgress(p); if (p >= 100) { clearInterval(id); } }, 200) }} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-3 text-sm font-bold text-white">
-                    <Play className="h-4 w-4" /> Play Ad (5 sec)
+                  <button disabled={rewardProgress > 0} onClick={() => { let p = 0; const id = setInterval(() => { p += 1; setRewardProgress(Math.min(p, 100)); if (p >= 100) { clearInterval(id); } }, 150) }} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-3 text-sm font-bold text-white disabled:opacity-80">
+                    {rewardProgress > 0 ? <>Ad playing… {Math.max(0, Math.ceil(15 - (rewardProgress * 15) / 100))}s left</> : <><Play className="h-4 w-4" /> Play Ad (15 sec)</>}
                   </button>
                 ) : (
                   <button onClick={handleRewardedComplete} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white">
                     <Gift className="h-4 w-4" /> Claim Reward — Reveal Contact
                   </button>
                 )}
-                <p className="mt-2 text-center text-xs text-slate-500">Skip available after 5 sec • Reward granted only if watched fully</p>
+                <p className="mt-2 text-center text-xs text-slate-500">Reward granted only after watching full 15 sec</p>
+                <button onClick={() => { setShowRewarded(null); setRewardProgress(0); setShowPricing(true) }} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip ads forever — Starter ₹99/mo (Zero Ads)</button>
               </div>
             </motion.div>
           </motion.div>
@@ -1882,7 +2070,7 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
                         'Category: Business, Content rating: Everyone (questionnaire: no gambling/violence)',
                         'Data Safety: declare contact, app activity, ads; encryption yes; data deletion via email',
                         'Ads declaration: Yes, contains ads (AdMob)',
-                        'In-app purchases: Subscription tiers mapped to Play Billing (₹199, ₹499, ₹1999 monthly)',
+                        'In-app purchases: Subscription tiers mapped to Play Billing (₹99, ₹499, ₹999 monthly)',
                         'Privacy Policy URL: https://yourdomain.com/privacy-policy.html (generated)',
                         'Screenshots: 1080×1920, feature graphic 1024×500, icon 512×512 (icon.svg ready)',
                         'Assetlinks: https://yourdomain.com/.well-known/assetlinks.json (generated)',
