@@ -746,20 +746,6 @@ export default function App() {
                 <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Jobs for Medical Representatives</p>
               </div>
 
-              <div className="mt-6 rounded-3xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-5 text-center">
-                <button onClick={() => handleSecretTap()} aria-label="M Divakar Reddy — Founder" className="mx-auto block select-none transition active:scale-95">
-                  <img src="/divakar-reddy-circle-400.jpg" alt="M Divakar Reddy — Founder" className="h-28 w-28 aspect-square rounded-full object-cover object-center border-4 border-white shadow-lg" />
-                </button>
-                <p className="mt-3 text-[11px] font-extrabold tracking-widest text-sky-700">FOUNDER • MANAGED BY</p>
-                <p className="mt-1 flex items-center justify-center gap-1.5 text-xl font-extrabold">M Divakar Reddy <BadgeCheck className="h-5 w-5 text-sky-600" /></p>
-                <p className="mt-0.5 text-xs font-medium text-slate-600">Admin &amp; Chief Recruiter • 15+ yrs Pharma • Ex-Sun, Dr. Reddy’s</p>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">50K+</p><p className="text-[10px] font-semibold text-slate-500">MR Community</p></div>
-                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">2,400+</p><p className="text-[10px] font-semibold text-slate-500">Verified Jobs</p></div>
-                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">18K</p><p className="text-[10px] font-semibold text-slate-500">Placements</p></div>
-                </div>
-              </div>
-
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
               <div className="mt-3 space-y-3">
                 <button onClick={() => enterAs('seeker')} className="flex w-full items-center gap-3 rounded-2xl bg-sky-600 p-4 text-left text-white shadow transition hover:bg-sky-700 active:scale-[0.99]">
@@ -779,6 +765,21 @@ export default function App() {
                   <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                 </button>
               </div>
+              <div className="mt-6 rounded-3xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-5 text-center">
+                <button onClick={() => handleSecretTap()} aria-label="M Divakar Reddy — Founder" className="mx-auto block select-none transition active:scale-95">
+                  <img src="/divakar-reddy-circle-400.jpg" alt="M Divakar Reddy — Founder" className="h-28 w-28 aspect-square rounded-full object-cover object-center border-4 border-white shadow-lg" />
+                </button>
+                <p className="mt-3 text-[11px] font-extrabold tracking-widest text-sky-700">MANAGED BY • APP FOUNDER</p>
+                <p className="mt-1 flex items-center justify-center gap-1.5 text-xl font-extrabold">M Divakar Reddy <BadgeCheck className="h-5 w-5 text-sky-600" /></p>
+                <p className="mt-0.5 text-xs font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
+                <p className="mt-0.5 text-xs font-medium text-slate-600">9+ Years Pharma Experience • Ex-Business Development Manager, Wallace Pharmaceuticals Pvt. Ltd.</p>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">50K+</p><p className="text-[10px] font-semibold text-slate-500">MR Community</p></div>
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">2,400+</p><p className="text-[10px] font-semibold text-slate-500">Verified Jobs</p></div>
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">18K</p><p className="text-[10px] font-semibold text-slate-500">Placements</p></div>
+                </div>
+              </div>
+
               <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Free to browse • No signup needed • Every vacancy verified</p>
             </div>
             <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2025 MR Vacancies Hub • Managed by M Divakar Reddy</p>
@@ -912,7 +913,7 @@ export default function App() {
                   <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy" className="h-12 w-12 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" />
                   <div>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
-                    <p className="text-xs font-semibold text-sky-700">Founder & Chief Recruiter • 15+ yrs Pharma</p>
+                    <p className="text-xs font-semibold text-sky-700">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience</p>
                     <p className="text-xs text-slate-500">Verified 2,400+ vacancies • 50k+ MRs placed</p>
                   </div>
                   <BadgeCheck className="ml-auto h-6 w-6 text-sky-600" />
@@ -1455,6 +1456,15 @@ export default function App() {
       {page === 'recruiters' && (
       <section id="recruiters" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
+          <div className="mb-6 flex flex-col items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-center text-white shadow-xl sm:flex-row sm:text-left">
+            <div className="flex-1">
+              <p className="text-[22px] font-extrabold leading-tight">Hiring Medical Representatives?</p>
+              <p className="mt-1 text-sm opacity-90">Post your vacancy FREE and reach 50K+ MRs — it goes LIVE after Admin verification.</p>
+            </div>
+            <button onClick={() => navigate('postjob')} className="flex shrink-0 items-center gap-2 rounded-full bg-amber-400 px-8 py-4 text-lg font-extrabold text-slate-900 shadow-lg transition hover:bg-amber-300 active:scale-95">
+              <Plus className="h-6 w-6" /> Post Vacancy
+            </button>
+          </div>
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-indigo-50 p-6">
               <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MANAGED BY</span>
@@ -1462,8 +1472,8 @@ export default function App() {
                 <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
-                  <p className="text-sm font-semibold text-sky-700">Chief Recruiter & Founder — MR Vacancies Hub</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">15+ years in pharma recruitment. Ex-Area Manager at Sun & Dr. Reddy’s. Personally verifies every vacancy, mentors 50k+ MRs.</p>
+                  <p className="text-sm font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Business Development Manager at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ MRs.</p>
                   <div className="mt-2 flex gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">📞 +91 98XXX XXXXX (Pro unlock)</span>
                     <BadgeCheck className="h-5 w-5 text-emerald-600" />
@@ -1475,9 +1485,9 @@ export default function App() {
                 <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">2,400+</p><p className="text-xs text-slate-500">Vacancies verified</p></div>
                 <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">18K</p><p className="text-xs text-slate-500">Placements</p></div>
               </div>
-              <div className="mt-4 flex gap-2">
-                <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
-                <button onClick={() => navigate('postjob')} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Vacancy</button>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <button onClick={() => navigate('postjob')} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-sky-600 py-3.5 text-[15px] font-extrabold text-white shadow-lg transition hover:bg-sky-700 active:scale-[0.99]"><Plus className="h-5 w-5" /> Post Vacancy</button>
+                <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-3 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
               </div>
             </div>
 
@@ -1487,7 +1497,7 @@ export default function App() {
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-4 py-3">
                   <div><p className="text-sm font-bold">Post New Vacancy</p><p className="text-xs text-slate-500">Takes 2 mins • Goes LIVE after Admin approval</p></div>
-                  <button onClick={() => navigate('postjob')} className="rounded-full bg-sky-600 px-4 py-2 text-xs font-bold text-white">Post Job</button>
+                  <button onClick={() => navigate('postjob')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-5 py-2.5 text-sm font-extrabold text-white shadow transition hover:bg-sky-700"><Plus className="h-4 w-4" /> Post Job</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Active Posts</p><p className="mt-1 text-2xl font-extrabold">{jobs.length}</p><p className="text-xs text-emerald-600">↑ 3 this week</p></div>
@@ -1541,7 +1551,7 @@ export default function App() {
                 <p className="text-xs font-bold tracking-widest opacity-70">PLAY STORE LISTING (COPY-READY)</p>
                 <p className="mt-2 text-sm font-bold">Title: MR Vacancies Hub - Pharma MR Jobs</p>
                 <p className="mt-1 text-xs leading-relaxed opacity-80">Short desc (80 chars): Verified Medical Representative vacancies across India. Daily updates.</p>
-                <p className="mt-1 text-xs leading-relaxed opacity-80">Full desc: India’s most trusted hub for Pharma MR jobs. Verified vacancies from Sun, Cipla, Mankind, Zydus, Alkem, Torrent, Lupin, Abbott, Glenmark & 100+ companies. Managed by M Divakar Reddy (15+ yrs). Features: masked contacts (anti-spam), subscription unlocks, AI resume & interview prep, WhatsApp apply, PWA offline mode. 50K+ MRs, 2400+ verified jobs.</p>
+                <p className="mt-1 text-xs leading-relaxed opacity-80">Full desc: India’s most trusted hub for Pharma MR jobs. Verified vacancies from Sun, Cipla, Mankind, Zydus, Alkem, Torrent, Lupin, Abbott, Glenmark & 100+ companies. Founded & managed by M Divakar Reddy (9+ years pharma experience). Features: masked contacts (anti-spam), subscription unlocks, AI resume & interview prep, WhatsApp apply, PWA offline mode. 50K+ MRs, 2400+ verified jobs.</p>
                 <p className="mt-2 text-[11px] opacity-60">Category: Business • Content rating: Everyone • Data Safety: collected: contact, app activity; encrypted; no sharing • Ads: yes</p>
               </div>
             </div>
@@ -1680,7 +1690,7 @@ export default function App() {
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
               <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
-              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (Admin &amp; Founder, 15+ yrs pharma recruitment) before it goes live — that is why 50K+ MRs trust MR Vacancies Hub.</p>
+              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ MRs trust MR Vacancies Hub.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
           </div>
@@ -1697,7 +1707,7 @@ export default function App() {
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
-                  <p className="text-xs text-slate-500">Admin &amp; Founder — MR Vacancies Hub</p>
+                  <p className="text-xs text-slate-500">App Founder — MR Vacancies Hub • Admin</p>
                 </div>
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
@@ -1740,7 +1750,7 @@ export default function App() {
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-xl font-extrabold">M Divakar Reddy</h2>
                     <span className="rounded-full bg-amber-400 px-2.5 py-0.5 text-[11px] font-extrabold text-slate-900">👑 ADMIN</span>
-                    <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-bold">Founder</span>
+                    <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-bold">App Founder</span>
                     <span className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-bold"><span className="h-1.5 w-1.5 rounded-full bg-white" /> Logged in</span>
                   </div>
                   <p className="mt-1 text-sm opacity-90">Admin Dashboard — you have full access: post vacancies, delete jobs, unlimited contact reveal.</p>
@@ -1917,7 +1927,7 @@ export default function App() {
                     <div className="mt-3 space-y-2 text-sm">
                       <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><b>M Divakar Reddy</b></p>
                       <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><b>divakar</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><b>Admin &amp; Founder</b></p>
+                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><b>App Founder &amp; Admin</b></p>
                       <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></p>
                     </div>
                     <div className="mt-4 flex gap-2">
@@ -1968,7 +1978,7 @@ export default function App() {
             <div className="rounded-2xl bg-white/10 p-4">
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
-              <p className="text-xs opacity-80">15+ yrs Pharma Recruitment • Ex-Sun, Dr. Reddy’s</p>
+              <p className="text-xs opacity-80">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience • Ex-Business Development Manager, Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
               <p className="mt-3 text-xs opacity-80">© 2025 MR Vacancies Hub. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
