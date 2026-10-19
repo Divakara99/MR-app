@@ -655,7 +655,7 @@ export default function App() {
 
               <div className="mt-4 rounded-2xl bg-white/95 p-4 text-slate-900">
                 <div className="flex items-center gap-3">
-                  <img src={`https://i.pravatar.cc/100?img=12`} alt="Divakar" className="h-12 w-12 rounded-full object-cover" />
+                  <img src="/divakar-reddy-100.jpg" alt="M Divakar Reddy" className="h-12 w-12 rounded-full object-cover border-2 border-white shadow" />
                   <div>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
                     <p className="text-xs font-semibold text-sky-700">Founder & Chief Recruiter • 15+ yrs Pharma</p>
@@ -1203,7 +1203,7 @@ export default function App() {
             <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-indigo-50 p-6">
               <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MANAGED BY</span>
               <div className="mt-4 flex gap-4">
-                <img src="https://i.pravatar.cc/200?img=15" className="h-20 w-20 rounded-2xl object-cover" alt="M Divakar" />
+                <img src="/divakar-reddy-200.jpg" className="h-20 w-20 rounded-2xl object-cover border border-sky-100 shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
                   <p className="text-sm font-semibold text-sky-700">Chief Recruiter & Founder — MR Vacancies Hub</p>
