@@ -41,6 +41,19 @@ type Job = {
 type PendingJob = Job & { submittedAt: string; submittedBy: string }
 type EntryRole = 'seeker' | 'recruiter'
 type Account = { role: EntryRole; name: string; mobile: string; email: string; createdAt: string }
+type AccountDeletionRequest = {
+  id: string
+  name: string
+  mobile: string
+  email: string
+  accountCreatedAt: string
+  reasonCategory: string
+  reasonDetails: string
+  status: 'pending' | 'rejected'
+  requestedAt: string
+  reviewedAt?: string
+  adminNote?: string
+}
 
 // MOCK DATA
 const JOBS: Job[] = [
@@ -94,6 +107,15 @@ const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
+const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
+const DELETION_REASON_OPTIONS = [
+  'I got a job and no longer need this account',
+  'I want to use another mobile number',
+  'I want to register as a Recruiter with this mobile',
+  'I created this account by mistake',
+  'Privacy / personal reasons',
+  'Other proper reason',
+]
 const normalizeMobile = (value: string) => {
   const digits = value.replace(/\D/g, '')
   if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
@@ -118,6 +140,15 @@ const loadSessionAccount = (): Account | null => {
     const parsed = JSON.parse(raw) as { role: EntryRole; mobile: string }
     return loadAccounts().find(a => a.role === parsed.role && a.mobile === parsed.mobile) || null
   } catch { return null }
+}
+const loadDeletionRequests = (): AccountDeletionRequest[] => {
+  try {
+    const raw = localStorage.getItem(DELETION_REQUESTS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return (parsed as AccountDeletionRequest[]).filter(r => r && r.id && r.mobile && r.reasonCategory && r.reasonDetails && (r.status === 'pending' || r.status === 'rejected'))
+  } catch { return [] }
 }
 
 // AD COMPONENTS
@@ -212,7 +243,7 @@ export default function App() {
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
   const [adminError, setAdminError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'accounts' | 'manage' | 'settings'>('overview')
   const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
   const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
   // Recruiter-submitted vacancies — LIVE only after Admin approval
@@ -231,7 +262,12 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
   const [authError, setAuthError] = useState('')
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
+  const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
+  const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
+  const [deletionRequestForm, setDeletionRequestForm] = useState({ category: '', details: '' })
+  const [deletionRequestError, setDeletionRequestError] = useState('')
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
+  useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
   useEffect(() => {
     if (currentUser?.role === 'recruiter') {
       setRecruiterJob(prev => ({ ...prev, contactPerson: currentUser.name, phone: `+91 ${currentUser.mobile}`, email: currentUser.email }))
@@ -422,6 +458,83 @@ export default function App() {
     setShowMobileMenu(false)
     setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
     navigate('welcome')
+  }
+  const openDeletionRequest = () => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    setDeletionRequestError('')
+    setShowMobileMenu(false)
+    setShowDeletionRequestModal(true)
+  }
+  const handleSubmitDeletionRequest = () => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    const reasonCategory = deletionRequestForm.category.trim()
+    const reasonDetails = deletionRequestForm.details.trim().replace(/\s+/g, ' ')
+    if (!reasonCategory) { setDeletionRequestError('Please select a reason for deleting your Job Seeker account.'); return }
+    if (reasonDetails.length < 20) { setDeletionRequestError('Please write a proper reason in at least 20 characters so Admin can understand and review it.'); return }
+    if (reasonDetails.length > 500) { setDeletionRequestError('Please keep the reason within 500 characters.'); return }
+    if (deletionRequests.some(r => r.mobile === currentUser.mobile && r.status === 'pending')) {
+      setDeletionRequestError('Your previous deletion request is already pending with Admin.')
+      return
+    }
+    const request: AccountDeletionRequest = {
+      id: 'delete-request-' + Date.now(),
+      name: currentUser.name,
+      mobile: currentUser.mobile,
+      email: currentUser.email,
+      accountCreatedAt: currentUser.createdAt,
+      reasonCategory,
+      reasonDetails,
+      status: 'pending',
+      requestedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+    }
+    const updatedRequests = [request, ...deletionRequests.filter(r => !(r.mobile === currentUser.mobile && r.status === 'rejected'))]
+    setDeletionRequests(updatedRequests)
+    try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
+    setDeletionRequestForm({ category: '', details: '' })
+    setDeletionRequestError('')
+    setShowDeletionRequestModal(false)
+    setToast('Account deletion request submitted. Admin Divakar Reddy will review your reason.')
+  }
+  const handleWithdrawDeletionRequest = () => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    const updatedRequests = deletionRequests.filter(r => !(r.mobile === currentUser.mobile && r.status === 'pending'))
+    setDeletionRequests(updatedRequests)
+    try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
+    setShowDeletionRequestModal(false)
+    setToast('Your account deletion request has been withdrawn.')
+  }
+  const handleApproveDeletionRequest = (request: AccountDeletionRequest) => {
+    if (!isAdmin) return
+    const updatedAccounts = accounts.filter(a => !(a.role === 'seeker' && a.mobile === request.mobile))
+    setAccounts(updatedAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    const updatedRequests = deletionRequests.filter(r => r.id !== request.id)
+    setDeletionRequests(updatedRequests)
+    try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
+    if (currentUser?.role === 'seeker' && currentUser.mobile === request.mobile) {
+      setCurrentUser(null)
+      setHasAuthenticated(false)
+      try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+      setSaved(new Set())
+      setApplied(new Set())
+      setRevealed(new Set())
+      setDailyUnlocks(0)
+      setTier('free')
+      setShowDeletionRequestModal(false)
+    }
+    setToast(`Job Seeker account deleted for ${request.name}. Mobile +91 ${request.mobile} is now free.`)
+  }
+  const handleRejectDeletionRequest = (request: AccountDeletionRequest) => {
+    if (!isAdmin) return
+    const updatedRequests = deletionRequests.map(r => r.id === request.id ? {
+      ...r,
+      status: 'rejected' as const,
+      reviewedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      adminNote: 'Admin did not find this reason sufficient. You may raise a new request with a proper, clear reason.',
+    } : r)
+    setDeletionRequests(updatedRequests)
+    try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
+    setToast(`Deletion request rejected for ${request.name}. The Job Seeker account remains active.`)
   }
   const handleAdminLogin = () => {
     const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
@@ -657,6 +770,9 @@ export default function App() {
   const authRecruiterBlockAccount = entryRole === 'seeker' ? accounts.find(a => a.role === 'recruiter' && a.mobile === normalizedAuthMobile) : undefined
   const authOtherRoleAccount = entryRole ? accounts.find(a => a.role !== entryRole && a.mobile === normalizedAuthMobile) : undefined
   const authExistingAccount = entryRole && !authRecruiterBlockAccount ? accounts.find(a => a.role === entryRole && a.mobile === normalizedAuthMobile) : undefined
+  const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
+  const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
+  const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
 
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
@@ -709,7 +825,7 @@ export default function App() {
               </button>
               {isAdmin && (
               <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length} pending</span>}
+                <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length} pending</span>}
               </button>
               )}
             </nav>
@@ -727,6 +843,7 @@ export default function App() {
                     <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
                     <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
                   </span>
+                  {currentUser.role === 'seeker' && <button onClick={openDeletionRequest} title={myDeletionRequest?.status === 'pending' ? 'Account deletion request pending' : 'Request Account Deletion'} className="shrink-0 rounded-full bg-white p-1.5 text-amber-600 shadow-sm hover:bg-amber-50 hover:text-amber-700"><FileText className="h-3.5 w-3.5" /></button>}
                   {currentUser.role === 'recruiter' && <button onClick={() => setShowDeleteAccountConfirm(true)} title="Delete Recruiter Account" className="shrink-0 rounded-full bg-white p-1.5 text-red-500 shadow-sm hover:bg-red-50 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>}
                   <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
                 </div>
@@ -803,6 +920,9 @@ export default function App() {
                     </div>
                     {currentUser.role === 'recruiter' && (
                       <button onClick={() => { setShowMobileMenu(false); setShowDeleteAccountConfirm(true) }} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 py-2 text-[11px] font-extrabold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Delete Recruiter Account</button>
+                    )}
+                    {currentUser.role === 'seeker' && (
+                      <button onClick={openDeletionRequest} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 py-2 text-[11px] font-extrabold text-amber-700"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</button>
                     )}
                   </div>
                 )}
@@ -1888,6 +2008,18 @@ export default function App() {
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           <h2 className="text-[22px] font-extrabold">Saved Vacancies</h2>
           <p className="text-sm text-slate-500">{saved.size} jobs saved</p>
+          {currentUser && currentUser.role === 'seeker' && hasAuthenticated && (
+            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-extrabold tracking-widest text-sky-700">MY JOB SEEKER ACCOUNT</p>
+                <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
+                <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
+                <p className="mt-1 text-[11px] font-semibold text-slate-600">{myDeletionRequest?.status === 'pending' ? '⏳ Account deletion request pending with Admin.' : myDeletionRequest?.status === 'rejected' ? 'Previous deletion request was rejected by Admin.' : 'Account deletion is available only after Admin approves a proper reason.'}</p>
+              </div>
+              <button onClick={openDeletionRequest} className="flex shrink-0 items-center justify-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-extrabold text-amber-700 hover:bg-amber-50"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'View Request' : 'Request Account Deletion'}</button>
+            </div>
+          )}
           <div className="mt-4 grid gap-4">
             {Array.from(saved).length===0 ? (
               <div className="rounded-2xl border bg-white p-10 text-center">
@@ -2042,6 +2174,7 @@ export default function App() {
                 <button onClick={() => setAdminTab('overview')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='overview' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><LayoutDashboard className="h-4 w-4" /> Overview</button>
                 <button onClick={() => setAdminTab('post')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='post' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Plus className="h-4 w-4" /> Post Vacancy</button>
                 <button onClick={() => setAdminTab('approvals')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='approvals' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Clock3 className="h-4 w-4" /> Approvals{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</button>
+                <button onClick={() => setAdminTab('accounts')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='accounts' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><FileText className="h-4 w-4" /> Account Requests{pendingDeletionRequests.length > 0 && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">{pendingDeletionRequests.length}</span>}</button>
                 <button onClick={() => setAdminTab('manage')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='manage' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Briefcase className="h-4 w-4" /> Manage Vacancies ({jobs.length})</button>
                 <button onClick={() => setAdminTab('settings')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='settings' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Settings className="h-4 w-4" /> Settings</button>
               </div>
@@ -2053,6 +2186,13 @@ export default function App() {
                       <Clock3 className="h-6 w-6 shrink-0 text-amber-600" />
                       <p className="flex-1 text-sm"><b>{pendingJobs.length} recruiter {pendingJobs.length === 1 ? 'vacancy is' : 'vacancies are'} waiting for your approval.</b> <span className="text-slate-600">They are NOT live yet — approve to publish.</span></p>
                       <button onClick={() => setAdminTab('approvals')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Now</button>
+                    </div>
+                  )}
+                  {pendingDeletionRequests.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
+                      <FileText className="h-6 w-6 shrink-0 text-red-500" />
+                      <p className="flex-1 text-sm"><b>{pendingDeletionRequests.length} Job Seeker account-deletion {pendingDeletionRequests.length === 1 ? 'request is' : 'requests are'} waiting.</b> <span className="text-slate-600">Delete an account only if the user has given a proper reason.</span></p>
+                      <button onClick={() => setAdminTab('accounts')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Requests</button>
                     </div>
                   )}
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -2068,6 +2208,7 @@ export default function App() {
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Unlimited contact reveal — no ad, no unlock limit</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Delete / remove any vacancy</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Approve / reject recruiter-submitted vacancies</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Review Job Seeker account-deletion requests</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Change admin password anytime</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -2162,6 +2303,63 @@ export default function App() {
                     ))}
                   </div>
                   <p className="mt-3 text-xs leading-relaxed text-slate-400">Demo note: submissions are stored on this device/browser only. With a backend (Firebase/Supabase), recruiter submissions from any phone will reach this Approvals list.</p>
+                </div>
+              )}
+
+              {adminTab === 'accounts' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <p className="flex items-center gap-2 text-base font-extrabold"><FileText className="h-5 w-5 text-red-500" /> Job Seeker Account Deletion Requests ({pendingDeletionRequests.length} pending)</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Job Seekers cannot delete their account directly. They raise a request from their account with a reason. <b>Approve &amp; Delete</b> only when the reason is proper; otherwise Reject and the account will remain active.</p>
+                  <div className="mt-4 space-y-3">
+                    {pendingDeletionRequests.length === 0 && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <BadgeCheck className="mx-auto h-9 w-9 text-emerald-500" />
+                        <p className="mt-2 text-sm font-bold">No pending deletion requests</p>
+                        <p className="text-xs text-slate-500">When a Job Seeker raises an account-deletion request, it will appear here.</p>
+                      </div>
+                    )}
+                    {pendingDeletionRequests.map(req => (
+                      <div key={req.id} className="rounded-2xl border border-red-200 bg-red-50/50 p-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{req.name.trim().charAt(0).toUpperCase()}</div>
+                          <div className="min-w-[220px] flex-1">
+                            <p className="text-sm font-extrabold">{req.name} <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">JOB SEEKER</span> <span className="ml-1 rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-extrabold text-white">DELETION REQUEST</span></p>
+                            <p className="text-xs text-slate-600">+91 {req.mobile} • {req.email}</p>
+                            <p className="text-[11px] text-slate-500">Account created: {new Date(req.accountCreatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} • Requested: {req.requestedAt}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-xl bg-white p-3">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">REASON GIVEN BY JOB SEEKER</p>
+                          <p className="mt-1 text-sm font-extrabold text-slate-900">{req.reasonCategory}</p>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700">{req.reasonDetails}</p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
+                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from MR Vacancies Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
+                          <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
+                        </div>
+                        <p className="mt-2 text-[11px] font-semibold text-red-600">Approval permanently deletes this Job Seeker account and frees the mobile number.</p>
+                      </div>
+                    ))}
+                  </div>
+                  {rejectedDeletionRequests.length > 0 && (
+                    <div className="mt-6">
+                      <p className="text-sm font-extrabold text-slate-700">Rejected Requests</p>
+                      <div className="mt-2 space-y-2">
+                        {rejectedDeletionRequests.map(req => (
+                          <div key={req.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs">
+                            <span className="font-extrabold">{req.name}</span>
+                            <span className="text-slate-500">+91 {req.mobile}</span>
+                            <span className="rounded-full bg-slate-200 px-2 py-0.5 font-bold text-slate-600">REJECTED</span>
+                            <span className="min-w-[180px] flex-1 text-slate-600">{req.reasonCategory}: {req.reasonDetails}</span>
+                            <span className="text-slate-400">{req.reviewedAt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Demo note: requests and accounts are stored on this device/browser only. With a backend, requests from every Job Seeker phone will reach this Admin list.</p>
                 </div>
               )}
 
@@ -2516,6 +2714,65 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
                 <p><b>Ads:</b> Free uses AdMob Rewarded (watch ad = 1 unlock). Banner & Interstitial are skippable and never block apply flow. Starter/Pro are ad-free (Play Store: declare “Contains ads” only for Free).</p>
                 <p className="mt-1"><b>Billing:</b> On Play Store, these map to Google Play Billing subscriptions. Web PWA uses UPI/Stripe — demo here.</p>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* JOB SEEKER ACCOUNT DELETION REQUEST — Admin approval required */}
+      <AnimatePresence>
+        {showDeletionRequestModal && currentUser && currentUser.role === 'seeker' && hasAuthenticated && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowDeletionRequestModal(false)}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[480px] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-600"><FileText className="h-7 w-7" /></div>
+              <h3 className="mt-3 text-center text-xl font-extrabold">Request Account Deletion</h3>
+              <div className="mt-4 rounded-2xl bg-slate-50 p-3 text-center">
+                <p className="font-extrabold">{currentUser.name}</p>
+                <p className="mt-0.5 text-xs text-slate-500">Job Seeker • +91 {currentUser.mobile} • {currentUser.email}</p>
+              </div>
+              {myDeletionRequest?.status === 'pending' ? (
+                <div>
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="flex items-center gap-2 text-sm font-extrabold text-amber-900"><Clock3 className="h-4 w-4" /> Request Pending with Admin</p>
+                    <p className="mt-1 text-xs text-amber-700">Requested on {myDeletionRequest.requestedAt}. Your account remains active until Admin Divakar Reddy approves the request.</p>
+                    <p className="mt-3 text-[10px] font-extrabold tracking-widest text-amber-600">YOUR REASON</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{myDeletionRequest.reasonCategory}</p>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-700">{myDeletionRequest.reasonDetails}</p>
+                  </div>
+                  <div className="mt-5 flex gap-2">
+                    <button onClick={() => setShowDeletionRequestModal(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Close</button>
+                    <button onClick={handleWithdrawDeletionRequest} className="flex-1 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Withdraw Request</button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={e => { e.preventDefault(); handleSubmitDeletionRequest() }}>
+                  <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">Job Seeker accounts are not deleted directly. Raise a request with a <b>proper reason</b>. Admin Divakar Reddy will review it and delete the account only if the reason is valid.</p>
+                  {myDeletionRequest?.status === 'rejected' && (
+                    <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs leading-relaxed text-red-700">
+                      <p className="font-extrabold">Previous request rejected{myDeletionRequest.reviewedAt ? ` • ${myDeletionRequest.reviewedAt}` : ''}</p>
+                      <p className="mt-1">{myDeletionRequest.adminNote || 'Admin did not find the previous reason sufficient.'}</p>
+                    </div>
+                  )}
+                  <div className="mt-4">
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Select Reason *</label>
+                    <select value={deletionRequestForm.category} onChange={e => { setDeletionRequestForm(prev => ({ ...prev, category: e.target.value })); setDeletionRequestError('') }} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <option value="">Select a proper reason</option>
+                      {DELETION_REASON_OPTIONS.map(reason => <option key={reason} value={reason}>{reason}</option>)}
+                    </select>
+                  </div>
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Explain Your Reason Properly *</label>
+                    <textarea value={deletionRequestForm.details} onChange={e => { setDeletionRequestForm(prev => ({ ...prev, details: e.target.value })); setDeletionRequestError('') }} rows={4} maxLength={500} placeholder="Write clearly why you want this Job Seeker account deleted..." className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    <p className="mt-1 text-right text-[11px] font-semibold text-slate-400">{deletionRequestForm.details.trim().length}/500 characters • Minimum 20</p>
+                  </div>
+                  {deletionRequestError && <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{deletionRequestError}</p>}
+                  <div className="mt-4 flex gap-2">
+                    <button type="button" onClick={() => setShowDeletionRequestModal(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Cancel</button>
+                    <button type="submit" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-amber-500 py-2.5 text-sm font-bold text-white hover:bg-amber-600"><Send className="h-4 w-4" /> Submit to Admin</button>
+                  </div>
+                  <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">Submitting this form does not delete your account immediately. Admin approval is required.</p>
+                </form>
+              )}
             </motion.div>
           </motion.div>
         )}
