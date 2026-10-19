@@ -148,6 +148,7 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved'>('home')
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
@@ -197,6 +198,16 @@ export default function App() {
       aiEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
   }, [aiMessages])
+
+  const navigate = (p: typeof page) => {
+    setPage(p)
+    setShowMobileMenu(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  useEffect(() => {
+    if (page !== 'jobs') setShowFilters(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [page])
 
   useEffect(() => {
     if (toast) {
@@ -302,7 +313,7 @@ export default function App() {
   }
 
   // scroll to jobs
-  const scrollToJobs = () => document.getElementById('vacancies')?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToJobs = () => navigate('jobs')
 
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
@@ -316,7 +327,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-[10px] font-medium text-slate-400 sm:inline">ca-app-pub-XXXX/XXXX • AdMob • Adaptive Banner</span>
-            <button onClick={() => setShowAndroidModal(true)} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Get Android App</button>
+            <button onClick={() => navigate('android')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Get Android App</button>
           </div>
         </div>
       </div>
@@ -325,7 +336,7 @@ export default function App() {
       <header className="sticky top-[37px] z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80">
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <button onClick={() => navigate('home')} className="flex items-center gap-3 text-left">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600 text-white shadow-md">
                 <Briefcase className="h-5 w-5" />
               </div>
@@ -336,14 +347,15 @@ export default function App() {
                 </div>
                 <p className="hidden text-[11px] font-medium text-slate-500 sm:block">India’s Trusted Pharma Jobs • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
               </div>
-            </div>
+            </button>
 
             <nav className="hidden items-center gap-1 lg:flex">
-              <a href="#vacancies" className="rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100">Jobs <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-700">{JOBS.length} New</span></a>
-              <a href="#pricing" className="rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100">Subscription</a>
-              <a href="#recruiters" className="rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100">For Recruiters</a>
-              <a href="#ai" className="rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100">AI Assistant</a>
-              <button onClick={() => setShowAndroidModal(true)} className="ml-1 flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-600">
+              <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='home'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Home</button>
+              <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{JOBS.length} New</span></button>
+              <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
+              <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
+              <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
+              <button onClick={() => navigate('android')} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold hover:bg-emerald-600 ${page==='android'?'bg-slate-900 text-white':'bg-emerald-500 text-white'}`}>
                 <Smartphone className="h-4 w-4" /> Android App
               </button>
             </nav>
@@ -416,20 +428,17 @@ export default function App() {
                 <p className="mb-2 text-[11px] font-bold tracking-widest text-slate-400">NAVIGATION</p>
                 <div className="grid gap-2">
                   {[
-                    { label: 'Browse Vacancies', sub: `${JOBS.length} verified jobs`, icon: Layers, href: '#vacancies' },
-                    { label: 'Subscription Plans', sub: 'Free → Starter ₹199 → Pro ₹499', icon: Crown, href: '#pricing' },
-                    { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, href: '#recruiters' },
-                    { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, href: '#ai' },
-                    { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, href: '#', action: () => { setShowAndroidModal(true); setShowMobileMenu(false) } },
+                    { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
+                    { label: 'Browse Vacancies', sub: `${JOBS.length} verified jobs`, icon: Layers, page: 'jobs' as const },
+                    { label: 'Subscription Plans', sub: 'Free → Starter ₹199 → Pro ₹499', icon: Crown, page: 'pricing' as const },
+                    { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
+                    { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
+                    { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, page: 'android' as const },
                   ].map(item => (
-                    <a
+                    <button
                       key={item.label}
-                      href={item.href}
-                      onClick={(e) => {
-                        if (item.action) { e.preventDefault(); item.action() }
-                        else setShowMobileMenu(false)
-                      }}
-                      className="flex items-center gap-3 rounded-2xl border bg-white px-3 py-3 hover:bg-slate-50 active:scale-[0.98] transition"
+                      onClick={() => navigate(item.page)}
+                      className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left hover:bg-slate-50 active:scale-[0.98] transition"
                     >
                       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600"><item.icon className="h-5 w-5" /></div>
                       <div className="flex-1">
@@ -437,7 +446,7 @@ export default function App() {
                         <p className="text-xs text-slate-500">{item.sub}</p>
                       </div>
                       <ChevronRight className="h-4 w-4 text-slate-400" />
-                    </a>
+                    </button>
                   ))}
                 </div>
 
@@ -453,7 +462,7 @@ export default function App() {
                   <button onClick={() => { handleInstall(); setShowMobileMenu(false) }} className="flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-white shadow hover:bg-sky-700">
                     <Download className="h-5 w-5" /> Install PWA
                   </button>
-                  <button onClick={() => { setShowMobileMenu(false); document.getElementById('vacancies')?.scrollIntoView({ behavior: 'smooth' }) }} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
+                  <button onClick={() => navigate('jobs')} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
                     <Search className="h-4 w-4" /> Browse Jobs
                   </button>
                 </div>
@@ -498,6 +507,8 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {page === 'home' && (
+      <>
       {/* HERO */}
       <section className="mx-auto max-w-[1280px] px-4 pb-6 pt-6">
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -609,7 +620,7 @@ export default function App() {
                   <div className="rounded-xl bg-slate-50 p-2"><p className="font-extrabold">4.9★</p><p className="text-slate-500">Recruiter rating</p></div>
                   <div className="rounded-xl bg-slate-50 p-2"><p className="font-extrabold">24h</p><p className="text-slate-500">Response time</p></div>
                 </div>
-                <button onClick={() => document.getElementById('recruiters')?.scrollIntoView({ behavior: 'smooth' })} className="mt-3 w-full rounded-xl bg-sky-600 py-2.5 text-sm font-bold text-white">Contact Recruiter</button>
+                <button onClick={() => navigate('recruiters')} className="mt-3 w-full rounded-xl bg-sky-600 py-2.5 text-sm font-bold text-white">Contact Recruiter</button>
               </div>
             </div>
 
@@ -630,8 +641,60 @@ export default function App() {
           <BannerAd />
         </div>
       </section>
+      </>
+      )}
 
-      {/* MAIN CONTENT */}
+      {/* HOME Featured Preview - required data only on home */}
+      {page === 'home' && (
+        <section className="mx-auto max-w-[1280px] px-4 pb-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-[22px] font-extrabold">Featured Verified Vacancies</h2>
+              <p className="text-sm text-slate-500">Preview of {filtered.length} openings — filters State, City, HQ on Jobs page</p>
+            </div>
+            <button onClick={() => navigate('jobs')} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">View All Jobs →</button>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {filtered.slice(0, 4).map((job) => (
+              <div key={job.id} className="rounded-2xl border bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-bold text-white" style={{ background: job.color }}>{job.company.slice(0,2).toUpperCase()}</div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold">{job.company} • {job.title}</p>
+                    <p className="text-xs text-slate-500">{job.hq} • {job.exp} • {job.ctc}</p>
+                  </div>
+                  {job.verified && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Verified</span>}
+                </div>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-600">{job.desc}</p>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => setSelected(job)} className="flex-1 rounded-full border bg-white py-2 text-sm font-bold">View Details</button>
+                  <button onClick={() => navigate('jobs')} className="flex-1 rounded-full bg-sky-600 py-2 text-sm font-bold text-white">Apply</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <button onClick={() => navigate('pricing')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
+              <Crown className="h-5 w-5 text-amber-500" />
+              <p className="mt-2 text-sm font-bold">Subscription Plans</p>
+              <p className="text-xs text-slate-500">Free vs Starter ₹199 vs Pro ₹499</p>
+            </button>
+            <button onClick={() => navigate('ai')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
+              <Sparkles className="h-5 w-5 text-violet-600" />
+              <p className="mt-2 text-sm font-bold">AI Assistant</p>
+              <p className="text-xs text-slate-500">Resume, interview, RCPA help</p>
+            </button>
+            <button onClick={() => navigate('recruiters')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
+              <Building2 className="h-5 w-5 text-sky-600" />
+              <p className="mt-2 text-sm font-bold">For Recruiters</p>
+              <p className="text-xs text-slate-500">Managed by M Divakar Reddy</p>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* JOBS PAGE */}
+      {page === 'jobs' && (
       <section id="vacancies" className="mx-auto max-w-[1280px] px-4 pb-10">
         <div className="flex flex-col gap-6 lg:flex-row">
           {/* Filters sidebar */}
@@ -948,8 +1011,9 @@ export default function App() {
           </div>
         </div>
       </section>
-
-      {/* PRICING */}
+      )}
+      {/* PRICING PAGE */}
+      {page === 'pricing' && (
       <section id="pricing" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="mx-auto max-w-3xl text-center">
@@ -995,8 +1059,9 @@ export default function App() {
           </div>
         </div>
       </section>
-
-      {/* AI ASSISTANT */}
+      )}
+      {/* AI PAGE */}
+      {page === 'ai' && (
       <section id="ai" className="mx-auto max-w-[1280px] px-4 py-10">
         <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="rounded-2xl border bg-white p-5">
@@ -1070,8 +1135,9 @@ export default function App() {
           </div>
         </div>
       </section>
-
-      {/* RECRUITER / M DIVAKAR REDDY */}
+      )}
+      {/* RECRUITERS PAGE */}
+      {page === 'recruiters' && (
       <section id="recruiters" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-6 lg:grid-cols-2">
@@ -1125,8 +1191,9 @@ export default function App() {
           </div>
         </div>
       </section>
-
-      {/* ANDROID / PLAY STORE SECTION */}
+      )}
+      {/* ANDROID PAGE */}
+      {page === 'android' && (
       <section className="mx-auto max-w-[1280px] px-4 py-10">
         <div className="rounded-3xl border bg-slate-900 p-6 text-white sm:p-8">
           <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
@@ -1152,7 +1219,7 @@ export default function App() {
 
               <div className="mt-6 flex flex-wrap gap-3">
                 <button onClick={() => setShowAndroidModal(true)} className="rounded-full bg-emerald-500 px-6 py-3 text-sm font-bold text-white hover:bg-emerald-600">View Play Store Assets →</button>
-                <a href="#vacancies" className="rounded-full bg-white px-6 py-3 text-sm font-bold text-slate-900">Preview App</a>
+                <button onClick={() => navigate('jobs')} className="rounded-full bg-white px-6 py-3 text-sm font-bold text-slate-900">Preview App</button>
               </div>
 
               <div className="mt-6 rounded-2xl bg-white/10 p-4">
@@ -1193,8 +1260,8 @@ export default function App() {
           </div>
         </div>
       </section>
-
-      {/* FAQ */}
+      )}
+      {page === 'home' && (
       <section className="mx-auto max-w-[1280px] px-4 pb-10">
         <div className="rounded-2xl border bg-white p-6">
           <h3 className="text-lg font-extrabold">FAQ — MR Vacancies Hub</h3>
@@ -1213,7 +1280,35 @@ export default function App() {
           </div>
         </div>
       </section>
-
+      )}
+      {/* SAVED PAGE */}
+      {page === 'saved' && (
+        <section className="mx-auto max-w-[1280px] px-4 py-10">
+          <h2 className="text-[22px] font-extrabold">Saved Vacancies</h2>
+          <p className="text-sm text-slate-500">{saved.size} jobs saved</p>
+          <div className="mt-4 grid gap-4">
+            {Array.from(saved).length===0 ? (
+              <div className="rounded-2xl border bg-white p-10 text-center">
+                <Bookmark className="mx-auto h-10 w-10 text-slate-300"/>
+                <p className="mt-2 text-sm font-bold">No saved jobs yet</p>
+                <button onClick={() => navigate('jobs')} className="mt-3 rounded-full bg-sky-600 px-5 py-2 text-sm font-bold text-white">Browse Jobs</button>
+              </div>
+            ) : (
+              JOBS.filter(j=>saved.has(j.id)).map(job=>(
+                <div key={job.id} className="rounded-2xl border bg-white p-4">
+                  <p className="font-bold">{job.company} • {job.title}</p>
+                  <p className="text-sm text-slate-500">{job.hq} • {job.ctc}</p>
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={()=>setSelected(job)} className="flex-1 rounded-full border py-2 text-sm font-bold">View</button>
+                    <button onClick={()=>handleApply(job)} className="flex-1 rounded-full bg-sky-600 py-2 text-sm font-bold text-white">Apply</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
+      {/* FOOTER - always visible */}
       {/* FOOTER */}
       <footer className="border-t bg-slate-900 text-slate-300">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
@@ -1229,10 +1324,10 @@ export default function App() {
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
               <ul className="mt-3 space-y-2 text-sm opacity-80">
-                <li><a href="#vacancies">Browse Vacancies</a></li>
-                <li><a href="#pricing">Subscription</a></li>
-                <li><a href="#ai">AI Assistant</a></li>
-                <li><a href="#recruiters">For Recruiters</a></li>
+                <li><button onClick={() => navigate('jobs')} className="hover:text-white">Browse Vacancies</button></li>
+                <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
+                <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
+                <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
               </ul>
             </div>
             <div>
@@ -1468,7 +1563,7 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => setShowAndroidModal(false)} className="flex-1 rounded-full bg-slate-900 py-3 text-sm font-bold text-white">Got it — Build AAB</button>
-                    <button onClick={() => { setShowAndroidModal(false); document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' }) }} className="rounded-full border bg-white px-6 py-3 text-sm font-bold">See Monetization</button>
+                    <button onClick={() => { setShowAndroidModal(false); navigate('pricing') }} className="rounded-full border bg-white px-6 py-3 text-sm font-bold">See Monetization</button>
                   </div>
                 </div>
               </div>
@@ -1519,23 +1614,23 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
         )}
       </AnimatePresence>
 
-      {/* Bottom nav for mobile (app-like) */}
+      {/* Bottom nav for mobile (app-like) - page navigation */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-[1280px] items-center justify-around px-2 py-2">
-          <a href="#vacancies" className="flex flex-col items-center gap-1 rounded-xl px-4 py-1 hover:bg-slate-50">
-            <Layers className="h-5 w-5 text-sky-600" /><span className="text-[11px] font-bold">Jobs</span>
-          </a>
-          <button onClick={() => setSaved(s => s)} className="flex flex-col items-center gap-1 rounded-xl px-4 py-1">
-            <Bookmark className={`h-5 w-5 ${saved.size ? 'text-sky-600' : 'text-slate-400'}`} /><span className="text-[11px] font-bold">Saved {saved.size ? `•${saved.size}` : ''}</span>
+          <button onClick={() => navigate('jobs')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='jobs'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+            <Layers className={`h-5 w-5 ${page==='jobs'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='jobs'?'text-white':''}`}>Jobs</span>
           </button>
-          <a href="#ai" className="flex flex-col items-center gap-1 rounded-xl bg-sky-600 px-5 py-1.5 text-white">
+          <button onClick={() => navigate('saved')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='saved'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+            <Bookmark className={`h-5 w-5 ${page==='saved'?'text-white': saved.size ? 'text-sky-600' : 'text-slate-400'}`} /><span className={`text-[11px] font-bold ${page==='saved'?'text-white':''}`}>Saved {saved.size ? `•${saved.size}` : ''}</span>
+          </button>
+          <button onClick={() => navigate('ai')} className={`flex flex-col items-center gap-1 rounded-xl px-5 py-1.5 ${page==='ai'?'bg-slate-900 text-white shadow':'bg-sky-600 text-white'}`}>
             <Sparkles className="h-5 w-5" /><span className="text-[11px] font-bold">AI Chat</span>
-          </a>
-          <button onClick={() => setShowPricing(true)} className="flex flex-col items-center gap-1 rounded-xl px-4 py-1">
-            <Crown className="h-5 w-5 text-amber-500" /><span className="text-[11px] font-bold">Pro</span>
           </button>
-          <button onClick={() => setShowAndroidModal(true)} className="flex flex-col items-center gap-1 rounded-xl px-4 py-1">
-            <Smartphone className="h-5 w-5 text-emerald-600" /><span className="text-[11px] font-bold">Android</span>
+          <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+            <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
+          </button>
+          <button onClick={() => navigate('android')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='android'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+            <Smartphone className={`h-5 w-5 ${page==='android'?'text-white':'text-emerald-600'}`} /><span className={`text-[11px] font-bold ${page==='android'?'text-white':''}`}>Android</span>
           </button>
         </div>
       </div>
