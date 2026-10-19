@@ -230,6 +230,7 @@ export default function App() {
   const [authStep, setAuthStep] = useState<'mobile' | 'register'>('mobile')
   const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
   const [authError, setAuthError] = useState('')
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
   useEffect(() => {
     if (currentUser?.role === 'recruiter') {
@@ -342,7 +343,8 @@ export default function App() {
   const enterAs = (r: EntryRole) => {
     setEntryRole(r)
     const existingForRole = currentUser?.role === r ? currentUser : (currentUser ? accounts.find(a => a.role === r && a.mobile === currentUser.mobile) : undefined)
-    if (hasAuthenticated && existingForRole) { completeUserAuth(existingForRole, false); return }
+    const blockedByRecruiter = r === 'seeker' && existingForRole ? accounts.some(a => a.role === 'recruiter' && a.mobile === existingForRole.mobile) : false
+    if (hasAuthenticated && existingForRole && !blockedByRecruiter) { completeUserAuth(existingForRole, false); return }
     setAuthStep('mobile')
     setAuthError('')
     if (existingForRole) {
@@ -356,6 +358,10 @@ export default function App() {
     const selectedRole = entryRole ?? 'seeker'
     const mobile = normalizeMobile(authForm.mobile)
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number (starting with 6, 7, 8 or 9).'); return }
+    if (selectedRole === 'seeker') {
+      const recruiterAccount = accounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
+      if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`); return }
+    }
     const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
     if (existing) { completeUserAuth(existing, false); return }
     const otherRoleAccount = accounts.find(a => a.mobile === mobile)
@@ -370,6 +376,10 @@ export default function App() {
     const name = authForm.name.trim().replace(/\s+/g, ' ')
     const email = authForm.email.trim().toLowerCase()
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
+    if (selectedRole === 'seeker') {
+      const recruiterAccount = accounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
+      if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
+    }
     if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
     if (!isValidEmail(email)) { setAuthError('Enter a correct email ID, e.g. yourname@gmail.com'); return }
     const existing = accounts.find(a => a.role === selectedRole && a.mobile === mobile)
@@ -389,6 +399,28 @@ export default function App() {
     setAuthError('')
     setShowMobileMenu(false)
     setToast('Logged out successfully')
+    navigate('welcome')
+  }
+  const handleDeleteRecruiterAccount = () => {
+    if (!currentUser || currentUser.role !== 'recruiter') return
+    const deletedAccount = currentUser
+    const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
+    setAccounts(updatedAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(updatedAccounts)) } catch { /* ignore */ }
+    setPendingJobs(prev => prev.filter(job => normalizeMobile(job.phone) !== deletedAccount.mobile))
+    setRecruiterJob(prev => ({ ...prev, contactPerson: '', phone: '', email: '' }))
+    setRecruiterSubmitted(false)
+    if (tier === 'recruiter') setTier('free')
+    setCurrentUser(null)
+    setHasAuthenticated(false)
+    try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+    setEntryRole(null)
+    setAuthForm({ name: deletedAccount.name, mobile: deletedAccount.mobile, email: deletedAccount.email })
+    setAuthStep('mobile')
+    setAuthError('')
+    setShowDeleteAccountConfirm(false)
+    setShowMobileMenu(false)
+    setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
     navigate('welcome')
   }
   const handleAdminLogin = () => {
@@ -621,7 +653,10 @@ export default function App() {
     } finally { setAiLoading(false) }
   }
 
-  const authExistingAccount = entryRole ? accounts.find(a => a.role === entryRole && a.mobile === normalizeMobile(authForm.mobile)) : undefined
+  const normalizedAuthMobile = normalizeMobile(authForm.mobile)
+  const authRecruiterBlockAccount = entryRole === 'seeker' ? accounts.find(a => a.role === 'recruiter' && a.mobile === normalizedAuthMobile) : undefined
+  const authOtherRoleAccount = entryRole ? accounts.find(a => a.role !== entryRole && a.mobile === normalizedAuthMobile) : undefined
+  const authExistingAccount = entryRole && !authRecruiterBlockAccount ? accounts.find(a => a.role === entryRole && a.mobile === normalizedAuthMobile) : undefined
 
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
@@ -686,12 +721,13 @@ export default function App() {
                 <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
               </div>
               {currentUser && hasAuthenticated && (
-                <div className="hidden max-w-[205px] items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-1.5 xl:flex" title={`${currentUser.name} • ${currentUser.email}`}>
+                <div className="hidden max-w-[240px] items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-1.5 xl:flex" title={`${currentUser.name} • ${currentUser.email}`}>
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
                     <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
                   </span>
+                  {currentUser.role === 'recruiter' && <button onClick={() => setShowDeleteAccountConfirm(true)} title="Delete Recruiter Account" className="shrink-0 rounded-full bg-white p-1.5 text-red-500 shadow-sm hover:bg-red-50 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>}
                   <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
                 </div>
               )}
@@ -765,6 +801,9 @@ export default function App() {
                       </div>
                       <button onClick={handleUserLogout} className="flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
+                    {currentUser.role === 'recruiter' && (
+                      <button onClick={() => { setShowMobileMenu(false); setShowDeleteAccountConfirm(true) }} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 py-2 text-[11px] font-extrabold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Delete Recruiter Account</button>
+                    )}
                   </div>
                 )}
               </div>
@@ -936,7 +975,18 @@ export default function App() {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
                     <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="Enter 10-digit mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
                   </div>
-                  {authExistingAccount ? (
+                  {authRecruiterBlockAccount ? (
+                    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
+                      <div className="flex gap-2.5">
+                        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                        <div>
+                          <p className="text-sm font-extrabold text-amber-900">This mobile is registered as Recruiter</p>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800"><b>{authRecruiterBlockAccount.name}</b> uses this mobile for a Recruiter account. Job Seeker login is blocked until that Recruiter account is deleted.</p>
+                          <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className="mt-2 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white">Login as Recruiter to delete account</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : authExistingAccount ? (
                     <div className="mt-3 flex items-center gap-3 rounded-2xl bg-emerald-50 p-3 text-left">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
                       <div className="min-w-0 flex-1">
@@ -949,7 +999,7 @@ export default function App() {
                     <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? After entering your mobile, we will ask only your <b>name</b> and <b>correct email ID</b> to create your account.</p>
                   )}
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> {authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
@@ -957,6 +1007,17 @@ export default function App() {
                     <p className="text-sm font-extrabold text-sky-900">New {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account</p>
                     <p className="text-[11px] font-medium text-sky-700">Register once — no password. Next time login with mobile only.</p>
                   </div>
+                  {authRecruiterBlockAccount && (
+                    <div className="mt-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
+                      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                      <p className="text-[11px] leading-relaxed text-amber-800"><b>Job Seeker registration is blocked for this mobile.</b> It belongs to the Recruiter account of <b>{authRecruiterBlockAccount.name}</b>. Select <b>Recruiter</b> above, login, and delete that Recruiter account first.</p>
+                    </div>
+                  )}
+                  {entryRole === 'recruiter' && authOtherRoleAccount && (
+                    <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-left">
+                      <p className="text-[11px] leading-relaxed text-sky-800">This mobile also has a Job Seeker account. After Recruiter registration, <b>Job Seeker login with this mobile will be blocked</b> until the Recruiter account is deleted.</p>
+                    </div>
+                  )}
                   <div className="mt-4 space-y-3">
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Full Name *</label>
@@ -975,7 +1036,7 @@ export default function App() {
                     </div>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700"><Check className="h-4 w-4" /> Register &amp; Continue</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : 'Register & Continue'}</button>
                   <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError('') }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
                 </form>
               )}
@@ -1658,6 +1719,20 @@ export default function App() {
       {page === 'recruiters' && (
       <section id="recruiters" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
+          {currentUser && currentUser.role === 'recruiter' && hasAuthenticated && (
+            <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-extrabold tracking-widest text-sky-700">MY RECRUITER ACCOUNT</p>
+                <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
+                <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => navigate('postjob')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-3.5 w-3.5" /> Post Vacancy</button>
+                <button onClick={() => setShowDeleteAccountConfirm(true)} className="flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-extrabold text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /> Delete Account</button>
+              </div>
+            </div>
+          )}
           <div className="mb-6 flex flex-col items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-center text-white shadow-xl sm:flex-row sm:text-left">
             <div className="flex-1">
               <p className="text-[22px] font-extrabold leading-tight">Hiring Medical Representatives?</p>
@@ -2440,6 +2515,32 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
               <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                 <p><b>Ads:</b> Free uses AdMob Rewarded (watch ad = 1 unlock). Banner & Interstitial are skippable and never block apply flow. Starter/Pro are ad-free (Play Store: declare “Contains ads” only for Free).</p>
                 <p className="mt-1"><b>Billing:</b> On Play Store, these map to Google Play Billing subscriptions. Web PWA uses UPI/Stripe — demo here.</p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE RECRUITER ACCOUNT CONFIRMATION — Recruiters only */}
+      <AnimatePresence>
+        {showDeleteAccountConfirm && currentUser && currentUser.role === 'recruiter' && hasAuthenticated && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowDeleteAccountConfirm(false)}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }} onClick={e => e.stopPropagation()} className="w-full max-w-[440px] rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-red-600"><Trash2 className="h-7 w-7" /></div>
+              <h3 className="mt-3 text-center text-xl font-extrabold">Delete Recruiter Account?</h3>
+              <div className="mt-4 rounded-2xl bg-slate-50 p-3 text-center">
+                <p className="font-extrabold">{currentUser.name}</p>
+                <p className="mt-0.5 text-xs text-slate-500">+91 {currentUser.mobile} • {currentUser.email}</p>
+              </div>
+              <div className="mt-4 space-y-2 text-sm leading-relaxed text-slate-600">
+                <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> This mobile number can then be used for Job Seeker login / registration.</p>
+                <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Pending (not yet approved) vacancy submissions from this mobile will be withdrawn.</p>
+                <p className="flex gap-2"><Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /> Vacancies already approved and LIVE will remain until Admin removes them.</p>
+              </div>
+              <p className="mt-3 text-center text-xs font-bold text-red-600">This action cannot be undone.</p>
+              <div className="mt-5 flex gap-2">
+                <button onClick={() => setShowDeleteAccountConfirm(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Cancel</button>
+                <button onClick={handleDeleteRecruiterAccount} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700"><Trash2 className="h-4 w-4" /> Delete Account</button>
               </div>
             </motion.div>
           </motion.div>
