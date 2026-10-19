@@ -160,7 +160,8 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('home')
+  const [page, setPage] = useState<'welcome' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin' | 'postjob'>('welcome')
+  const [entryRole, setEntryRole] = useState<'seeker' | 'recruiter' | null>(null)
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
@@ -195,6 +196,7 @@ export default function App() {
   const [recruiterSubmitted, setRecruiterSubmitted] = useState(false)
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
+  const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
 
   const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999, recruiter: 9999 }
   const isAdFree = isAdmin || tier !== 'free' // ₹99+ plans & Admin: ZERO ads (no banner / rewarded / interstitial)
@@ -267,6 +269,28 @@ export default function App() {
   // ---- ADMIN: M Divakar Reddy ----
   const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
   const openAdmin = (tab: typeof adminTab = 'overview') => { setAdminTab(tab); navigate('admin') }
+  // SECRET: Admin Login opens only after tapping the logo or Divakar Reddy's photo 5 times quickly
+  const handleSecretTap = (): boolean => {
+    const s = secretTapRef.current
+    s.count += 1
+    if (s.timer) clearTimeout(s.timer)
+    s.timer = setTimeout(() => { s.count = 0 }, 2500)
+    if (s.count >= 5) {
+      s.count = 0
+      if (s.timer) clearTimeout(s.timer)
+      openAdmin()
+      setToast(isAdmin ? '👑 Admin Dashboard — M Divakar Reddy' : '🔐 Admin Login — only for M Divakar Reddy')
+      return true
+    }
+    if (s.count === 3) setToast('2 more taps…')
+    if (s.count === 4) setToast('1 more tap…')
+    return false
+  }
+  const enterAs = (r: 'seeker' | 'recruiter') => {
+    setEntryRole(r)
+    if (r === 'recruiter') { setToast('Welcome, Recruiter! Post a vacancy — it goes live after Admin approval'); navigate('recruiters') }
+    else { setToast('Welcome! Find your verified MR vacancy 🎯'); navigate('home') }
+  }
   const handleAdminLogin = () => {
     const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
     if (idOk && adminPass === storedAdminPassword()) {
@@ -503,7 +527,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
       {/* TOP AD BANNER (AdMob Adaptive) — hidden for ad-free plans */}
-      {!isAdFree && (
+      {page !== 'welcome' && !isAdFree && (
       <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
           <div className="flex items-center gap-2 text-[11px]">
@@ -520,10 +544,11 @@ export default function App() {
       )}
 
       {/* NAVBAR */}
+      {page !== 'welcome' && (
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={() => navigate('home')} className="flex items-center gap-3 text-left">
+            <button onClick={() => { if (!handleSecretTap()) navigate('home') }} className="flex select-none items-center gap-3 text-left">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600 text-white shadow-md">
                 <Briefcase className="h-5 w-5" />
               </div>
@@ -545,9 +570,11 @@ export default function App() {
               <button onClick={() => navigate('android')} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold hover:bg-emerald-600 ${page==='android'?'bg-slate-900 text-white':'bg-emerald-500 text-white'}`}>
                 <Smartphone className="h-4 w-4" /> Android App
               </button>
+              {isAdmin && (
               <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                {isAdmin ? <><LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length} pending</span>}</> : <><LockKeyhole className="h-4 w-4" /> Admin Login{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</>}
+                <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length} pending</span>}
               </button>
+              )}
             </nav>
 
             <div className="flex items-center gap-2">
@@ -559,7 +586,7 @@ export default function App() {
               <button onClick={handleInstall} className="hidden items-center gap-2 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-sky-700 sm:inline-flex">
                 <Download className="h-4 w-4" /> Install PWA
               </button>
-              <button onClick={() => openAdmin()} title={isAdmin ? 'Admin Dashboard — M Divakar Reddy' : 'Admin Login — M Divakar Reddy'} className="relative shrink-0">
+              <button onClick={() => handleSecretTap()} title="M Divakar Reddy — Founder" className="relative shrink-0 select-none">
                 <img src="/divakar-reddy-circle-100.jpg" alt="Admin — M Divakar Reddy" className="h-10 w-10 aspect-square rounded-full object-cover object-center border-2 border-sky-600 shadow" />
                 {isAdmin && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
               </button>
@@ -568,6 +595,7 @@ export default function App() {
           </div>
         </div>
       </header>
+      )}
 
       {/* RIGHT SIDE SLIDING MENU (Mobile) */}
       <AnimatePresence>
@@ -628,8 +656,8 @@ export default function App() {
                     { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, page: 'android' as const },
-                    { label: isAdmin ? 'Admin Dashboard' : 'Admin Login', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
-                  ].map(item => (
+                    { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
+                  ].filter(item => isAdmin || item.page !== 'admin').map(item => (
                     <button
                       key={item.label}
                       onClick={() => navigate(item.page)}
@@ -683,7 +711,7 @@ export default function App() {
 
       {/* INSTALL BANNER */}
       <AnimatePresence>
-        {showInstallBanner && (
+        {showInstallBanner && page !== 'welcome' && (
           <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="mx-auto max-w-[1280px] px-4 pt-4">
             <div className="flex flex-col gap-3 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-600 to-indigo-600 p-3 text-white shadow-lg sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -702,6 +730,61 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* WELCOME / MAIN SCREEN — first screen when app opens */}
+      {page === 'welcome' && (
+        <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
+          <div className="w-full max-w-md">
+            <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
+              <div className="text-center">
+                <button onClick={() => handleSecretTap()} aria-label="MR Vacancies Hub" className="mx-auto flex h-[72px] w-[72px] select-none items-center justify-center rounded-3xl bg-sky-600 text-white shadow-lg transition active:scale-95">
+                  <Briefcase className="h-9 w-9" />
+                </button>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <h1 className="text-[24px] font-extrabold leading-none tracking-tight">MR Vacancies Hub</h1>
+                  <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
+                </div>
+                <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Jobs for Medical Representatives</p>
+              </div>
+
+              <div className="mt-6 rounded-3xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-5 text-center">
+                <button onClick={() => handleSecretTap()} aria-label="M Divakar Reddy — Founder" className="mx-auto block select-none transition active:scale-95">
+                  <img src="/divakar-reddy-circle-400.jpg" alt="M Divakar Reddy — Founder" className="h-28 w-28 aspect-square rounded-full object-cover object-center border-4 border-white shadow-lg" />
+                </button>
+                <p className="mt-3 text-[11px] font-extrabold tracking-widest text-sky-700">FOUNDER • MANAGED BY</p>
+                <p className="mt-1 flex items-center justify-center gap-1.5 text-xl font-extrabold">M Divakar Reddy <BadgeCheck className="h-5 w-5 text-sky-600" /></p>
+                <p className="mt-0.5 text-xs font-medium text-slate-600">Admin &amp; Chief Recruiter • 15+ yrs Pharma • Ex-Sun, Dr. Reddy’s</p>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">50K+</p><p className="text-[10px] font-semibold text-slate-500">MR Community</p></div>
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">2,400+</p><p className="text-[10px] font-semibold text-slate-500">Verified Jobs</p></div>
+                  <div className="rounded-xl bg-white p-2"><p className="text-sm font-extrabold">18K</p><p className="text-[10px] font-semibold text-slate-500">Placements</p></div>
+                </div>
+              </div>
+
+              <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
+              <div className="mt-3 space-y-3">
+                <button onClick={() => enterAs('seeker')} className="flex w-full items-center gap-3 rounded-2xl bg-sky-600 p-4 text-left text-white shadow transition hover:bg-sky-700 active:scale-[0.99]">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20"><User className="h-5 w-5" /></span>
+                  <span className="flex-1">
+                    <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR)</span>
+                    <span className="block text-xs opacity-90">Find verified vacancies • Unlock recruiter contacts</span>
+                  </span>
+                  <ChevronRight className="h-5 w-5 shrink-0" />
+                </button>
+                <button onClick={() => enterAs('recruiter')} className="flex w-full items-center gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 text-left text-slate-900 transition hover:bg-slate-50 active:scale-[0.99]">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600"><Building2 className="h-5 w-5" /></span>
+                  <span className="flex-1">
+                    <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
+                    <span className="block text-xs text-slate-500">Post a vacancy • Goes LIVE after Admin approval</span>
+                  </span>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
+                </button>
+              </div>
+              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Free to browse • No signup needed • Every vacancy verified</p>
+            </div>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2025 MR Vacancies Hub • Managed by M Divakar Reddy</p>
+          </div>
+        </section>
+      )}
       {page === 'home' && (
       <>
       {/* HERO */}
@@ -826,7 +909,7 @@ export default function App() {
 
               <div className="mt-4 rounded-2xl bg-white/95 p-4 text-slate-900">
                 <div className="flex items-center gap-3">
-                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy" className="h-12 w-12 shrink-0 aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" />
+                  <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy" className="h-12 w-12 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" />
                   <div>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
                     <p className="text-xs font-semibold text-sky-700">Founder & Chief Recruiter • 15+ yrs Pharma</p>
@@ -1376,7 +1459,7 @@ export default function App() {
             <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-indigo-50 p-6">
               <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MANAGED BY</span>
               <div className="mt-4 flex gap-4">
-                <img src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
+                <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
                   <p className="text-sm font-semibold text-sky-700">Chief Recruiter & Founder — MR Vacancies Hub</p>
@@ -1596,7 +1679,7 @@ export default function App() {
             )}
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
-              <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+              <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
               <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (Admin &amp; Founder, 15+ yrs pharma recruitment) before it goes live — that is why 50K+ MRs trust MR Vacancies Hub.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
@@ -1642,7 +1725,7 @@ export default function App() {
               <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
                 <p className="text-sm font-extrabold">How to login? (3 steps)</p>
                 <ol className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-600">
-                  <li><b>1.</b> Tap <b>Admin Login</b> (top menu / your photo / footer)</li>
+                  <li><b>1.</b> Tap the <b>logo or Divakar Reddy’s photo 5 times</b> quickly (secret — no button is shown)</li>
                   <li><b>2.</b> Enter Admin ID <b>divakar</b> and your password</li>
                   <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
                 </ol>
@@ -1851,6 +1934,7 @@ export default function App() {
       )}
       {/* FOOTER - always visible */}
       {/* FOOTER */}
+      {page !== 'welcome' && (
       <footer className="border-t bg-slate-900 text-slate-300">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
@@ -1869,7 +1953,7 @@ export default function App() {
                 <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
                 <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
                 <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
-                <li><button onClick={() => openAdmin()} className="hover:text-white">{isAdmin ? 'Admin Dashboard' : 'Admin Login'}</button></li>
+                {isAdmin && <li><button onClick={() => openAdmin()} className="hover:text-white">Admin Dashboard</button></li>}
               </ul>
             </div>
             <div>
@@ -1885,7 +1969,7 @@ export default function App() {
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
               <p className="text-xs opacity-80">15+ yrs Pharma Recruitment • Ex-Sun, Dr. Reddy’s</p>
-              <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">{isAdmin ? 'Open Admin Dashboard' : '🔐 Admin Login (Divakar Reddy)'}</button>
+              {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
               <p className="mt-3 text-xs opacity-80">© 2025 MR Vacancies Hub. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">PWA</span>
@@ -1896,6 +1980,7 @@ export default function App() {
           </div>
         </div>
       </footer>
+      )}
 
       {/* JOB DETAILS MODAL */}
       <AnimatePresence>
@@ -2159,6 +2244,8 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
       </AnimatePresence>
 
       {/* Bottom nav for mobile (app-like) - page navigation */}
+      {page !== 'welcome' && (
+      <>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-[1280px] items-center justify-around px-2 py-2">
           <button onClick={() => navigate('jobs')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='jobs'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
@@ -2179,6 +2266,8 @@ App ID:          ca-app-pub-3940256099942544~3347511713`}</pre>
         </div>
       </div>
       <div className="h-[72px] lg:hidden" />
+      </>
+      )}
     </div>
   )
 }
