@@ -6,7 +6,7 @@ import {
   MessageCircle, Play, Smartphone, Download, Globe, ChevronDown, ChevronUp, ChevronRight,
   Award, GraduationCap, CalendarDays, Layers, Siren, Megaphone, Heart, ThumbsUp, Quote,
   ExternalLink, LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, ArrowUpRight, Check,
-  Settings, Bell, User, LogOut, Plus, SearchX, Info, AlertTriangle, Gift, Timer,
+  Settings, Bell, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Timer, Trash2, LayoutDashboard, KeyRound, RotateCcw,
   Image as ImageIcon, Package
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -80,6 +80,14 @@ const TIERS = [
 const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) => a + 'X'.repeat(mid.length) + c)
 const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
 
+// ADMIN (M Divakar Reddy) — front-end demo lock, stored on this device only.
+// For the real Play Store launch, move auth to a backend (Firebase / Supabase Auth).
+const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in']
+const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
+const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
+const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
+const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
+
 // AD COMPONENTS
 function BannerAd({ label = 'Advertisement', className = '' }: { label?: string, className?: string }) {
   return (
@@ -149,7 +157,7 @@ export default function App() {
   const [rewardProgress, setRewardProgress] = useState(0)
   const [showInterstitial, setShowInterstitial] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved'>('home')
+  const [page, setPage] = useState<'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'android' | 'saved' | 'admin'>('home')
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(true)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
@@ -159,6 +167,21 @@ export default function App() {
     { role: 'assistant', text: 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”' }
   ])
   const [aiLoading, setAiLoading] = useState(false)
+  // Jobs are now state (Admin can post/delete; saved on this device)
+  const [jobs, setJobs] = useState<Job[]>(() => {
+    try { const raw = localStorage.getItem(ADMIN_JOBS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.length) return parsed as Job[] } } catch { /* ignore */ }
+    return JOBS
+  })
+  useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
+  // Admin auth (M Divakar Reddy only)
+  const [isAdmin, setIsAdmin] = useState(() => { try { return localStorage.getItem(ADMIN_AUTH_KEY) === '1' } catch { return false } })
+  const [adminId, setAdminId] = useState('')
+  const [adminPass, setAdminPass] = useState('')
+  const [showAdminPass, setShowAdminPass] = useState(false)
+  const [adminError, setAdminError] = useState('')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'manage' | 'settings'>('overview')
+  const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
+  const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
 
@@ -166,17 +189,18 @@ export default function App() {
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
-    if (location === 'All India') return CITIES_ALL
-    const cities = Array.from(new Set(JOBS.filter(j => j.state === location).map(j => j.hq.split(' - ')[0].trim())))
+    if (location === 'All India') return ['All Cities', ...Array.from(new Set(jobs.map(j => j.hq.split(' - ')[0].trim())))]
+    const cities = Array.from(new Set(jobs.filter(j => j.state === location).map(j => j.hq.split(' - ')[0].trim())))
     return ['All Cities', ...cities]
   })()
   const availableHQs = (() => {
-    let list = JOBS
+    let list = jobs
     if (location !== 'All India') list = list.filter(j => j.state === location)
     if (city !== 'All Cities') list = list.filter(j => j.hq.split(' - ')[0].trim() === city)
     const hqs = list.map(j => j.hq)
     return ['All HQs', ...Array.from(new Set(hqs))]
   })()
+  const companyOptions = ['All Companies', ...Array.from(new Set(jobs.map(j => j.company)))]
 
   // Auto-reset downstream when upstream changes (cascading)
   useEffect(() => {
@@ -227,6 +251,77 @@ export default function App() {
     setShowMobileMenu(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  // ---- ADMIN: M Divakar Reddy ----
+  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
+  const openAdmin = (tab: typeof adminTab = 'overview') => { setAdminTab(tab); navigate('admin') }
+  const handleAdminLogin = () => {
+    const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
+    if (idOk && adminPass === storedAdminPassword()) {
+      setIsAdmin(true)
+      try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
+      setAdminError(''); setAdminPass('')
+      setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
+    } else {
+      setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.')
+    }
+  }
+  const handleAdminLogout = () => {
+    setIsAdmin(false)
+    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
+    setToast('Admin logged out. See you soon, Divakar Reddy!')
+    navigate('home')
+  }
+  const handlePostJob = () => {
+    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
+    const cityName = newJob.city.trim() || 'Hyderabad'
+    const job: Job = {
+      id: 'admin-' + Date.now(),
+      company: newJob.company.trim(),
+      color: '#0284c7',
+      division: newJob.division.trim() || (newJob.company.trim() + ' — General Division'),
+      title: newJob.title.trim() || 'Medical Representative',
+      hq: newJob.area.trim() ? `${cityName} - ${newJob.area.trim()}` : cityName,
+      state: newJob.state,
+      exp: newJob.exp,
+      ctc: newJob.ctc.trim(),
+      vacancies: Math.max(1, parseInt(newJob.vacancies) || 1),
+      qual: newJob.qual.trim() || 'B.Pharm / B.Sc',
+      type: newJob.type,
+      posted: 'Just now',
+      verified: true,
+      urgent: newJob.urgent,
+      hot: true,
+      desc: newJob.desc.trim() || `Urgent opening at ${newJob.company.trim()} for ${cityName} HQ. Verified personally by M Divakar Reddy. Immediate joiners preferred.`,
+      contactPerson: newJob.contactPerson.trim() || 'M Divakar Reddy',
+      phone: newJob.phone.trim(),
+      email: newJob.email.trim() || 'hr@mrvacancieshub.in',
+      skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
+      perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
+    }
+    setJobs(prev => [job, ...prev])
+    setNewJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
+    setToast(`Vacancy published! ${job.company} • ${job.hq} is now LIVE on Jobs page ✅`)
+    setAdminTab('manage')
+  }
+  const handleDeleteJob = (id: string) => {
+    setJobs(prev => prev.filter(j => j.id !== id))
+    setSaved(prev => { const n = new Set(prev); n.delete(id); return n })
+    setToast('Vacancy deleted by Admin')
+  }
+  const handleResetJobs = () => {
+    setJobs(JOBS)
+    try { localStorage.removeItem(ADMIN_JOBS_KEY) } catch { /* ignore */ }
+    setToast('Vacancies reset to the default 12 verified jobs')
+  }
+  const handleChangePassword = () => {
+    if (passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
+    if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
+    if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
+    try { localStorage.setItem(ADMIN_PASS_KEY, passForm.next) } catch { /* ignore */ }
+    setPassForm({ current: '', next: '', confirm: '' })
+    setToast('Admin password changed successfully 🔐 Use it from next login')
+  }
   useEffect(() => {
     if (page !== 'jobs') setShowFilters(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -257,6 +352,7 @@ export default function App() {
 
   const attemptReveal = (job: Job) => {
     if (revealed.has(job.id)) return
+    if (isAdmin) { setRevealed(prev => new Set([...prev, job.id])); setToast('👑 Admin access: contact revealed (no ad, no unlock used)'); return }
     if (tier === 'free') {
       if (dailyUnlocks >= 3) {
         setToast('Free limit reached — subscribe or try tomorrow. Watch ad grants +1.')
@@ -286,7 +382,7 @@ export default function App() {
   }
 
   const handleApply = (job: Job) => {
-    if (tier === 'free' && !revealed.has(job.id)) {
+    if (!isAdmin && tier === 'free' && !revealed.has(job.id)) {
       setToast('Unlock contact first to apply (Free: watch ad to reveal)')
       attemptReveal(job)
       return
@@ -308,7 +404,7 @@ export default function App() {
     })
   }
 
-  const filtered = JOBS.filter(j => {
+  const filtered = jobs.filter(j => {
     if (search && !(j.company.toLowerCase().includes(search.toLowerCase()) || j.title.toLowerCase().includes(search.toLowerCase()) || j.hq.toLowerCase().includes(search.toLowerCase()) || j.division.toLowerCase().includes(search.toLowerCase()))) return false
     if (location !== 'All India' && j.state !== location) return false
     const jCity = j.hq.split(' - ')[0].trim()
@@ -375,25 +471,31 @@ export default function App() {
 
             <nav className="hidden items-center gap-1 lg:flex">
               <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='home'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Home</button>
-              <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{JOBS.length} New</span></button>
+              <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{jobs.length} New</span></button>
               <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
               <button onClick={() => navigate('android')} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold hover:bg-emerald-600 ${page==='android'?'bg-slate-900 text-white':'bg-emerald-500 text-white'}`}>
                 <Smartphone className="h-4 w-4" /> Android App
               </button>
+              <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
+                {isAdmin ? <><LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" /></> : <><LockKeyhole className="h-4 w-4" /> Admin Login</>}
+              </button>
             </nav>
 
             <div className="flex items-center gap-2">
               <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 sm:flex">
                 <span className={`h-2 w-2 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : 'bg-violet-500'}`} />
-                <span className="text-xs font-bold capitalize">{tier}</span>
-                <span className="text-xs text-slate-500">{dailyUnlocks}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks</span>
+                <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
+                <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
               </div>
               <button onClick={handleInstall} className="hidden items-center gap-2 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-sky-700 sm:inline-flex">
                 <Download className="h-4 w-4" /> Install PWA
               </button>
-              <div className="hidden h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white lg:flex"> <User className="h-4 w-4" /> </div>
+              <button onClick={() => openAdmin()} title={isAdmin ? 'Admin Dashboard — M Divakar Reddy' : 'Admin Login — M Divakar Reddy'} className="relative shrink-0">
+                <img src="/divakar-reddy-circle-100.jpg" alt="Admin — M Divakar Reddy" className="h-10 w-10 aspect-square rounded-full object-cover object-center border-2 border-sky-600 shadow" />
+                {isAdmin && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
+              </button>
               <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
             </div>
           </div>
@@ -440,8 +542,8 @@ export default function App() {
                 <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
-                    <span className="text-sm font-extrabold capitalize">{tier}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{dailyUnlocks}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks</span>
+                    <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
                   </div>
                   <User className="h-4 w-4 text-slate-400" />
                 </div>
@@ -453,11 +555,12 @@ export default function App() {
                 <div className="grid gap-2">
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
-                    { label: 'Browse Vacancies', sub: `${JOBS.length} verified jobs`, icon: Layers, page: 'jobs' as const },
+                    { label: 'Browse Vacancies', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
                     { label: 'Subscription Plans', sub: 'Free → Starter ₹199 → Pro ₹499', icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Android App & Ads', sub: 'Play Store TWA + AdMob', icon: Smartphone, page: 'android' as const },
+                    { label: isAdmin ? 'Admin Dashboard' : 'Admin Login', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
                   ].map(item => (
                     <button
                       key={item.label}
@@ -634,7 +737,7 @@ export default function App() {
               </div>
 
               <div className="mt-4 space-y-3">
-                {JOBS.slice(0, 3).map(job => (
+                {jobs.slice(0, 3).map(job => (
                   <div key={job.id} className="flex gap-3 rounded-2xl bg-white p-3 shadow">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</div>
                     <div className="min-w-0 flex-1">
@@ -795,7 +898,7 @@ export default function App() {
                   <div>
                     <label className="text-xs font-bold text-slate-700">Filter — Company</label>
                     <select value={company} onChange={e => setCompany(e.target.value)} className="mt-1 w-full rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
-                      {COMPANIES.map(c => <option key={c}>{c}</option>)}
+                      {companyOptions.map(c => <option key={c}>{c}</option>)}
                     </select>
                   </div>
 
@@ -878,7 +981,7 @@ export default function App() {
                     </select>
                     <div className="grid grid-cols-2 gap-3">
                       <select value={company} onChange={e => setCompany(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
-                        {COMPANIES.map(c => <option key={c}>{c}</option>)}
+                        {companyOptions.map(c => <option key={c}>{c}</option>)}
                       </select>
                       <select value={expFilter} onChange={e => setExpFilter(e.target.value as any)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
                         {EXP_OPTIONS.map(o => <option key={o}>{o}</option>)}
@@ -1221,7 +1324,7 @@ export default function App() {
               </div>
               <div className="mt-4 flex gap-2">
                 <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
-                <button onClick={() => setToast('Recruiter dashboard: Post Vacancy — switch to Recruiter tier ₹1999/mo')} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Vacancy</button>
+                <button onClick={() => openAdmin('post')} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Vacancy</button>
               </div>
             </div>
 
@@ -1231,10 +1334,10 @@ export default function App() {
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-4 py-3">
                   <div><p className="text-sm font-bold">Post New Vacancy</p><p className="text-xs text-slate-500">Takes 2 mins • Verified badge in 2h</p></div>
-                  <button onClick={() => setTier('recruiter')} className="rounded-full bg-sky-600 px-4 py-2 text-xs font-bold text-white">Post Job</button>
+                  <button onClick={() => openAdmin('post')} className="rounded-full bg-sky-600 px-4 py-2 text-xs font-bold text-white">Post Job</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Active Posts</p><p className="mt-1 text-2xl font-extrabold">12</p><p className="text-xs text-emerald-600">↑ 3 this week</p></div>
+                  <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Active Posts</p><p className="mt-1 text-2xl font-extrabold">{jobs.length}</p><p className="text-xs text-emerald-600">↑ 3 this week</p></div>
                   <div className="rounded-xl border p-4"><p className="text-xs font-bold text-slate-500">Applicants</p><p className="mt-1 text-2xl font-extrabold">348</p><p className="text-xs text-sky-600">24 new today</p></div>
                 </div>
                 <div className="rounded-xl border p-4">
@@ -1353,7 +1456,7 @@ export default function App() {
                 <button onClick={() => navigate('jobs')} className="mt-3 rounded-full bg-sky-600 px-5 py-2 text-sm font-bold text-white">Browse Jobs</button>
               </div>
             ) : (
-              JOBS.filter(j=>saved.has(j.id)).map(job=>(
+              jobs.filter(j=>saved.has(j.id)).map(job=>(
                 <div key={job.id} className="rounded-2xl border bg-white p-4">
                   <p className="font-bold">{job.company} • {job.title}</p>
                   <p className="text-sm text-slate-500">{job.hq} • {job.ctc}</p>
@@ -1365,6 +1468,198 @@ export default function App() {
               ))
             )}
           </div>
+        </section>
+      )}
+      {/* ADMIN PAGE — M Divakar Reddy */}
+      {page === 'admin' && (
+        <section className="mx-auto max-w-[1280px] px-4 py-10">
+          {!isAdmin ? (
+            <div className="mx-auto max-w-md">
+              <div className="rounded-3xl border bg-white p-6 shadow-xl">
+                <div className="text-center">
+                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="mx-auto h-24 w-24 aspect-square rounded-full object-cover object-center border-4 border-sky-100 shadow" />
+                  <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
+                  <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
+                  <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
+                  <p className="text-xs text-slate-500">Admin &amp; Founder — MR Vacancies Hub</p>
+                </div>
+                <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
+                  <div>
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} placeholder="divakar" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
+                    <div className="relative">
+                      <input type={showAdminPass ? 'text' : 'password'} value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Enter admin password" autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:border-sky-500" />
+                      <button type="button" onClick={() => setShowAdminPass(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-500 hover:bg-slate-100">{showAdminPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                    </div>
+                  </div>
+                  {adminError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminError}</p>}
+                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> Login to Dashboard</button>
+                </form>
+                {storedAdminPassword() === DEFAULT_ADMIN_PASSWORD && (
+                  <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-slate-700">
+                    <p className="font-extrabold">First-time login (default)</p>
+                    <p>Admin ID: <b>divakar</b> &nbsp;•&nbsp; Password: <b>Divakar@2026</b></p>
+                    <p className="text-slate-500">After login, change it in Dashboard → Settings.</p>
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
+                <p className="text-sm font-extrabold">How to login? (3 steps)</p>
+                <ol className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-600">
+                  <li><b>1.</b> Tap <b>Admin Login</b> (top menu / your photo / footer)</li>
+                  <li><b>2.</b> Enter Admin ID <b>divakar</b> and your password</li>
+                  <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
+                </ol>
+                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Normal MR users do not need this login — they simply browse jobs. This demo lock works on this device/browser; a real backend login (Firebase/Supabase) is needed before Play Store launch.</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="flex flex-wrap items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-5 text-white shadow-lg">
+                <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="h-16 w-16 shrink-0 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+                <div className="min-w-[200px] flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-xl font-extrabold">M Divakar Reddy</h2>
+                    <span className="rounded-full bg-amber-400 px-2.5 py-0.5 text-[11px] font-extrabold text-slate-900">👑 ADMIN</span>
+                    <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-bold">Founder</span>
+                    <span className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-bold"><span className="h-1.5 w-1.5 rounded-full bg-white" /> Logged in</span>
+                  </div>
+                  <p className="mt-1 text-sm opacity-90">Admin Dashboard — you have full access: post vacancies, delete jobs, unlimited contact reveal.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">View Website</button>
+                  <button onClick={handleAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                </div>
+              </div>
+
+              <div className="mt-5 flex gap-2 overflow-x-auto pb-1">
+                <button onClick={() => setAdminTab('overview')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='overview' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><LayoutDashboard className="h-4 w-4" /> Overview</button>
+                <button onClick={() => setAdminTab('post')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='post' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Plus className="h-4 w-4" /> Post Vacancy</button>
+                <button onClick={() => setAdminTab('manage')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='manage' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Briefcase className="h-4 w-4" /> Manage Vacancies ({jobs.length})</button>
+                <button onClick={() => setAdminTab('settings')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='settings' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Settings className="h-4 w-4" /> Settings</button>
+              </div>
+
+              {adminTab === 'overview' && (
+                <div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Live Vacancies</p><p className="mt-1 text-3xl font-extrabold">{jobs.length}</p><p className="text-xs font-semibold text-emerald-600">Showing on Jobs page</p></div>
+                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Companies</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.company))).length}</p><p className="text-xs font-semibold text-sky-600">Pharma companies</p></div>
+                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Cities / HQs</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.hq))).length}</p><p className="text-xs font-semibold text-sky-600">{Array.from(new Set(jobs.map(j => j.state))).length} states covered</p></div>
+                    <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Applications</p><p className="mt-1 text-3xl font-extrabold">{applied.size}</p><p className="text-xs font-semibold text-slate-500">On this device (demo)</p></div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border bg-white p-5">
+                    <p className="text-sm font-extrabold">👑 Your Admin Powers (active now)</p>
+                    <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Post a new vacancy — goes LIVE instantly</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Unlimited contact reveal — no ad, no unlock limit</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Delete / remove any vacancy</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Change admin password anytime</p>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button onClick={() => setAdminTab('post')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post New Vacancy</button>
+                      <button onClick={() => setAdminTab('manage')} className="rounded-full border px-4 py-2 text-sm font-bold">Manage Vacancies</button>
+                      <button onClick={() => navigate('jobs')} className="rounded-full border px-4 py-2 text-sm font-bold">See Jobs Page</button>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border bg-white p-5">
+                    <p className="text-sm font-extrabold">Latest Vacancies</p>
+                    <div className="mt-3 space-y-2">
+                      {jobs.slice(0, 5).map(job => (
+                        <div key={job.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold">{job.company} • {job.title} {job.id.startsWith('admin-') && <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">Posted by you</span>}</p>
+                            <p className="truncate text-xs text-slate-500">{job.hq} • {job.ctc} • {job.posted}</p>
+                          </div>
+                          <button onClick={() => setSelected(job)} className="shrink-0 rounded-full border bg-white px-3 py-1.5 text-xs font-bold">View</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'post' && (
+                <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handlePostJob() }}>
+                  <p className="text-base font-extrabold">Post New Vacancy</p>
+                  <p className="text-xs text-slate-500">Fields marked * are required. The vacancy appears instantly on the Jobs page, Home hero and inside the State → City → HQ → Role filters.</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Company Name *</label><input value={newJob.company} onChange={e => setNewJob({ ...newJob, company: e.target.value })} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Job Title</label><input value={newJob.title} onChange={e => setNewJob({ ...newJob, title: e.target.value })} placeholder="Medical Representative" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Division</label><input value={newJob.division} onChange={e => setNewJob({ ...newJob, division: e.target.value })} placeholder="e.g. Cardio Diabetic" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={newJob.type} onChange={e => setNewJob({ ...newJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Field MR">Field MR</option><option value="Trainee MR">Trainee MR</option><option value="ASM">ASM</option><option value="RSM">RSM</option></select></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">State</label><select value={newJob.state} onChange={e => setNewJob({ ...newJob, state: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{LOCATIONS.slice(1).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">City</label><input value={newJob.city} onChange={e => setNewJob({ ...newJob, city: e.target.value })} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">HQ Area (optional)</label><input value={newJob.area} onChange={e => setNewJob({ ...newJob, area: e.target.value })} placeholder="e.g. Ameerpet → HQ becomes Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience</label><select value={newJob.exp} onChange={e => setNewJob({ ...newJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option>0-2 yrs (Freshers can apply)</option><option>0.5-2 yrs</option><option>1-3 yrs</option><option>1-4 yrs</option><option>2-5 yrs</option><option>4-7 yrs</option><option>6-10 yrs</option></select></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">CTC / Salary *</label><input value={newJob.ctc} onChange={e => setNewJob({ ...newJob, ctc: e.target.value })} placeholder="e.g. ₹3.5 - 4.5 LPA + TA/DA" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">No. of Openings</label><input type="number" min="1" value={newJob.vacancies} onChange={e => setNewJob({ ...newJob, vacancies: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={newJob.qual} onChange={e => setNewJob({ ...newJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person</label><input value={newJob.contactPerson} onChange={e => setNewJob({ ...newJob, contactPerson: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Phone *</label><input value={newJob.phone} onChange={e => setNewJob({ ...newJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={newJob.email} onChange={e => setNewJob({ ...newJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Job Description</label><textarea value={newJob.desc} onChange={e => setNewJob({ ...newJob, desc: e.target.value })} rows={3} placeholder="Write about the role, HQ coverage, requirements..." className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2"><input type="checkbox" checked={newJob.urgent} onChange={e => setNewJob({ ...newJob, urgent: e.target.checked })} className="h-4 w-4" /> Mark as Urgent Hiring</label>
+                  </div>
+                  <button type="submit" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Plus className="h-4 w-4" /> Publish Vacancy (Go Live)</button>
+                </form>
+              )}
+
+              {adminTab === 'manage' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-base font-extrabold">All Vacancies ({jobs.length})</p>
+                    <button onClick={handleResetJobs} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><RotateCcw className="h-3.5 w-3.5" /> Reset to Default 12</button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {jobs.length === 0 && <p className="rounded-xl bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No vacancies. Post your first vacancy from the Post Vacancy tab.</p>}
+                    {jobs.map(job => (
+                      <div key={job.id} className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-3 py-2.5">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</div>
+                        <div className="min-w-[200px] flex-1">
+                          <p className="text-sm font-bold">{job.company} • {job.title} {job.id.startsWith('admin-') && <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">Posted by you</span>}</p>
+                          <p className="text-xs text-slate-500">{job.hq} ({job.state}) • {job.type} • {job.ctc} • {job.posted}</p>
+                        </div>
+                        <button onClick={() => setSelected(job)} className="rounded-full border px-3 py-1.5 text-xs font-bold">View</button>
+                        <button onClick={() => handleDeleteJob(job.id)} className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'settings' && (
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <form className="rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handleChangePassword() }}>
+                    <p className="flex items-center gap-2 text-base font-extrabold"><KeyRound className="h-5 w-5 text-sky-600" /> Change Admin Password</p>
+                    <div className="mt-3 space-y-3">
+                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Current Password</label><input type="password" value={passForm.current} onChange={e => setPassForm({ ...passForm, current: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 block text-xs font-bold text-slate-600">New Password (min 6 characters)</label><input type="password" value={passForm.next} onChange={e => setPassForm({ ...passForm, next: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label><input type="password" value={passForm.confirm} onChange={e => setPassForm({ ...passForm, confirm: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <button type="submit" className="w-full rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Update Password</button>
+                    </div>
+                  </form>
+                  <div className="rounded-2xl border bg-white p-5">
+                    <p className="text-base font-extrabold">Admin Account</p>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><b>M Divakar Reddy</b></p>
+                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><b>divakar</b></p>
+                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><b>Admin &amp; Founder</b></p>
+                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></p>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                      <button onClick={handleResetJobs} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><RotateCcw className="h-3.5 w-3.5" /> Reset Vacancies</button>
+                      <button onClick={handleAdminLogout} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                    </div>
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Note: This is a front-end demo lock — login state and vacancies you post are saved only on this device/browser. Before the Play Store launch, connect a real backend (Firebase/Supabase Auth + database) so only Divakar Reddy can login from any device and vacancies are visible to all users.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
       {/* FOOTER - always visible */}
@@ -1387,6 +1682,7 @@ export default function App() {
                 <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
                 <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
                 <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
+                <li><button onClick={() => openAdmin()} className="hover:text-white">{isAdmin ? 'Admin Dashboard' : 'Admin Login'}</button></li>
               </ul>
             </div>
             <div>
@@ -1402,6 +1698,7 @@ export default function App() {
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
               <p className="text-xs opacity-80">15+ yrs Pharma Recruitment • Ex-Sun, Dr. Reddy’s</p>
+              <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">{isAdmin ? 'Open Admin Dashboard' : '🔐 Admin Login (Divakar Reddy)'}</button>
               <p className="mt-3 text-xs opacity-80">© 2025 MR Vacancies Hub. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">PWA</span>
