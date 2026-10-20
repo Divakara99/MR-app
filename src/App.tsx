@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow } from './supabase'
+import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
 // TYPES
 type Tier = 'free' | 'starter' | 'pro'
@@ -50,7 +51,7 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string }
 type EntryRole = 'seeker' | 'recruiter'
-type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile'
+type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'legal'
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -89,6 +90,25 @@ type AccountDeletionRequest = {
   requestedAt: string
   reviewedAt?: string
   adminNote?: string
+}
+
+type LegalTab = 'privacy' | 'terms' | 'support'
+type SupportTicketStatus = 'open' | 'in-progress' | 'resolved' | 'closed'
+type SupportTicketSource = 'ai' | 'support'
+type SupportTicket = {
+  id: string
+  ticketNo: string
+  name: string
+  mobile: string
+  email: string
+  role: EntryRole | 'guest' | 'admin'
+  category: string
+  subject: string
+  details: string
+  status: SupportTicketStatus
+  source: SupportTicketSource
+  createdAt: string
+  updatedAt: string
 }
 
 // MOCK DATA
@@ -142,6 +162,7 @@ const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
+const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
 const DELETION_REASON_OPTIONS = [
   'I got a job and no longer need this account',
   'I want to use another mobile number',
@@ -293,6 +314,21 @@ const loadDeletionRequests = (): AccountDeletionRequest[] => {
   } catch { return [] }
 }
 
+const loadSupportTickets = (): SupportTicket[] => {
+  try {
+    const raw = localStorage.getItem(SUPPORT_TICKETS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return (parsed as SupportTicket[]).filter(ticket => ticket && ticket.id && ticket.ticketNo && ticket.name && ticket.mobile && ticket.email && ticket.category && ticket.subject && ticket.details && ['open', 'in-progress', 'resolved', 'closed'].includes(ticket.status)).map(ticket => ({
+      ...ticket,
+      role: ticket.role === 'seeker' || ticket.role === 'recruiter' || ticket.role === 'admin' ? ticket.role : 'guest',
+      source: ticket.source === 'support' ? 'support' : 'ai',
+      updatedAt: ticket.updatedAt || ticket.createdAt,
+    }))
+  } catch { return [] }
+}
+
 // AD COMPONENTS
 function BannerAd({ label = 'Advertisement', className = '' }: { label?: string, className?: string }) {
   return (
@@ -370,7 +406,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>([
-    { role: 'assistant', text: 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”' }
+    { role: 'assistant', text: 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.' }
   ])
   const [aiLoading, setAiLoading] = useState(false)
   // Jobs are now state (Admin can post/delete; saved on this device)
@@ -385,7 +421,7 @@ export default function App() {
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
   const [adminError, setAdminError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'accounts' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
   const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
   const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
   // Recruiter-submitted vacancies — LIVE only after Admin approval
@@ -409,6 +445,13 @@ export default function App() {
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
   const [deletionRequestForm, setDeletionRequestForm] = useState({ category: '', details: '' })
   const [deletionRequestError, setDeletionRequestError] = useState('')
+  const [legalTab, setLegalTab] = useState<LegalTab>('privacy')
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => loadSupportTickets())
+  const [showSupportTicketModal, setShowSupportTicketModal] = useState(false)
+  const [supportTicketSource, setSupportTicketSource] = useState<SupportTicketSource>('ai')
+  const [supportTicketForm, setSupportTicketForm] = useState({ name: '', mobile: '', email: '', category: '', subject: '', details: '' })
+  const [supportTicketError, setSupportTicketError] = useState('')
+  const [createdSupportTicket, setCreatedSupportTicket] = useState<SupportTicket | null>(null)
   const [seekerProfileForm, setSeekerProfileForm] = useState<SeekerProfile>(() => loadSessionAccount()?.profile ?? EMPTY_SEEKER_PROFILE)
   const [seekerProfileError, setSeekerProfileError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
@@ -423,6 +466,7 @@ export default function App() {
   })
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
+  useEffect(() => { try { localStorage.setItem(SUPPORT_TICKETS_KEY, JSON.stringify(supportTickets)) } catch { /* ignore */ } }, [supportTickets])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
   useEffect(() => {
     try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
@@ -771,6 +815,80 @@ export default function App() {
     if (!isAdmin && currentUser?.role !== 'recruiter') { setToast('Only registered Recruiters can request candidate contact through Admin.'); return }
     setRequestedCandidates(prev => new Set([...prev, candidate.id]))
     setToast(`Request sent to Admin Divakar Reddy for Candidate ${candidate.code}. Contact will be shared only after candidate consent.`)
+  }
+  const openLegal = (tab: LegalTab = 'privacy') => {
+    setLegalTab(tab)
+    navigate('legal')
+  }
+  const buildSupportMailto = (ticket?: SupportTicket) => {
+    const subject = ticket ? `MR Vacancies Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'MR Vacancies Hub Support Request'
+    const body = ticket
+      ? ['Hello MR Vacancies Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
+      : ['Hello MR Vacancies Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
+    return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  }
+  const buildAdminReplyMailto = (ticket: SupportTicket) => {
+    const subject = `Update on your MR Vacancies Hub support ticket ${ticket.ticketNo}`
+    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — MR Vacancies Hub'].join('\n')
+    return `mailto:${ticket.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  }
+  const openSupportTicket = (source: SupportTicketSource = 'ai') => {
+    setSupportTicketSource(source)
+    setCreatedSupportTicket(null)
+    setSupportTicketError('')
+    setSupportTicketForm(prev => ({
+      ...prev,
+      name: currentUser?.name ?? prev.name,
+      mobile: currentUser?.mobile ?? prev.mobile,
+      email: currentUser?.email ?? prev.email,
+      subject: '',
+      details: '',
+    }))
+    setShowMobileMenu(false)
+    setShowSupportTicketModal(true)
+  }
+  const handleSubmitSupportTicket = () => {
+    const name = supportTicketForm.name.trim().replace(/\s+/g, ' ')
+    const mobile = normalizeMobile(supportTicketForm.mobile)
+    const email = supportTicketForm.email.trim().toLowerCase()
+    const category = supportTicketForm.category.trim()
+    const subject = supportTicketForm.subject.trim().replace(/\s+/g, ' ')
+    const details = supportTicketForm.details.trim().replace(/\s+/g, ' ')
+    if (name.length < 3) { setSupportTicketError('Please enter your full name.'); return }
+    if (!isValidMobile(mobile)) { setSupportTicketError('Please enter a correct 10-digit mobile number.'); return }
+    if (!isValidEmail(email)) { setSupportTicketError('Please enter a correct email ID.'); return }
+    if (!category) { setSupportTicketError('Please select a proper reason for raising this support ticket.'); return }
+    if (subject.length < 5) { setSupportTicketError('Please write a clear subject with at least 5 characters.'); return }
+    if (details.length < 20) { setSupportTicketError('Please explain your issue with a proper reason in at least 20 characters so Admin can understand it clearly.'); return }
+    if (details.length > 1000) { setSupportTicketError('Please keep the issue details within 1000 characters.'); return }
+    const now = new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    const ticket: SupportTicket = {
+      id: `support-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ticketNo: `MR-SUP-2026-${String(Date.now()).slice(-6)}`,
+      name,
+      mobile,
+      email,
+      role: isAdmin ? 'admin' : currentUser?.role ?? 'guest',
+      category,
+      subject,
+      details,
+      status: 'open',
+      source: supportTicketSource,
+      createdAt: now,
+      updatedAt: now,
+    }
+    setSupportTickets(prev => [ticket, ...prev])
+    setCreatedSupportTicket(ticket)
+    setSupportTicketError('')
+    if (supportTicketSource === 'ai') {
+      setAiMessages(prev => [...prev, { role: 'assistant', text: `✅ Your support ticket ${ticket.ticketNo} has been raised successfully.\n\nReason: ${ticket.category}\nSubject: ${ticket.subject}\nStatus: Open\n\nAdmin will review it. For urgent help, email ${SUPPORT_EMAIL} and mention your ticket number.` }])
+    }
+    setToast(`Support ticket ${ticket.ticketNo} raised successfully ✅`)
+  }
+  const handleSupportTicketStatus = (ticketId: string, status: SupportTicketStatus) => {
+    const updatedAt = new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    setSupportTickets(prev => prev.map(ticket => ticket.id === ticketId ? { ...ticket, status, updatedAt } : ticket))
+    setToast('Support ticket status updated')
   }
   const handleUserLogout = () => {
     setCurrentUser(null)
@@ -1262,6 +1380,17 @@ export default function App() {
     const prompt = aiInput.trim()
     setAiInput('')
     setAiMessages(prev => [...prev, { role: 'user', text: prompt }])
+    const lowerPrompt = prompt.toLowerCase()
+    if (lowerPrompt.includes('raise support ticket') || lowerPrompt.includes('raise a ticket') || lowerPrompt.includes('support ticket') || lowerPrompt.includes('raise ticket')) {
+      setAiMessages(prev => [...prev, { role: 'assistant', text: 'Sure — I am opening the support ticket form. Please select a proper reason and explain the issue clearly with your registered mobile number so Admin can help quickly.' }])
+      openSupportTicket('ai')
+      return
+    }
+    if (lowerPrompt.includes('contact support') || lowerPrompt.includes('support email') || lowerPrompt === 'support') {
+      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact MR Vacancies Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
+      openSupportTicket('ai')
+      return
+    }
     setAiLoading(true)
     try {
       const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
@@ -1279,6 +1408,8 @@ export default function App() {
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
+  const openSupportTickets = supportTickets.filter(ticket => ticket.status === 'open' || ticket.status === 'in-progress')
+  const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest')
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
     .map((a, index) => ({ id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: a.profile as SeekerProfile }))
@@ -1375,6 +1506,21 @@ export default function App() {
     )
   }
 
+  const supportTicketStatusLabel = (status: SupportTicketStatus) => status === 'in-progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)
+  const renderSupportTicketSummary = (ticket: SupportTicket) => (
+    <article key={ticket.id} className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-left">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-white">{ticket.ticketNo}</span>
+        <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${ticket.status === 'open' ? 'bg-amber-100 text-amber-800' : ticket.status === 'in-progress' ? 'bg-sky-100 text-sky-800' : ticket.status === 'resolved' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>{supportTicketStatusLabel(ticket.status)}</span>
+        <span className="ml-auto text-[10px] font-semibold text-slate-500">{ticket.createdAt}</span>
+      </div>
+      <p className="mt-2 text-[11px] font-extrabold uppercase tracking-wide text-sky-700">{ticket.category}</p>
+      <p className="mt-0.5 text-sm font-extrabold leading-snug text-slate-900">{ticket.subject}</p>
+      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-600">{ticket.details}</p>
+      <a href={buildSupportMailto(ticket)} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow-sm hover:text-sky-900"><Mail className="h-3.5 w-3.5" /> Email this ticket to Support</a>
+    </article>
+  )
+
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
       {/* Sponsored banner — hidden for ad-free plans */}
@@ -1417,9 +1563,10 @@ export default function App() {
               <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
+              <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:block ${page==='legal'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Legal &amp; Support</button>
               {isAdmin && (
               <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length} pending</span>}
+                <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length} pending</span>}
               </button>
               )}
             </nav>
@@ -1534,6 +1681,7 @@ export default function App() {
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
+                    { label: 'Legal & Support', sub: 'Privacy • Terms • Support ticket', icon: FileText, page: 'legal' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
                   ].filter(item => isAdmin || item.page !== 'admin').map(item => (
                     <button
@@ -1644,6 +1792,11 @@ export default function App() {
               </div>
 
               <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-extrabold text-sky-700">
+                <button type="button" onClick={() => openLegal('privacy')} className="hover:text-sky-900 hover:underline">Privacy Policy</button><span className="text-slate-300">•</span>
+                <button type="button" onClick={() => openLegal('terms')} className="hover:text-sky-900 hover:underline">Terms &amp; Privacy</button><span className="text-slate-300">•</span>
+                <button type="button" onClick={() => openLegal('support')} className="hover:text-sky-900 hover:underline">Contact Support</button>
+              </div>
             </div>
             <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
@@ -1745,6 +1898,7 @@ export default function App() {
               <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
                 <span>Step 1: Mobile</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
               </div>
+              <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
             </div>
             <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
@@ -2536,7 +2690,7 @@ export default function App() {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white"><Sparkles className="h-5 w-5" /></div>
               <div>
                 <h3 className="text-lg font-extrabold">MR Vacancies AI Assistant</h3>
-                <p className="text-xs font-semibold text-slate-500">Resume • Interview • RCPA • Detailing • Salary insights</p>
+                <p className="text-xs font-semibold text-slate-500">Resume • Interview • RCPA • Salary • Support tickets</p>
               </div>
               <span className="ml-auto rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">ONLINE</span>
             </div>
@@ -2557,13 +2711,48 @@ export default function App() {
               <button onClick={sendAi} disabled={aiLoading} className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4 sm:mr-2 sm:inline" /><span className="hidden sm:inline">Send</span></button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
+              <button onClick={() => openSupportTicket('ai')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-extrabold text-white shadow hover:bg-sky-700"><FileText className="h-3.5 w-3.5" /> Raise Support Ticket</button>
               {['Resume for fresher', 'Mankind interview Q&A', 'Best salary in Hyderabad', 'RCPA tips'].map(q => (
                 <button key={q} onClick={() => setAiInput(q)} className="rounded-full border bg-slate-50 px-3 py-1 text-xs font-semibold hover:bg-white">{q}</button>
               ))}
             </div>
+            <div className="mt-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white shadow"><MessageCircle className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-sm font-extrabold text-slate-900">Need help from Admin? Raise a support ticket</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-slate-600">Select a <b>proper reason</b>, write your registered mobile and issue clearly. Support email: <a href={buildSupportMailto()} className="font-extrabold text-sky-700 hover:underline">{SUPPORT_EMAIL}</a></p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button onClick={() => openSupportTicket('ai')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-slate-800">Raise Ticket</button>
+                  <button onClick={() => openLegal('support')} className="rounded-full border bg-white px-4 py-2 text-xs font-extrabold text-slate-700 shadow-sm">Contact Support</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-4">
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700"><FileText className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-sm font-extrabold">My Support Tickets</p>
+                  <p className="text-xs text-slate-500">Track tickets raised through AI Chat or Contact Support.</p>
+                </div>
+                <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-extrabold text-sky-700">{mySupportTickets.length}</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {mySupportTickets.length === 0 ? (
+                  <p className="rounded-xl bg-slate-50 p-3 text-center text-xs font-semibold leading-relaxed text-slate-500">No support ticket raised yet. For login, profile, vacancy, plan or technical help, raise a ticket with a proper reason.</p>
+                ) : mySupportTickets.slice(0, 3).map(ticket => renderSupportTicketSummary(ticket))}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button onClick={() => openSupportTicket('ai')} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-3.5 w-3.5" /> New Ticket</button>
+                <a href={buildSupportMailto()} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-extrabold text-slate-700"><Mail className="h-3.5 w-3.5" /> Email Support</a>
+              </div>
+              {isAdmin && <button onClick={() => openAdmin('support')} className="mt-2 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white">Open Admin Support Tickets ({openSupportTickets.length} open)</button>}
+            </div>
+
             <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white">
               <p className="text-sm font-bold tracking-widest text-sky-300">HOW IT WORKS</p>
               <h3 className="mt-2 text-xl font-extrabold">From vacancy to joining in 3 steps</h3>
@@ -2885,6 +3074,151 @@ export default function App() {
           </div>
         </section>
       )}
+      {/* LEGAL & SUPPORT — Privacy Policy, Terms & Privacy and Contact Support inside the app */}
+      {page === 'legal' && (
+        <section className="mx-auto max-w-[1100px] px-4 py-8">
+          <div className="overflow-hidden rounded-[28px] bg-gradient-to-r from-sky-700 via-sky-600 to-indigo-700 p-6 text-white shadow-xl sm:p-8">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-extrabold tracking-widest text-sky-700">LEGAL &amp; SUPPORT</span>
+                  <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-extrabold tracking-widest">SINCE 2026</span>
+                  <span className="rounded-full bg-amber-400 px-3 py-1 text-[10px] font-extrabold tracking-widest text-slate-900">UPDATED {LEGAL_POLICY_DATE}</span>
+                </div>
+                <h2 className="mt-3 text-[28px] font-extrabold leading-tight sm:text-[34px]">Privacy, Terms &amp; User Support</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-relaxed text-sky-50">Read the complete Privacy Policy and Terms &amp; Privacy inside the app. For account, profile, vacancy, subscription or technical help, contact support or raise a ticket from AI Assistant with a proper reason.</p>
+                <a href={buildSupportMailto()} className="mt-4 inline-flex max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-extrabold text-sky-700 shadow hover:bg-sky-50"><Mail className="h-4 w-4 shrink-0" /><span className="truncate">{SUPPORT_EMAIL}</span></a>
+              </div>
+              <div className="shrink-0 rounded-3xl bg-white/15 p-4 backdrop-blur lg:w-[280px]">
+                <div className="flex items-center gap-3">
+                  <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-12 w-12 aspect-square rounded-full border-2 border-white object-cover object-center shadow" />
+                  <div>
+                    <p className="text-[10px] font-extrabold tracking-widest text-sky-100">SUPPORT ADMIN</p>
+                    <p className="text-sm font-extrabold">M Divakar Reddy</p>
+                    <p className="text-xs text-sky-100">App Founder — MR Vacancies Hub</p>
+                  </div>
+                </div>
+                <button onClick={() => navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
+              </div>
+            </div>
+          </div>
+
+          <div className={`sticky ${isAdFree ? 'top-[72px]' : 'top-[109px]'} z-10 mt-5 grid grid-cols-3 gap-1 rounded-full border bg-white p-1 shadow-sm`}>
+            <button onClick={() => setLegalTab('privacy')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'privacy' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><ShieldCheck className="hidden h-4 w-4 sm:block" /> Privacy Policy</button>
+            <button onClick={() => setLegalTab('terms')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'terms' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><FileText className="hidden h-4 w-4 sm:block" /> Terms &amp; Privacy</button>
+            <button onClick={() => setLegalTab('support')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'support' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><MessageCircle className="hidden h-4 w-4 sm:block" /> Contact Support</button>
+          </div>
+
+          {legalTab !== 'support' ? (
+            <article className="mt-5 rounded-[28px] border bg-white p-5 shadow-sm sm:p-8">
+              <div className="border-b pb-5">
+                <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} MR VACANCIES HUB • SINCE 2026</p>
+                <h3 className="mt-2 text-[26px] font-extrabold leading-tight">{legalTab === 'privacy' ? 'Privacy Policy' : 'Terms & Privacy'}</h3>
+                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — MR Vacancies Hub</p>
+                <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm leading-relaxed text-sky-900">
+                  {legalTab === 'privacy'
+                    ? 'Your privacy matters. This policy explains what information MR Vacancies Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
+                    : 'Please read these terms carefully. They explain account rules, Job Seeker and Recruiter responsibilities, Admin approval, sponsored ads, AI Assistant use, support tickets, prohibited activity and account deletion.'}
+                </div>
+              </div>
+              <div className="divide-y">
+                {(legalTab === 'privacy' ? PRIVACY_SECTIONS : TERMS_SECTIONS).map(section => (
+                  <section key={section.title} className="py-5 first:pt-6 last:pb-0">
+                    <h4 className="text-base font-extrabold text-slate-900">{section.title}</h4>
+                    {section.intro && <p className="mt-2 text-sm leading-relaxed text-slate-600">{section.intro}</p>}
+                    <ul className="mt-3 space-y-2.5">
+                      {section.bullets.map(point => (
+                        <li key={point} className="flex gap-2.5 text-sm leading-relaxed text-slate-700"><Check className="mt-1 h-4 w-4 shrink-0 text-sky-600" /><span>{point}</span></li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+              <div className="mt-6 flex flex-col gap-3 rounded-2xl bg-slate-900 p-5 text-white sm:flex-row sm:items-center">
+                <div className="flex-1">
+                  <p className="text-sm font-extrabold">Have a question about {legalTab === 'privacy' ? 'privacy' : 'these terms'}?</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-300">Raise a support ticket from AI Assistant with a proper reason or email {SUPPORT_EMAIL}.</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button onClick={() => { navigate('ai'); openSupportTicket('ai') }} className="rounded-full bg-sky-500 px-4 py-2.5 text-xs font-extrabold text-white shadow hover:bg-sky-400">Raise Ticket in AI Chat</button>
+                  <button onClick={() => setLegalTab('support')} className="rounded-full bg-white px-4 py-2.5 text-xs font-extrabold text-slate-900 shadow">Contact Support</button>
+                </div>
+              </div>
+            </article>
+          ) : (
+            <div className="mt-5 grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-5">
+                <div className="rounded-[28px] border bg-white p-6 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white shadow"><Mail className="h-6 w-6" /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-extrabold tracking-widest text-sky-700">OFFICIAL SUPPORT EMAIL</p>
+                      <a href={buildSupportMailto()} className="mt-1 block break-all text-lg font-extrabold text-slate-900 hover:text-sky-700">{SUPPORT_EMAIL}</a>
+                      <p className="mt-1 text-sm leading-relaxed text-slate-600">For account, profile, job application, recruiter approval, subscription/ad, privacy or technical support. Mention your registered mobile number and ticket number for faster help.</p>
+                    </div>
+                  </div>
+                  <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                    <a href={buildSupportMailto()} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-slate-800"><Mail className="h-4 w-4" /> Email Support</a>
+                    <button onClick={() => { navigate('ai'); openSupportTicket('ai') }} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Sparkles className="h-4 w-4" /> Ticket in AI Chat</button>
+                    <button onClick={() => openSupportTicket('support')} className="flex items-center justify-center gap-1.5 rounded-full border px-4 py-3 text-xs font-extrabold text-slate-700"><FileText className="h-4 w-4" /> Raise Ticket Now</button>
+                  </div>
+                  <div className="mt-4 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-3">
+                    <p className="rounded-xl bg-slate-50 p-3"><b className="block text-slate-900">Support Admin</b>M Divakar Reddy</p>
+                    <p className="rounded-xl bg-slate-50 p-3"><b className="block text-slate-900">Ticket Tracking</b>AI Assistant → My Support Tickets</p>
+                    <p className="rounded-xl bg-slate-50 p-3"><b className="block text-slate-900">Response Aim</b>Usually within 24–48 hours</p>
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border bg-white p-6 shadow-sm">
+                  <p className="text-base font-extrabold">How to raise a proper support ticket</p>
+                  <div className="mt-4 space-y-3">
+                    {[
+                      { n: '1', t: 'Open AI Assistant', d: 'Tap AI Assistant, then tap Raise Support Ticket. You can also type “raise support ticket” in AI Chat.' },
+                      { n: '2', t: 'Select the correct proper reason', d: 'Choose login, profile, application, recruiter approval, subscription/ad, wrong vacancy, privacy or technical issue.' },
+                      { n: '3', t: 'Explain clearly', d: 'Write your registered mobile, job/company/HQ or screen name, what happened and what help you need.' },
+                      { n: '4', t: 'Save your ticket number', d: 'Use the ticket number in follow-up emails to akhildivakara@gmail.com so Admin can find your request quickly.' },
+                    ].map(step => (
+                      <div key={step.n} className="flex gap-3 rounded-2xl bg-sky-50/70 p-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{step.n}</span>
+                        <div><p className="text-sm font-extrabold">{step.t}</p><p className="mt-0.5 text-xs leading-relaxed text-slate-600">{step.d}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-900">
+                    <p className="flex items-center gap-2 font-extrabold"><AlertTriangle className="h-4 w-4" /> Safety reminder</p>
+                    <p className="mt-1">Never share OTPs, passwords, bank details or unnecessary original documents. Never pay money to anyone promising a job. Report suspicious vacancies immediately through a support ticket.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border bg-white p-6 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-700"><FileText className="h-5 w-5" /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-base font-extrabold">My Support Tickets</p>
+                    <p className="text-xs leading-relaxed text-slate-500">{currentUser ? `Showing tickets for +91 ${currentUser.mobile}.` : 'Tickets raised on this device are shown here.'}</p>
+                  </div>
+                  <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-extrabold text-sky-700">{mySupportTickets.length}</span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {mySupportTickets.length === 0 ? (
+                    <div className="rounded-2xl bg-slate-50 p-6 text-center">
+                      <MessageCircle className="mx-auto h-9 w-9 text-slate-400" />
+                      <p className="mt-2 text-sm font-extrabold">No support tickets yet</p>
+                      <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-slate-500">Raise your first ticket from AI Chat with a proper reason and Admin will review it.</p>
+                      <button onClick={() => { navigate('ai'); openSupportTicket('ai') }} className="mt-4 rounded-full bg-sky-600 px-5 py-2.5 text-xs font-extrabold text-white shadow hover:bg-sky-700">Raise Ticket in AI Chat</button>
+                    </div>
+                  ) : mySupportTickets.map(ticket => renderSupportTicketSummary(ticket))}
+                </div>
+                <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                  <p><b className="text-slate-900">Common reasons:</b> Login issue, Job Seeker profile issue, Apply Now problem, recruiter vacancy approval, subscription/ad issue, wrong vacancy, account deletion help, privacy request or technical problem.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ADMIN PAGE — M Divakar Reddy */}
       {page === 'admin' && (
         <section className="mx-auto max-w-[1280px] px-4 py-10">
@@ -2955,6 +3289,7 @@ export default function App() {
                 <button onClick={() => setAdminTab('post')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='post' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Plus className="h-4 w-4" /> Post Vacancy</button>
                 <button onClick={() => setAdminTab('approvals')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='approvals' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Clock3 className="h-4 w-4" /> Approvals{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</button>
                 <button onClick={() => setAdminTab('accounts')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='accounts' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><FileText className="h-4 w-4" /> Account Requests{pendingDeletionRequests.length > 0 && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">{pendingDeletionRequests.length}</span>}</button>
+                <button onClick={() => setAdminTab('support')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='support' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><MessageCircle className="h-4 w-4" /> Support Tickets{openSupportTickets.length > 0 && <span className="rounded-full bg-sky-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">{openSupportTickets.length}</span>}</button>
                 <button onClick={() => setAdminTab('manage')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='manage' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Briefcase className="h-4 w-4" /> Manage Vacancies ({jobs.length})</button>
                 <button onClick={() => setAdminTab('settings')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='settings' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Settings className="h-4 w-4" /> Settings</button>
               </div>
@@ -2975,6 +3310,13 @@ export default function App() {
                       <button onClick={() => setAdminTab('accounts')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Requests</button>
                     </div>
                   )}
+                  {openSupportTickets.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+                      <MessageCircle className="h-6 w-6 shrink-0 text-sky-600" />
+                      <p className="flex-1 text-sm"><b>{openSupportTickets.length} user support {openSupportTickets.length === 1 ? 'ticket needs' : 'tickets need'} attention.</b> <span className="text-slate-600">Users raise tickets from AI Chat with a proper reason.</span></p>
+                      <button onClick={() => setAdminTab('support')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Tickets</button>
+                    </div>
+                  )}
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Live Vacancies</p><p className="mt-1 text-3xl font-extrabold">{jobs.length}</p><p className="text-xs font-semibold text-emerald-600">Showing on Jobs page</p></div>
                     <div className="rounded-2xl border bg-white p-4"><p className="text-xs font-bold text-slate-500">Companies</p><p className="mt-1 text-3xl font-extrabold">{Array.from(new Set(jobs.map(j => j.company))).length}</p><p className="text-xs font-semibold text-sky-600">Pharma companies</p></div>
@@ -2989,6 +3331,7 @@ export default function App() {
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Delete / remove any vacancy</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Approve / reject recruiter-submitted vacancies</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Review Job Seeker account-deletion requests</p>
+                      <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Review &amp; update AI Chat support tickets</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Change admin password anytime</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -3143,6 +3486,72 @@ export default function App() {
                 </div>
               )}
 
+              {adminTab === 'support' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="flex items-center gap-2 text-base font-extrabold"><MessageCircle className="h-5 w-5 text-sky-600" /> User Support Tickets ({supportTickets.length})</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">Tickets raised by users through <b>AI Assistant → Raise Support Ticket</b> or Contact Support. Users must select a proper reason and explain the issue clearly.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs font-extrabold">
+                      <span className="rounded-full bg-amber-100 px-3 py-1.5 text-amber-800">{supportTickets.filter(t => t.status === 'open').length} Open</span>
+                      <span className="rounded-full bg-sky-100 px-3 py-1.5 text-sky-800">{supportTickets.filter(t => t.status === 'in-progress').length} In Progress</span>
+                      <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-emerald-800">{supportTickets.filter(t => t.status === 'resolved').length} Resolved</span>
+                      <a href={buildSupportMailto()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-white"><Mail className="h-3.5 w-3.5" /> {SUPPORT_EMAIL}</a>
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {supportTickets.length === 0 && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <BadgeCheck className="mx-auto h-9 w-9 text-emerald-500" />
+                        <p className="mt-2 text-sm font-bold">No support tickets yet</p>
+                        <p className="text-xs text-slate-500">When a user raises a ticket through AI Chat, it will appear here with the proper reason and contact details.</p>
+                      </div>
+                    )}
+                    {supportTickets.map(ticket => (
+                      <div key={ticket.id} className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{ticket.name.trim().charAt(0).toUpperCase()}</div>
+                          <div className="min-w-[220px] flex-1">
+                            <p className="flex flex-wrap items-center gap-1.5 text-sm font-extrabold">{ticket.name}
+                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-extrabold text-white">{ticket.ticketNo}</span>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-extrabold uppercase text-sky-700 shadow-sm">{ticket.role}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${ticket.status === 'open' ? 'bg-amber-400 text-slate-900' : ticket.status === 'in-progress' ? 'bg-sky-600 text-white' : ticket.status === 'resolved' ? 'bg-emerald-600 text-white' : 'bg-slate-500 text-white'}`}>{supportTicketStatusLabel(ticket.status).toUpperCase()}</span>
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-600">+91 {ticket.mobile} • {ticket.email}</p>
+                            <p className="text-[11px] text-slate-500">Raised: {ticket.createdAt} • Updated: {ticket.updatedAt} • Source: {ticket.source === 'ai' ? 'AI Chat' : 'Contact Support'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-xl bg-white p-3">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">PROPER REASON SELECTED BY USER</p>
+                          <p className="mt-1 text-sm font-extrabold text-slate-900">{ticket.category}</p>
+                          <p className="mt-2 text-[10px] font-extrabold tracking-widest text-slate-400">SUBJECT</p>
+                          <p className="mt-1 text-sm font-extrabold text-slate-900">{ticket.subject}</p>
+                          <p className="mt-2 text-[10px] font-extrabold tracking-widest text-slate-400">ISSUE DETAILS</p>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700">{ticket.details}</p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <a href={`tel:+91${ticket.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
+                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from MR Vacancies Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={buildAdminReplyMailto(ticket)} className="flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"><Mail className="h-3 w-3" /> Email Reply</a>
+                          <div className="ml-auto flex flex-wrap gap-1.5">
+                            {[
+                              { value: 'open' as SupportTicketStatus, label: 'Open' },
+                              { value: 'in-progress' as SupportTicketStatus, label: 'In Progress' },
+                              { value: 'resolved' as SupportTicketStatus, label: 'Resolved' },
+                              { value: 'closed' as SupportTicketStatus, label: 'Closed' },
+                            ].map(option => (
+                              <button key={option.value} onClick={() => handleSupportTicketStatus(ticket.id, option.value)} disabled={ticket.status === option.value} className={`rounded-full px-3 py-1.5 text-[11px] font-extrabold ${ticket.status === option.value ? 'cursor-default bg-sky-600 text-white' : 'border bg-white text-slate-600 hover:bg-sky-50'}`}>{option.label}</button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">Reply from your support email {SUPPORT_EMAIL} and keep the ticket number in the subject for easy tracking.</p>
+                </div>
+              )}
+
               {adminTab === 'manage' && (
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3220,10 +3629,11 @@ export default function App() {
             <div>
               <p className="text-sm font-bold text-white">Legal & Support</p>
               <ul className="mt-3 space-y-2 text-sm opacity-80">
-                <li><a href="/privacy-policy.html" target="_blank" rel="noreferrer" className="hover:text-white">Privacy Policy</a></li>
-                <li><a href="/privacy-policy.html" target="_blank" rel="noreferrer" className="hover:text-white">Terms & Privacy</a></li>
-                <li><a href="mailto:support@mrvacancieshub.in" className="hover:text-white">Contact Support</a></li>
-                <li>Support: support@mrvacancieshub.in</li>
+                <li><button onClick={() => openLegal('privacy')} className="hover:text-white">Privacy Policy</button></li>
+                <li><button onClick={() => openLegal('terms')} className="hover:text-white">Terms &amp; Privacy</button></li>
+                <li><button onClick={() => openLegal('support')} className="hover:text-white">Contact Support</button></li>
+                <li><button onClick={() => { navigate('ai'); openSupportTicket('ai') }} className="hover:text-white">Raise Support Ticket (AI Chat)</button></li>
+                <li><a href={buildSupportMailto()} className="break-all hover:text-white">Support: {SUPPORT_EMAIL}</a></li>
               </ul>
             </div>
             <div className="rounded-2xl bg-white/10 p-4">
@@ -3511,6 +3921,90 @@ export default function App() {
                 <button onClick={() => setShowDeleteAccountConfirm(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Cancel</button>
                 <button onClick={handleDeleteRecruiterAccount} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700"><Trash2 className="h-4 w-4" /> Delete Account</button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* SUPPORT TICKET — raised from AI Chat / Contact Support with a proper reason */}
+      <AnimatePresence>
+        {showSupportTicketModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowSupportTicketModal(false)}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[540px] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+              {createdSupportTicket ? (
+                <div className="text-center">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="h-8 w-8" /></div>
+                  <h3 className="mt-3 text-xl font-extrabold">Support Ticket Raised ✅</h3>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">Your ticket has been saved for Admin review. Keep the ticket number for follow-up emails.</p>
+                  <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-left">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-extrabold text-white">{createdSupportTicket.ticketNo}</span>
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-extrabold text-amber-800">Open</span>
+                      <span className="ml-auto text-[11px] font-semibold text-slate-500">{createdSupportTicket.createdAt}</span>
+                    </div>
+                    <p className="mt-3 text-[10px] font-extrabold tracking-widest text-slate-400">PROPER REASON</p>
+                    <p className="mt-1 text-sm font-extrabold">{createdSupportTicket.category}</p>
+                    <p className="mt-2 text-[10px] font-extrabold tracking-widest text-slate-400">SUBJECT</p>
+                    <p className="mt-1 text-sm font-extrabold">{createdSupportTicket.subject}</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">{createdSupportTicket.details}</p>
+                  </div>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-500">For urgent follow-up, email <b className="text-sky-700">{SUPPORT_EMAIL}</b> and mention ticket <b>{createdSupportTicket.ticketNo}</b>.</p>
+                  <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                    <a href={buildSupportMailto(createdSupportTicket)} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Mail className="h-3.5 w-3.5" /> Email Ticket</a>
+                    <button onClick={() => { setCreatedSupportTicket(null); setSupportTicketForm(prev => ({ ...prev, category: '', subject: '', details: '' })); setSupportTicketError('') }} className="rounded-full border py-2.5 text-xs font-extrabold">Raise Another</button>
+                    <button onClick={() => setShowSupportTicketModal(false)} className="rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white">Done</button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={e => { e.preventDefault(); handleSubmitSupportTicket() }}>
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-700"><MessageCircle className="h-7 w-7" /></div>
+                  <h3 className="mt-3 text-center text-xl font-extrabold">Raise a Support Ticket</h3>
+                  <p className="mx-auto mt-2 max-w-md text-center text-xs leading-relaxed text-slate-500">{supportTicketSource === 'ai' ? 'From AI Assistant • ' : 'From Contact Support • '}Select a <b>proper reason</b> and explain the issue clearly. Admin Divakar Reddy will review it.</p>
+                  <a href={buildSupportMailto()} className="mt-4 flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-slate-800"><Mail className="h-4 w-4 shrink-0" /><span className="truncate">{SUPPORT_EMAIL}</span></a>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Full Name *</label>
+                      <input value={supportTicketForm.name} onChange={e => { setSupportTicketForm(prev => ({ ...prev, name: e.target.value })); setSupportTicketError('') }} placeholder="Your full name" autoComplete="name" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Registered Mobile Number *</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
+                        <input value={supportTicketForm.mobile} onChange={e => { setSupportTicketForm(prev => ({ ...prev, mobile: e.target.value })); setSupportTicketError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                      </div>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *</label>
+                      <input value={supportTicketForm.email} onChange={e => { setSupportTicketForm(prev => ({ ...prev, email: e.target.value })); setSupportTicketError('') }} type="email" autoComplete="email" placeholder="you@example.com" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Select a Proper Reason *</label>
+                      <select value={supportTicketForm.category} onChange={e => { setSupportTicketForm(prev => ({ ...prev, category: e.target.value })); setSupportTicketError('') }} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                        <option value="">Select the reason for this ticket</option>
+                        {SUPPORT_TICKET_REASONS.map(reason => <option key={reason} value={reason}>{reason}</option>)}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Subject *</label>
+                      <input value={supportTicketForm.subject} onChange={e => { setSupportTicketForm(prev => ({ ...prev, subject: e.target.value })); setSupportTicketError('') }} maxLength={100} placeholder="e.g. Unable to login with my registered mobile" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Explain Your Issue With Proper Reason *</label>
+                      <textarea value={supportTicketForm.details} onChange={e => { setSupportTicketForm(prev => ({ ...prev, details: e.target.value })); setSupportTicketError('') }} rows={5} maxLength={1000} placeholder="Write clearly what happened. Mention the job/company/HQ, screen name or date/time if relevant..." className="w-full rounded-xl border bg-white px-3 py-3 text-sm leading-relaxed outline-none focus:border-sky-500" />
+                      <p className="mt-1 text-right text-[11px] font-semibold text-slate-400">{supportTicketForm.details.trim().length}/1000 characters • Minimum 20</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900"><b>Do not share</b> passwords, OTPs, bank details, Aadhaar/PAN or other sensitive information in AI Chat or this ticket.</div>
+                  {supportTicketError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{supportTicketError}</p>}
+                  <div className="mt-4 flex gap-2">
+                    <button type="button" onClick={() => setShowSupportTicketModal(false)} className="flex-1 rounded-full border py-3 text-sm font-bold">Cancel</button>
+                    <button type="submit" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white shadow hover:bg-sky-700"><Send className="h-4 w-4" /> Submit Ticket</button>
+                  </div>
+                  <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">Your ticket will appear under AI Assistant → My Support Tickets and in Admin Support Tickets.</p>
+                </form>
+              )}
             </motion.div>
           </motion.div>
         )}
