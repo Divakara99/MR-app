@@ -26,12 +26,27 @@ app.use((req, res, next) => {
 
 // Gemini proxy
 app.post('/api/gemini', async (req, res) => {
-  const { prompt, history } = req.body;
+  const { prompt, history, audience } = req.body;
+  const isRecruiterAudience = audience === 'recruiter';
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
     // Mock response when no key
     const lower = (prompt || '').toLowerCase();
     let mock = '';
+    if (isRecruiterAudience) {
+      if (lower.includes('vacancy') || lower.includes('jd') || lower.includes('job description') || lower.includes('post')) {
+        mock = `Here is a strong MR vacancy format:\n\n**Role:** Medical Representative\n**HQ:** Mention city + exact HQ area\n**Experience:** Fresher / 1-3 years\n**Qualification:** B.Pharm / B.Sc / D.Pharm\n**CTC:** Salary range + TA/DA + incentives\n**Work:** Doctor coverage, RCPA, chemist/stockist visits and daily reporting\n**Must have:** Two-wheeler, smartphone and willingness to travel in HQ\n\nPost it free from **Post Vacancy**. It goes LIVE after Admin verification. No Recruiter plan is needed.`;
+      } else if (lower.includes('interview') || lower.includes('question')) {
+        mock = `**MR candidate interview questions:**\n1. Explain your daily doctor-coverage and RCPA plan.\n2. How do you handle a doctor who gives very little time?\n3. How do you track chemist prescriptions and stockist movement?\n4. Give one example of achieving or recovering a sales target.\n5. Demonstrate a 2-minute product detailing call.\n\nScore communication, HQ knowledge, science basics, field discipline and joining readiness separately.`;
+      } else if (lower.includes('shortlist') || lower.includes('candidate') || lower.includes('screen')) {
+        mock = `**Candidate shortlist checklist:**\n• Desired role matches your vacancy\n• HQ/state is workable without relocation risk\n• Experience/company/division fit\n• Current vs expected package is realistic\n• Qualification and two-wheeler confirmed\n• Notice period / immediate joining checked\n\nOpen **Candidates List**, tap a row to view anonymous details, and request contact through Admin after shortlisting.`;
+      } else if (lower.includes('plan') || lower.includes('subscription') || lower.includes('pricing') || lower.includes('price')) {
+        mock = `Recruiters do **not** need a subscription plan on MR Vacancies Hub. Free, Starter and Pro are Job Seeker plans for job search, contact reveals and Apply Now. As a Recruiter, you can register free, post vacancies for Admin approval, and use the Candidates List.`;
+      } else {
+        mock = `Hi! I'm your MR Vacancies Hub recruiter assistant 🤝\n\nI can help with:\n• Writing an MR vacancy / JD\n• Interview questions for MR candidates\n• Candidate shortlist checklists\n• Improving vacancy response\n\nTry: \"Write MR vacancy JD for Hyderabad HQ\" or \"Candidate shortlist checklist\".`;
+      }
+      return res.json({ text: mock, mocked: true });
+    }
     if (lower.includes('resume') || lower.includes('cv')) {
       mock = `Here's a tailored MR resume tip:\n\n**For Medical Representative roles:**\n• Highlight D.Pharm/B.Pharm/B.Sc qualification\n• Mention HQ knowledge, doctor coverage, chemist relations\n• Quantify achievements: "Achieved 112% of Q3 target in Hyderabad HQ"\n• Add driving license & willingness to relocate\n• Keep it 1 page, PDF format\n\nWould you like me to draft a cover letter for a specific company?`;
     } else if (lower.includes('interview')) {
@@ -58,7 +73,9 @@ app.post('/api/gemini', async (req, res) => {
       model,
       contents,
       config: {
-        systemInstruction: `You are MR Vacancies Hub AI — expert assistant for Medical Representatives in India seeking pharma jobs. You help with job search, resume, interview prep, pharma knowledge, RCPA, detailing. Be concise, friendly, use Indian pharma context (Sun, Cipla, Dr Reddy's, Mankind, Alkem, Torrent, Zydus, Lupin, Abbott, Glenmark, etc). Managed by M Divakar Reddy.`,
+        systemInstruction: isRecruiterAudience
+          ? `You are MR Vacancies Hub AI for a logged-in Recruiter in India. The Recruiter gives jobs; they are not job searching. Help only with vacancy writing, hiring process, MR interview questions, candidate screening/shortlisting and support. Do not recommend job searching, Apply Now, saved jobs or Free/Starter/Pro subscriptions to the Recruiter. Clearly state that Recruiters do not need a plan if pricing is mentioned. Candidate name, mobile and email remain hidden; contact goes through Admin after candidate consent. Be concise and practical. Managed by M Divakar Reddy.`
+          : `You are MR Vacancies Hub AI — expert assistant for Medical Representatives in India seeking pharma jobs. You help with job search, resume, interview prep, pharma knowledge, RCPA, detailing. Be concise, friendly, use Indian pharma context (Sun, Cipla, Dr Reddy's, Mankind, Alkem, Torrent, Zydus, Lupin, Abbott, Glenmark, etc). Managed by M Divakar Reddy.`,
       },
     });
     const text = (response as any).text || (response as any).candidates?.[0]?.content?.parts?.[0]?.text || 'No response';

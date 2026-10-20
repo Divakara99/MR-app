@@ -148,6 +148,10 @@ const TIERS = [
   { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
+const SEEKER_AI_WELCOME = 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
+const RECRUITER_AI_WELCOME = 'Hi! I’m your MR Vacancies Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear MR vacancy description\n• Interview questions for MR candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
+const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
+
 // Helpers
 const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) => a + 'X'.repeat(mid.length) + c)
 const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
@@ -406,9 +410,7 @@ export default function App() {
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
-  const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>([
-    { role: 'assistant', text: 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.' }
-  ])
+  const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
   const [aiLoading, setAiLoading] = useState(false)
   // Jobs are now state (Admin can post/delete; saved on this device)
   const [jobs, setJobs] = useState<Job[]>(() => {
@@ -489,7 +491,9 @@ export default function App() {
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
-  const isAdFree = isAdmin || tier !== 'free' // Paid/Admin: no browsing or contact-reveal ads. Apply Now has its own sponsored ad.
+  const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
+  const shouldHideJobSeekerExperience = isRecruiterUser && !isAdmin
+  const isAdFree = isAdmin || isRecruiterUser || tier !== 'free' // Admin/Recruiter/paid: no Job Seeker browsing or contact-reveal ads. Apply ad is Job Seeker-only.
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -544,6 +548,18 @@ export default function App() {
   }, [aiMessages])
 
   const navigate = (p: typeof page) => {
+    const jobSeekerOnlyPages: AppPage[] = ['home', 'jobs', 'pricing', 'saved', 'profile']
+    if (shouldHideJobSeekerExperience && jobSeekerOnlyPages.includes(p)) {
+      setPage('recruiters')
+      setShowMobileMenu(false)
+      setShowAccountMenu(false)
+      setSelectedCandidate(null)
+      setSelected(null)
+      setShowPricing(false)
+      setToast('Recruiter view: job search, Apply Now and Job Seeker plans are hidden. Post a vacancy or open Candidates List.')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
     setPage(p)
     setShowMobileMenu(false)
     setShowAccountMenu(false)
@@ -608,6 +624,13 @@ export default function App() {
     if (error) throw error
   }
   const completeUserAuth = (account: Account, isNewAccount: boolean) => {
+    setSelected(null)
+    setShowPricing(false)
+    setShowRewarded(null)
+    setApplyAdJob(null)
+    setApplyAdProgress(0)
+    setRewardProgress(0)
+    setAiMessages(getAiWelcomeMessages(account.role))
     setCurrentUser(account)
     setHasAuthenticated(true)
     setEntryRole(account.role)
@@ -742,6 +765,17 @@ export default function App() {
       navigate('profile')
       return false
     }
+    return true
+  }
+  const blockRecruiterJobSearch = () => {
+    if (!shouldHideJobSeekerExperience) return false
+    setSelected(null)
+    setShowPricing(false)
+    setShowRewarded(null)
+    setApplyAdJob(null)
+    setApplyAdProgress(0)
+    setToast('You are logged in as a Recruiter. Job search, Apply Now, saved jobs and Job Seeker plans are not for Recruiter accounts.')
+    navigate('recruiters')
     return true
   }
   const handleSaveSeekerProfile = async () => {
@@ -904,6 +938,13 @@ export default function App() {
   const handleUserLogout = () => {
     setShowAccountMenu(false)
     setSelectedCandidate(null)
+    setSelected(null)
+    setShowPricing(false)
+    setShowRewarded(null)
+    setApplyAdJob(null)
+    setApplyAdProgress(0)
+    setRewardProgress(0)
+    setAiMessages(getAiWelcomeMessages())
     setCurrentUser(null)
     setHasAuthenticated(false)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
@@ -1250,6 +1291,7 @@ export default function App() {
   }
 
   const attemptReveal = (job: Job) => {
+    if (blockRecruiterJobSearch()) return
     if (!requireCompletedSeekerProfile()) return
     if (revealed.has(job.id)) return
     if (isExtraJob(job)) {
@@ -1281,6 +1323,7 @@ export default function App() {
   }
 
   const attemptExtraReveal = (job: Job, field: ExtraRevealField) => {
+    if (blockRecruiterJobSearch()) return
     if (!requireCompletedSeekerProfile()) return
     if (field === 'company' && isCompanyVisible(job)) return
     if (field === 'manager' && isManagerVisible(job)) return
@@ -1329,6 +1372,7 @@ export default function App() {
 
   useEffect(() => {
     if (!applyAdJob) return
+    if (shouldHideJobSeekerExperience) { setApplyAdJob(null); setApplyAdProgress(0); return }
     let progress = 0
     setApplyAdProgress(0)
     const id = setInterval(() => {
@@ -1346,6 +1390,7 @@ export default function App() {
   }, [applyAdJob])
 
   const handleApply = (job: Job) => {
+    if (blockRecruiterJobSearch()) return
     if (!requireCompletedSeekerProfile()) return
     if (applied.has(job.id)) { setToast('You have already applied to this vacancy ✅'); return }
     if (applyAdJob) return
@@ -1360,6 +1405,7 @@ export default function App() {
   }
 
   const toggleSave = (id: string) => {
+    if (blockRecruiterJobSearch()) return
     setSaved(prev => {
       const n = new Set(prev)
       if (n.has(id)) { n.delete(id); setToast('Removed from saved') } else { n.add(id); setToast('Saved to wishlist 🔖') }
@@ -1407,11 +1453,11 @@ export default function App() {
     }
     setAiLoading(true)
     try {
-      const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
+      const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, audience: shouldHideJobSeekerExperience ? 'recruiter' : currentUser?.role ?? 'guest', history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
       const data = await res.json()
       setAiMessages(prev => [...prev, { role: 'assistant', text: data.text || 'No response' }])
     } catch {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: 'I could not connect right now. Quick tip: highlight your HQ, RCPA & achievements. Please try again in a moment.' }])
+      setAiMessages(prev => [...prev, { role: 'assistant', text: shouldHideJobSeekerExperience ? 'I could not connect right now. Quick recruiter tip: mention HQ, experience, qualification, CTC and joining timeline clearly in your vacancy. Please try again in a moment.' : 'I could not connect right now. Quick tip: highlight your HQ, RCPA & achievements. Please try again in a moment.' }])
     } finally { setAiLoading(false) }
   }
 
@@ -1580,7 +1626,7 @@ export default function App() {
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={() => { if (!handleSecretTap()) navigate('home') }} className="flex select-none items-center gap-3 text-left">
+            <button onClick={() => { if (!handleSecretTap()) navigate(shouldHideJobSeekerExperience ? 'recruiters' : 'home') }} className="flex select-none items-center gap-3 text-left">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600 text-white shadow-md">
                 <Briefcase className="h-5 w-5" />
               </div>
@@ -1594,11 +1640,16 @@ export default function App() {
             </button>
 
             <nav className="hidden items-center gap-1 lg:flex">
-              <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='home'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Home</button>
-              <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{jobs.length} New</span></button>
-              <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
+              {!shouldHideJobSeekerExperience && (
+                <>
+                  <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='home'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Home</button>
+                  <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{jobs.length} New</span></button>
+                  <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
+                </>
+              )}
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
               {hasAuthenticated && currentUser?.role === 'recruiter' && <button onClick={openCandidateProfiles} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:inline-flex ${page==='candidates'?'bg-slate-900 text-white hover:bg-slate-800':''}`}><Users className="h-4 w-4" /> Candidates List</button>}
+              {shouldHideJobSeekerExperience && <button onClick={() => navigate('postjob')} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:inline-flex ${page==='postjob'?'bg-slate-900 text-white hover:bg-slate-800':''}`}><Plus className="h-4 w-4" /> Post Vacancy</button>}
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
               <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:block ${page==='legal'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Legal &amp; Support</button>
               {isAdmin && (
@@ -1609,11 +1660,19 @@ export default function App() {
             </nav>
 
             <div className="flex items-center gap-2">
-              <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 2xl:flex">
-                <span className={`h-2 w-2 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : 'bg-violet-500'}`} />
-                <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
-                <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
-              </div>
+              {shouldHideJobSeekerExperience ? (
+                <div className="hidden items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 2xl:flex">
+                  <span className="h-2 w-2 rounded-full bg-sky-500" />
+                  <span className="text-xs font-extrabold">Recruiter</span>
+                  <span className="text-xs font-semibold text-sky-700">No plan needed</span>
+                </div>
+              ) : (
+                <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 2xl:flex">
+                  <span className={`h-2 w-2 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : 'bg-violet-500'}`} />
+                  <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
+                  <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                </div>
+              )}
               {currentUser && hasAuthenticated && (
                 <div className="relative hidden lg:block">
                   <button type="button" onClick={() => setShowAccountMenu(prev => !prev)} aria-expanded={showAccountMenu} title="My Account" className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-2 shadow-sm transition hover:bg-sky-100">
@@ -1712,15 +1771,26 @@ export default function App() {
 
               {/* User tier/account card — account actions stay in the menu */}
               <div className="border-b bg-slate-50 px-4 py-3">
-                <p className="mb-2 text-[10px] font-extrabold tracking-widest text-slate-400">MY ACCOUNT &amp; PLAN</p>
-                <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
-                    <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                <p className="mb-2 text-[10px] font-extrabold tracking-widest text-slate-400">{shouldHideJobSeekerExperience ? 'MY RECRUITER ACCOUNT' : 'MY ACCOUNT & PLAN'}</p>
+                {shouldHideJobSeekerExperience ? (
+                  <div className="flex items-center justify-between rounded-xl border border-sky-100 bg-white px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
+                      <span className="text-sm font-extrabold">Recruiter</span>
+                      <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">No plan needed</span>
+                    </div>
+                    <Building2 className="h-4 w-4 text-sky-600" />
                   </div>
-                  <User className="h-4 w-4 text-slate-400" />
-                </div>
+                ) : (
+                  <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
+                      <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                    </div>
+                    <User className="h-4 w-4 text-slate-400" />
+                  </div>
+                )}
                 {currentUser && hasAuthenticated && (
                   <div className="mt-2 rounded-xl border border-sky-100 bg-white px-3 py-2.5">
                     <div className="flex items-center gap-2.5">
@@ -1756,10 +1826,10 @@ export default function App() {
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
                     { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
-                    { label: 'AI Assistant', sub: 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
+                    { label: 'AI Assistant', sub: shouldHideJobSeekerExperience ? 'Hiring help • Support tickets' : 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Legal & Support', sub: 'Privacy • Terms • Support ticket', icon: FileText, page: 'legal' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
-                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates')).map(item => (
+                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
                     <button
                       key={item.label}
                       onClick={() => navigate(item.page)}
@@ -1775,16 +1845,31 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
-                  <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Free: 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Apply Now plays a sponsored ad on every plan.</p>
-                </div>
-
-                <div className="mt-4 grid gap-2">
-                  <button onClick={() => navigate('jobs')} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
-                    <Search className="h-4 w-4" /> Browse Jobs
-                  </button>
-                </div>
+                {shouldHideJobSeekerExperience ? (
+                  <>
+                    <div className="mt-5 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-4">
+                      <p className="flex items-center gap-2 text-sm font-extrabold"><Building2 className="h-4 w-4 text-sky-600" /> Recruiter Access</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">No subscription plan is needed for Recruiters. Post vacancies free for Admin approval and shortlist candidates from the Candidates List.</p>
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      <button onClick={() => navigate('postjob')} className="flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-sky-700">
+                        <Plus className="h-4 w-4" /> Post a Vacancy
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
+                      <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">Free: 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Apply Now plays a sponsored ad on every plan.</p>
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      <button onClick={() => navigate('jobs')} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
+                        <Search className="h-4 w-4" /> Browse Jobs
+                      </button>
+                    </div>
+                  </>
+                )}
 
                 <div className="mt-5 flex items-center justify-center gap-3 text-xs text-slate-500">
                   <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Verified</span>
@@ -2147,7 +2232,23 @@ export default function App() {
           )}
         </section>
       )}
-      {page === 'home' && (
+      {shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved'].includes(page) && (
+        <section className="mx-auto max-w-[900px] px-4 py-10">
+          <div className="rounded-[28px] border border-sky-100 bg-white p-6 text-center shadow-xl sm:p-8">
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-sky-50 text-sky-600"><Building2 className="h-8 w-8" /></span>
+            <p className="mt-4 text-xs font-extrabold tracking-widest text-sky-700">RECRUITER VIEW</p>
+            <h2 className="mt-2 text-[26px] font-extrabold leading-tight">You give jobs — you don’t need Job Seeker plans</h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">Job search, vacancy details, Saved Jobs, Apply Now, contact unlocks and Free/Starter/Pro plans are only for Job Seekers. Your Recruiter account is for posting vacancies and shortlisting candidates. <b>No Recruiter plan is needed.</b></p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <button onClick={() => navigate('postjob')} className="flex items-center gap-2 rounded-full bg-sky-600 px-6 py-3 text-sm font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-4 w-4" /> Post Vacancy</button>
+              <button onClick={openCandidateProfiles} className="flex items-center gap-2 rounded-full bg-slate-900 px-6 py-3 text-sm font-extrabold text-white shadow hover:bg-slate-800"><Users className="h-4 w-4" /> Candidates List</button>
+              <button onClick={() => navigate('recruiters')} className="rounded-full border px-6 py-3 text-sm font-extrabold">Recruiter Home</button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {page === 'home' && !shouldHideJobSeekerExperience && (
       <>
       {/* HERO */}
       <section className="mx-auto max-w-[1280px] px-4 pb-6 pt-6">
@@ -2254,7 +2355,7 @@ export default function App() {
       )}
 
       {/* HOME Featured Preview - required data only on home */}
-      {page === 'home' && (
+      {page === 'home' && !shouldHideJobSeekerExperience && (
         <section className="mx-auto max-w-[1280px] px-4 pb-10">
           <div className="flex items-center justify-between">
             <div>
@@ -2286,7 +2387,7 @@ export default function App() {
       )}
 
       {/* JOBS PAGE */}
-      {page === 'jobs' && (
+      {page === 'jobs' && !shouldHideJobSeekerExperience && (
       <section id="vacancies" className="mx-auto max-w-[1280px] px-4 pb-10">
         <div className="flex flex-col gap-6 lg:flex-row">
           {/* Filters sidebar */}
@@ -2646,11 +2747,11 @@ export default function App() {
       </section>
       )}
       {/* PRICING PAGE */}
-      {page === 'pricing' && (
+      {page === 'pricing' && !shouldHideJobSeekerExperience && (
       <section id="pricing" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="mx-auto max-w-3xl text-center">
-            <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">SUBSCRIPTION TIERS</span>
+            <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">JOB SEEKER SUBSCRIPTION TIERS</span>
             <h2 className="mt-3 text-[28px] font-extrabold leading-tight">Choose how you unlock contacts. <br className="hidden sm:block" /><span className="text-sky-600">Free works — Pro wins faster.</span></h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies. Apply Now plays one sponsored ad on every plan; Starter/Pro remove browsing and contact-reveal ads.</p>
           </div>
@@ -2701,7 +2802,7 @@ export default function App() {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white"><Sparkles className="h-5 w-5" /></div>
               <div>
                 <h3 className="text-lg font-extrabold">MR Vacancies AI Assistant</h3>
-                <p className="text-xs font-semibold text-slate-500">Resume • Interview • RCPA • Salary • Support tickets</p>
+                <p className="text-xs font-semibold text-slate-500">{shouldHideJobSeekerExperience ? 'Vacancy writing • Interview questions • Shortlisting • Support tickets' : 'Resume • Interview • RCPA • Salary • Support tickets'}</p>
               </div>
               <span className="ml-auto rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">ONLINE</span>
             </div>
@@ -2718,12 +2819,12 @@ export default function App() {
               </div>
             </div>
             <div className="mt-3 flex gap-2">
-              <input value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAi()} placeholder="Ask: Resume for B.Pharm fresher in Hyderabad..." className="flex-1 rounded-full border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:bg-white" />
+              <input value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAi()} placeholder={shouldHideJobSeekerExperience ? "Ask: Write an MR vacancy for Hyderabad HQ..." : "Ask: Resume for B.Pharm fresher in Hyderabad..."} className="flex-1 rounded-full border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:bg-white" />
               <button onClick={sendAi} disabled={aiLoading} className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4 sm:mr-2 sm:inline" /><span className="hidden sm:inline">Send</span></button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button onClick={() => openSupportTicket('ai')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-extrabold text-white shadow hover:bg-sky-700"><FileText className="h-3.5 w-3.5" /> Raise Support Ticket</button>
-              {['Resume for fresher', 'Mankind interview Q&A', 'Best salary in Hyderabad', 'RCPA tips'].map(q => (
+              {(shouldHideJobSeekerExperience ? ['Write MR vacancy JD', 'Interview questions for MR', 'Candidate shortlist checklist', 'Improve vacancy response'] : ['Resume for fresher', 'Mankind interview Q&A', 'Best salary in Hyderabad', 'RCPA tips']).map(q => (
                 <button key={q} onClick={() => setAiInput(q)} className="rounded-full border bg-slate-50 px-3 py-1 text-xs font-semibold hover:bg-white">{q}</button>
               ))}
             </div>
@@ -2754,7 +2855,7 @@ export default function App() {
               </div>
               <div className="mt-3 space-y-2">
                 {mySupportTickets.length === 0 ? (
-                  <p className="rounded-xl bg-slate-50 p-3 text-center text-xs font-semibold leading-relaxed text-slate-500">No support ticket raised yet. For login, profile, vacancy, plan or technical help, raise a ticket with a proper reason.</p>
+                  <p className="rounded-xl bg-slate-50 p-3 text-center text-xs font-semibold leading-relaxed text-slate-500">{shouldHideJobSeekerExperience ? 'No support ticket raised yet. For login, vacancy approval, candidates or technical help, raise a ticket with a proper reason.' : 'No support ticket raised yet. For login, profile, vacancy, plan or technical help, raise a ticket with a proper reason.'}</p>
                 ) : mySupportTickets.slice(0, 3).map(ticket => renderSupportTicketSummary(ticket))}
               </div>
               <div className="mt-3 flex gap-2">
@@ -2764,6 +2865,35 @@ export default function App() {
               {isAdmin && <button onClick={() => openAdmin('support')} className="mt-2 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white">Open Admin Support Tickets ({openSupportTickets.length} open)</button>}
             </div>
 
+            {shouldHideJobSeekerExperience ? (
+              <>
+                <div className="rounded-2xl bg-gradient-to-br from-sky-700 to-indigo-700 p-6 text-white shadow-lg">
+                  <p className="text-sm font-bold tracking-widest text-sky-200">RECRUITER FLOW</p>
+                  <h3 className="mt-2 text-xl font-extrabold">Post, approve &amp; shortlist</h3>
+                  <div className="mt-5 space-y-4">
+                    {[
+                      { n: '01', t: 'Post a vacancy free', d: 'Fill the recruiter form. No Job Seeker subscription plan is needed.' },
+                      { n: '02', t: 'Admin verifies', d: 'M Divakar Reddy reviews the vacancy before it goes LIVE for Job Seekers.' },
+                      { n: '03', t: 'Open Candidates List', d: 'Tap a candidate to slide open anonymous details, then request contact through Admin.' },
+                    ].map(s => (
+                      <div key={s.n} className="flex gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white font-extrabold text-sky-700">{s.n}</span>
+                        <div><p className="text-sm font-bold">{s.t}</p><p className="text-xs opacity-85">{s.d}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <button onClick={() => navigate('postjob')} className="rounded-full bg-amber-400 px-5 py-2.5 text-sm font-extrabold text-slate-900 shadow">Post Vacancy</button>
+                    <button onClick={openCandidateProfiles} className="rounded-full bg-white px-5 py-2.5 text-sm font-extrabold text-slate-900 shadow">Candidates List</button>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+                  <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-900"><ShieldCheck className="h-4 w-4" /> Candidate privacy</p>
+                  <p className="mt-1 text-sm leading-relaxed text-emerald-800">Candidate name, mobile number and email ID stay hidden. Contact is shared only through Admin after candidate consent.</p>
+                </div>
+              </>
+            ) : (
+              <>
             <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white">
               <p className="text-sm font-bold tracking-widest text-sky-300">HOW IT WORKS</p>
               <h3 className="mt-2 text-xl font-extrabold">From vacancy to joining in 3 steps</h3>
@@ -2796,6 +2926,9 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+              </>
+            )}
 
             {!isAdFree && <BannerAd />}
           </div>
@@ -2924,7 +3057,7 @@ export default function App() {
                   <p className="text-sm font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
                   <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ MRs.</p>
                   <div className="mt-2 flex gap-2">
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">📞 +91 98XXX XXXXX (Pro unlock)</span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">{shouldHideJobSeekerExperience ? 'Candidate contact via Admin only' : '📞 +91 98XXX XXXXX (Pro unlock)'}</span>
                     <BadgeCheck className="h-5 w-5 text-emerald-600" />
                   </div>
                 </div>
@@ -2971,7 +3104,7 @@ export default function App() {
       </section>
       )}
       {/* SAVED PAGE */}
-      {page === 'saved' && (
+      {page === 'saved' && !shouldHideJobSeekerExperience && (
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           <h2 className="text-[22px] font-extrabold">Saved Vacancies</h2>
           <p className="text-sm text-slate-500">{saved.size} jobs saved</p>
@@ -3020,7 +3153,11 @@ export default function App() {
                 <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-slate-600">M Divakar Reddy will call <b>{recruiterJob.contactPerson}</b> on <b>{recruiterJob.phone}</b> to verify. After approval, it appears on the Jobs page with a Verified badge.</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
                   <button onClick={resetRecruiterForm} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-5 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post Another Vacancy</button>
-                  <button onClick={() => navigate('jobs')} className="rounded-full border px-5 py-2.5 text-sm font-bold">See Live Jobs</button>
+                  {shouldHideJobSeekerExperience ? (
+                    <button onClick={openCandidateProfiles} className="rounded-full border px-5 py-2.5 text-sm font-bold">Open Candidates List</button>
+                  ) : (
+                    <button onClick={() => navigate('jobs')} className="rounded-full border px-5 py-2.5 text-sm font-bold">See Live Jobs</button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -3617,15 +3754,26 @@ export default function App() {
           <div className="grid gap-8 md:grid-cols-4">
             <div>
               <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR Vacancies Hub</p></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">India’s trusted job app for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.</p>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'Post verified vacancies free after Admin approval and shortlist anonymous MR candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'India’s trusted job app for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.'}</p>
             </div>
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
               <ul className="mt-3 space-y-2 text-sm opacity-80">
-                <li><button onClick={() => navigate('jobs')} className="hover:text-white">Browse Vacancies</button></li>
-                <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
-                <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
-                <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
+                {shouldHideJobSeekerExperience ? (
+                  <>
+                    <li><button onClick={openCandidateProfiles} className="hover:text-white">Candidates List</button></li>
+                    <li><button onClick={() => navigate('postjob')} className="hover:text-white">Post Vacancy</button></li>
+                    <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
+                    <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
+                  </>
+                ) : (
+                  <>
+                    <li><button onClick={() => navigate('jobs')} className="hover:text-white">Browse Vacancies</button></li>
+                    <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
+                    <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
+                    <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
+                  </>
+                )}
                 {isAdmin && <li><button onClick={() => openAdmin()} className="hover:text-white">Admin Dashboard</button></li>}
               </ul>
             </div>
@@ -3658,7 +3806,7 @@ export default function App() {
 
       {/* JOB DETAILS MODAL */}
       <AnimatePresence>
-        {selected && (
+        {selected && !shouldHideJobSeekerExperience && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSelected(null)}>
             <motion.div initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 10 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[720px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
@@ -3728,7 +3876,7 @@ export default function App() {
 
       {/* REWARDED AD MODAL */}
       <AnimatePresence>
-        {showRewarded && (
+        {showRewarded && !shouldHideJobSeekerExperience && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white">
               <div className="bg-slate-900 p-4 text-white">
@@ -3772,7 +3920,7 @@ export default function App() {
 
       {/* APPLY NOW SPONSORED AD — Free, Starter and Pro */}
       <AnimatePresence>
-        {applyAdJob && (
+        {applyAdJob && !shouldHideJobSeekerExperience && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4">
             <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} exit={{ scale: 0.96 }} className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white">
               <div className="bg-slate-900 p-4 text-white">
@@ -3813,12 +3961,12 @@ export default function App() {
 
       {/* PRICING MODAL */}
       <AnimatePresence>
-        {showPricing && (
+        {showPricing && !shouldHideJobSeekerExperience && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowPricing(false)}>
             <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[980px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
-                  <p className="text-lg font-extrabold">Subscription Plans — MR Vacancies Hub</p>
+                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — MR Vacancies Hub</p>
                   <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
@@ -4055,25 +4203,44 @@ export default function App() {
       <>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-[1280px] items-center justify-around px-2 py-2">
-          <button onClick={() => navigate('jobs')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='jobs'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-            <Layers className={`h-5 w-5 ${page==='jobs'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='jobs'?'text-white':''}`}>Jobs</span>
-          </button>
-          <button onClick={() => navigate('saved')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='saved'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-            <Bookmark className={`h-5 w-5 ${page==='saved'?'text-white': saved.size ? 'text-sky-600' : 'text-slate-400'}`} /><span className={`text-[11px] font-bold ${page==='saved'?'text-white':''}`}>Saved {saved.size ? `•${saved.size}` : ''}</span>
-          </button>
+          {shouldHideJobSeekerExperience ? (
+            <>
+              <button onClick={() => navigate('recruiters')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='recruiters'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+                <Building2 className={`h-5 w-5 ${page==='recruiters'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='recruiters'?'text-white':''}`}>Recruiters</span>
+              </button>
+              <button onClick={openCandidateProfiles} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='candidates'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+                <Users className={`h-5 w-5 ${page==='candidates'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='candidates'?'text-white':''}`}>Candidates</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => navigate('jobs')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='jobs'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+                <Layers className={`h-5 w-5 ${page==='jobs'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='jobs'?'text-white':''}`}>Jobs</span>
+              </button>
+              <button onClick={() => navigate('saved')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='saved'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+                <Bookmark className={`h-5 w-5 ${page==='saved'?'text-white': saved.size ? 'text-sky-600' : 'text-slate-400'}`} /><span className={`text-[11px] font-bold ${page==='saved'?'text-white':''}`}>Saved {saved.size ? `•${saved.size}` : ''}</span>
+              </button>
+            </>
+          )}
           <button onClick={() => navigate('ai')} className={`flex flex-col items-center gap-1 rounded-xl px-5 py-1.5 ${page==='ai'?'bg-slate-900 text-white shadow':'bg-sky-600 text-white'}`}>
             <Sparkles className="h-5 w-5" /><span className="text-[11px] font-bold">AI Chat</span>
           </button>
-          <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-            <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
-          </button>
+          {shouldHideJobSeekerExperience ? (
+            <button onClick={() => navigate('postjob')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='postjob'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <Plus className={`h-5 w-5 ${page==='postjob'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='postjob'?'text-white':''}`}>Post</span>
+            </button>
+          ) : (
+            <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
+            </button>
+          )}
           {currentUser?.role === 'seeker' && hasAuthenticated ? (
             <button onClick={openSeekerProfile} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
               <User className={`h-5 w-5 ${page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='profile'?'text-white':''}`}>Profile</span>
             </button>
           ) : currentUser?.role === 'recruiter' && hasAuthenticated ? (
-            <button onClick={openCandidateProfiles} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='candidates'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <Users className={`h-5 w-5 ${page==='candidates'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='candidates'?'text-white':''}`}>Candidates</span>
+            <button onClick={() => openLegal('support')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='legal'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <FileText className={`h-5 w-5 ${page==='legal'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='legal'?'text-white':''}`}>Support</span>
             </button>
           ) : (
             <button onClick={() => navigate('recruiters')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='recruiters'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
