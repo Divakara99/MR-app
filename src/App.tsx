@@ -152,25 +152,6 @@ const DELETION_REASON_OPTIONS = [
 ]
 const CANDIDATE_INTERESTS_KEY = 'mr-candidate-interests-v1'
 const DAILY_JOB_ACCESS_KEY = 'mr-daily-job-access-v1'
-const RECRUITER_VISIBILITY_UPDATE_KEY = 'mr-recruiter-visibility-update-v1'
-const RECRUITER_VISIBLE_PROFILE_DETAILS = [
-  'Anonymous candidate code',
-  'Fresher / Experienced status',
-  'Desired role',
-  'Qualification (passing year for Freshers)',
-  'Total experience',
-  'Current company & current role (Experienced)',
-  'Current package (Experienced) & expected package',
-  'State, city, current HQ & preferred HQ',
-  'Notice period / joining availability',
-  'Two-wheeler availability',
-  'Skills entered by you',
-]
-const RECRUITER_HIDDEN_PROFILE_DETAILS = [
-  'Your full name',
-  'Your mobile number',
-  'Your email ID',
-]
 const FREE_DAILY_JOB_LIMIT = 3
 const FREE_EXTRA_JOB_LIMIT = 7
 const getTodayKey = () => new Date().toLocaleDateString('en-CA')
@@ -435,9 +416,6 @@ export default function App() {
   const [candidateRoleFilter, setCandidateRoleFilter] = useState('All Roles')
   const [candidateExperienceFilter, setCandidateExperienceFilter] = useState('All Candidates')
   const [candidateStateFilter, setCandidateStateFilter] = useState('All India')
-  const [recruiterVisibilityUpdateSeenBy, setRecruiterVisibilityUpdateSeenBy] = useState(() => {
-    try { return localStorage.getItem(RECRUITER_VISIBILITY_UPDATE_KEY) || '' } catch { return '' }
-  })
   const [remoteCandidateProfiles, setRemoteCandidateProfiles] = useState<CandidateProfileView[]>([])
   const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => {
     try { const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return new Set(parsed as string[]) } } catch { /* ignore */ }
@@ -781,7 +759,7 @@ export default function App() {
       setSeekerProfileForm(updatedAccount.profile ?? profile)
       setSeekerProfileError('')
       if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
-      setToast('Job profile saved ✅ Recruiters can see your role, experience, company, package, HQ, joining, two-wheeler & skills anonymously — name, mobile and email stay hidden.')
+      setToast('Job Seeker profile saved ✅ You can now apply for jobs.')
       navigate('jobs')
     } catch {
       setSeekerProfileError('Unable to save your profile right now. Please check your internet connection and try again.')
@@ -1322,54 +1300,6 @@ export default function App() {
     return true
   })
   const canViewCandidateProfiles = isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
-  const recruiterVisibilityUpdateAccountKey = currentUser?.role === 'seeker' ? `seeker:${currentUser.mobile}` : ''
-  const showRecruiterVisibilityUpdate = hasAuthenticated && currentUser?.role === 'seeker' && recruiterVisibilityUpdateSeenBy !== recruiterVisibilityUpdateAccountKey && ['home', 'jobs', 'saved'].includes(page)
-  const dismissRecruiterVisibilityUpdate = () => {
-    if (!recruiterVisibilityUpdateAccountKey) return
-    setRecruiterVisibilityUpdateSeenBy(recruiterVisibilityUpdateAccountKey)
-    try { localStorage.setItem(RECRUITER_VISIBILITY_UPDATE_KEY, recruiterVisibilityUpdateAccountKey) } catch { /* ignore */ }
-  }
-  const renderRecruiterVisibilityGuide = () => (
-    <div className="mt-5 rounded-3xl border border-sky-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white"><ShieldCheck className="h-5 w-5" /></span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-extrabold tracking-widest text-sky-700">PRIVACY UPDATE FOR JOB SEEKERS</p>
-          <h3 className="mt-1 text-lg font-extrabold leading-tight">Exactly what Recruiters see — and what they cannot see</h3>
-          <p className="mt-1 text-sm leading-relaxed text-slate-600">Your completed profile is displayed only as <b>Candidate {currentUser?.role === 'seeker' ? anonymousCandidateCode(currentUser.mobile) : 'MR-XXXX'}</b>. Recruiters use the job-fit details below to shortlist you without seeing your identity or direct contact details.</p>
-        </div>
-        <span className="shrink-0 rounded-full bg-slate-900 px-3 py-1 text-[10px] font-extrabold text-white">ANONYMOUS</span>
-      </div>
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
-        <div className="rounded-2xl bg-emerald-50 p-4">
-          <p className="flex items-center gap-2 text-xs font-extrabold tracking-wide text-emerald-800"><Eye className="h-4 w-4" /> RECRUITERS CAN SEE</p>
-          <ul className="mt-3 grid gap-2 text-sm font-semibold text-slate-700 sm:grid-cols-2">
-            {RECRUITER_VISIBLE_PROFILE_DETAILS.map(detail => (
-              <li key={detail} className="flex items-start gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /><span>{detail}</span></li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-2xl bg-rose-50 p-4">
-          <p className="flex items-center gap-2 text-xs font-extrabold tracking-wide text-rose-800"><EyeOff className="h-4 w-4" /> RECRUITERS CANNOT SEE</p>
-          <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-700">
-            {RECRUITER_HIDDEN_PROFILE_DETAILS.map(detail => (
-              <li key={detail} className="flex items-start gap-2"><X className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" /><span>{detail}</span></li>
-            ))}
-          </ul>
-          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-semibold leading-relaxed text-slate-600">If a Recruiter is interested, they must request your contact through Admin M Divakar Reddy. Your contact details are shared only after your consent.</p>
-        </div>
-      </div>
-    </div>
-  )
-  const myAnonymousCandidatePreview: CandidateProfileView | null = currentUser?.role === 'seeker' ? { id: 'my-profile-preview', code: anonymousCandidateCode(currentUser.mobile), source: 'registered', profile: seekerProfileForm } : null
-
-  // The full visibility guide is shown at the top of My Job Profile, so opening
-  // that page counts as reading the one-time privacy update.
-  useEffect(() => {
-    if (page === 'profile' && recruiterVisibilityUpdateAccountKey && recruiterVisibilityUpdateSeenBy !== recruiterVisibilityUpdateAccountKey) {
-      dismissRecruiterVisibilityUpdate()
-    }
-  }, [page, recruiterVisibilityUpdateAccountKey, recruiterVisibilityUpdateSeenBy])
 
   // When a full mobile is typed on the login screen, refresh that mobile's
   // account state from Supabase so existing-account/blocker messages are current.
@@ -1392,7 +1322,7 @@ export default function App() {
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
 
-  const renderAnonymousCandidateCard = (candidate: CandidateProfileView, isPreview = false) => {
+  const renderAnonymousCandidateCard = (candidate: CandidateProfileView) => {
     const profile = candidate.profile
     const isFresher = profile.experienceType === 'fresher'
     const requested = requestedCandidates.has(candidate.id)
@@ -1436,9 +1366,7 @@ export default function App() {
             {skillList.slice(0, 5).map(skill => <span key={skill} className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[10px] font-bold text-sky-700">{skill}</span>)}
           </div>
         )}
-        {isPreview ? (
-          <p className="mt-4 flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-emerald-800"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" /> This is exactly what Recruiters see. Your name, mobile number and email ID are never shown.</p>
-        ) : requested ? (
+        {requested ? (
           <button disabled className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-2.5 text-sm font-bold text-white opacity-90"><Check className="h-4 w-4" /> Contact Requested via Admin</button>
         ) : (
           <button onClick={() => handleRequestCandidateContact(candidate)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white hover:bg-slate-800"><LockKeyhole className="h-4 w-4" /> Request Contact via Admin</button>
@@ -1509,7 +1437,7 @@ export default function App() {
                     <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
                     <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
                   </span>
-                  {currentUser.role === 'seeker' && <button onClick={openSeekerProfile} title={isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile & Recruiter Preview' : 'Complete Job Profile (Required)'} className="shrink-0 rounded-full bg-sky-600 p-1.5 text-white shadow-sm hover:bg-sky-700"><User className="h-3.5 w-3.5" /></button>}
+                  {currentUser.role === 'seeker' && <button onClick={openSeekerProfile} title={isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile (Required)'} className="shrink-0 rounded-full bg-sky-600 p-1.5 text-white shadow-sm hover:bg-sky-700"><User className="h-3.5 w-3.5" /></button>}
                   {currentUser.role === 'seeker' && <button onClick={openDeletionRequest} title={myDeletionRequest?.status === 'pending' ? 'Account deletion request pending' : 'Request Account Deletion'} className="shrink-0 rounded-full bg-white p-1.5 text-amber-600 shadow-sm hover:bg-amber-50 hover:text-amber-700"><FileText className="h-3.5 w-3.5" /></button>}
                   {currentUser.role === 'recruiter' && <button onClick={() => setShowDeleteAccountConfirm(true)} title="Delete Recruiter Account" className="shrink-0 rounded-full bg-white p-1.5 text-red-500 shadow-sm hover:bg-red-50 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>}
                   <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
@@ -1587,7 +1515,7 @@ export default function App() {
                     )}
                     {currentUser.role === 'seeker' && (
                       <>
-                        <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile & Recruiter Preview' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
+                        <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
                         <button onClick={openDeletionRequest} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 py-2 text-[11px] font-extrabold text-amber-700"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</button>
                       </>
                     )}
@@ -1659,50 +1587,9 @@ export default function App() {
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400 text-slate-900"><AlertTriangle className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-extrabold text-amber-900">Complete your required Job Seeker profile ({seekerProfileProgress(currentUser.profile)}%)</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-amber-800">Freshers and experienced MRs must fill role, experience, qualification, package and HQ details before applying. Recruiters will see only your anonymous candidate code, role, experience, qualification, current company/role, package, HQ, joining, two-wheeler and skills — never your name, mobile or email.</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-amber-800">Freshers and experienced MRs must fill role, experience, qualification, package and HQ details before applying.</p>
             </div>
             <button onClick={openSeekerProfile} className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white"><User className="h-4 w-4" /> Complete Profile</button>
-          </div>
-        </div>
-      )}
-
-      {showRecruiterVisibilityUpdate && (
-        <div className="mx-auto max-w-[1280px] px-4 pt-4">
-          <div className="overflow-hidden rounded-3xl border border-sky-200 bg-white shadow-sm">
-            <div className="bg-gradient-to-r from-sky-600 to-indigo-600 px-5 py-4 text-white">
-              <div className="flex items-start gap-3">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/20"><ShieldCheck className="h-5 w-5" /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className="rounded-full bg-amber-400 px-2.5 py-1 text-[10px] font-extrabold text-slate-900">NEW UPDATE</span>
-                    <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-extrabold">FOR JOB SEEKERS</span>
-                  </div>
-                  <h3 className="mt-2 text-lg font-extrabold leading-tight">Know exactly what Recruiters can see</h3>
-                  <p className="mt-1 text-sm leading-relaxed opacity-90">{currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'Your completed profile appears only under an anonymous candidate code.' : 'After you complete and save your job profile, it will appear only under an anonymous candidate code.'} Recruiters can shortlist you using job-fit details, but they cannot see your identity or contact you directly.</p>
-                </div>
-                <button onClick={dismissRecruiterVisibilityUpdate} title="Dismiss update" className="shrink-0 rounded-full bg-white/20 p-2 hover:bg-white/30"><X className="h-4 w-4" /></button>
-              </div>
-            </div>
-            <div className="grid gap-3 p-4 lg:grid-cols-[1.25fr_0.75fr]">
-              <div className="rounded-2xl bg-emerald-50 p-4">
-                <p className="flex items-center gap-2 text-xs font-extrabold tracking-wide text-emerald-800"><Eye className="h-4 w-4" /> RECRUITERS CAN SEE</p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {RECRUITER_VISIBLE_PROFILE_DETAILS.map(detail => <span key={detail} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700">{detail}</span>)}
-                </div>
-              </div>
-              <div className="rounded-2xl bg-rose-50 p-4">
-                <p className="flex items-center gap-2 text-xs font-extrabold tracking-wide text-rose-800"><EyeOff className="h-4 w-4" /> RECRUITERS CANNOT SEE</p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {RECRUITER_HIDDEN_PROFILE_DETAILS.map(detail => <span key={detail} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700">{detail}</span>)}
-                </div>
-                <p className="mt-3 text-xs font-semibold leading-relaxed text-slate-600">Contact requests go through Admin M Divakar Reddy and your details are shared only after your consent.</p>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 border-t bg-slate-50 px-4 py-3 sm:flex-row sm:items-center">
-              <button onClick={() => { dismissRecruiterVisibilityUpdate(); openSeekerProfile() }} className="flex items-center justify-center gap-2 rounded-full bg-sky-600 px-5 py-2.5 text-sm font-extrabold text-white hover:bg-sky-700"><Eye className="h-4 w-4" /> View My Recruiter Preview</button>
-              <button onClick={dismissRecruiterVisibilityUpdate} className="rounded-full border bg-white px-5 py-2.5 text-sm font-bold">Got It</button>
-              <p className="text-xs font-semibold text-slate-500 sm:ml-auto">You can reopen this anytime from My Job Profile.</p>
-            </div>
           </div>
         </div>
       )}
@@ -1899,18 +1786,15 @@ export default function App() {
                 </div>
               </div>
 
-              {renderRecruiterVisibilityGuide()}
-
-              <div className="mt-5 grid items-start gap-5 lg:grid-cols-[1.12fr_0.88fr]">
+              <div className="mx-auto mt-5 max-w-3xl">
                 <form onSubmit={e => { e.preventDefault(); handleSaveSeekerProfile() }} className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
                   <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
-                    <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700"><LockKeyhole className="h-4 w-4" /> PRIVATE ACCOUNT DETAILS — ONLY FOR YOU & ADMIN</p>
+                    <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700"><LockKeyhole className="h-4 w-4" /> ACCOUNT DETAILS</p>
                     <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
                       <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">NAME</p><p className="truncate font-extrabold">{currentUser.name}</p></div>
                       <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p></div>
                       <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">EMAIL</p><p className="truncate font-extrabold">{currentUser.email}</p></div>
                     </div>
-                    <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-sky-800"><EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Recruiters will NOT see these three details anywhere in candidate profiles.</p>
                   </div>
 
                   <p className="mt-6 text-sm font-extrabold">1. Are you a Fresher or Experienced? *</p>
@@ -2019,11 +1903,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                    <EyeOff className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-                    <p className="text-sm leading-relaxed text-emerald-900"><b>Privacy protection:</b> Recruiters can see only role, experience, current company, packages, qualification, HQ, joining and skills. Your <b>name, mobile number and email ID will not be shown</b>. Contact can be requested only through Admin Divakar Reddy.</p>
-                  </div>
-
                   {seekerProfileError && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-600">{seekerProfileError}</p>}
 
                   <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -2033,21 +1912,6 @@ export default function App() {
                   <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">You can browse jobs, but Apply Now and contact reveal unlock only after this required profile is saved.</p>
                 </form>
 
-                <div className="lg:sticky lg:top-24">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-extrabold tracking-widest text-sky-700">RECRUITER PREVIEW</p>
-                      <h3 className="text-lg font-extrabold">What Recruiters See</h3>
-                    </div>
-                    <span className="rounded-full bg-slate-900 px-3 py-1 text-[10px] font-extrabold text-white">ANONYMOUS</span>
-                  </div>
-                  {myAnonymousCandidatePreview && renderAnonymousCandidateCard(myAnonymousCandidatePreview, true)}
-                  <div className="mt-4 rounded-2xl border bg-white p-4 text-sm leading-relaxed text-slate-600">
-                    <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span><b>Live preview:</b> this card updates while you fill or edit the form.</span></p>
-                    <p className="mt-2 flex gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /> <span><b>Only completed and saved profiles</b> are shown to Recruiters.</span></p>
-                    <p className="mt-2 flex gap-2"><EyeOff className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" /> <span>Compare this card with the visibility guide above — your name, mobile and email are not included.</span></p>
-                  </div>
-                </div>
               </div>
             </>
           )}
@@ -2902,7 +2766,6 @@ export default function App() {
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {[
               { q: 'Is this free? Why masked contacts?', a: 'Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
-              { q: 'What details can Recruiters see about me?', a: 'Recruiters see only an anonymous candidate code and job-fit details: desired role, Fresher/Experienced status, qualification, experience, current company and role, current and expected package, state/city/HQ, joining availability, two-wheeler availability and skills. They cannot see your name, mobile number or email ID. Contact is requested through Admin and shared only with your consent.' },
               { q: 'How is this verified?', a: 'Every vacancy is manually checked by M Divakar Reddy: company GST, recruiter ID, HQ & CTC confirmation. Unverified posts are never published.' },
               { q: 'Can I upload my resume?', a: 'Yes — AI assistant helps build a 1-page MR resume (B.Pharm/B.Sc focused) and auto-attaches on Apply Now (Pro feature).' },
               { q: 'Will I stay logged in?', a: 'Yes. After login, the app opens directly to your account until you logout. After logout, enter your mobile number: existing accounts open directly, and new users are asked for name and email.' },
@@ -2929,11 +2792,10 @@ export default function App() {
                 <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
                 <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
                 <p className="mt-1 text-[11px] font-semibold text-slate-600">{myDeletionRequest?.status === 'pending' ? '⏳ Account deletion request pending with Admin.' : myDeletionRequest?.status === 'rejected' ? 'Previous deletion request was rejected by Admin.' : 'Account deletion is available only after Admin approves a proper reason.'}</p>
-                <p className="mt-1 text-[11px] font-bold text-sky-800">{isSeekerProfileComplete(currentUser.profile) ? '✅ Profile complete — Recruiters see role, experience, company, package, HQ, joining, two-wheeler & skills anonymously. Name, mobile & email hidden.' : `⚠️ Job profile ${seekerProfileProgress(currentUser.profile)}% complete — required before applying.`}</p>
+                <p className="mt-1 text-[11px] font-bold text-sky-800">{isSeekerProfileComplete(currentUser.profile) ? '✅ Job profile complete.' : `⚠️ Job profile ${seekerProfileProgress(currentUser.profile)}% complete — required before applying.`}</p>
               </div>
               <div className="flex shrink-0 flex-col gap-2">
                 <button onClick={openSeekerProfile} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-sky-700"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</button>
-                <button onClick={openSeekerProfile} className="flex items-center justify-center gap-1.5 rounded-full border border-sky-300 bg-white px-4 py-2 text-xs font-extrabold text-sky-700 hover:bg-sky-100"><Eye className="h-3.5 w-3.5" /> What Recruiters See</button>
                 <button onClick={openDeletionRequest} className="flex items-center justify-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-extrabold text-amber-700 hover:bg-amber-50"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'View Request' : 'Request Account Deletion'}</button>
               </div>
             </div>
