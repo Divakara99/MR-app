@@ -401,6 +401,7 @@ export default function App() {
   const [applyAdJob, setApplyAdJob] = useState<Job | null>(null)
   const [applyAdProgress, setApplyAdProgress] = useState(0)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [page, setPage] = useState<AppPage>(() => getInitialPage())
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
   const [toast, setToast] = useState<string | null>(null)
@@ -544,6 +545,7 @@ export default function App() {
   const navigate = (p: typeof page) => {
     setPage(p)
     setShowMobileMenu(false)
+    setShowAccountMenu(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -718,6 +720,7 @@ export default function App() {
     setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
     setSeekerProfileError('')
     setShowMobileMenu(false)
+    setShowAccountMenu(false)
     navigate('profile')
   }
   const updateSeekerProfileField = (field: keyof SeekerProfile, value: string) => {
@@ -820,6 +823,12 @@ export default function App() {
     setLegalTab(tab)
     navigate('legal')
   }
+  const openCandidateProfiles = () => {
+    setShowAccountMenu(false)
+    setShowMobileMenu(false)
+    if (page !== 'recruiters') navigate('recruiters')
+    window.setTimeout(() => document.getElementById('candidate-profiles')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), page === 'recruiters' ? 0 : 450)
+  }
   const buildSupportMailto = (ticket?: SupportTicket) => {
     const subject = ticket ? `MR Vacancies Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'MR Vacancies Hub Support Request'
     const body = ticket
@@ -891,6 +900,7 @@ export default function App() {
     setToast('Support ticket status updated')
   }
   const handleUserLogout = () => {
+    setShowAccountMenu(false)
     setCurrentUser(null)
     setHasAuthenticated(false)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
@@ -931,6 +941,7 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker') return
     setDeletionRequestError('')
     setShowMobileMenu(false)
+    setShowAccountMenu(false)
     setShowDeletionRequestModal(true)
   }
   const handleSubmitDeletionRequest = () => {
@@ -1572,22 +1583,59 @@ export default function App() {
             </nav>
 
             <div className="flex items-center gap-2">
-              <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 sm:flex">
+              <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 2xl:flex">
                 <span className={`h-2 w-2 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : 'bg-violet-500'}`} />
                 <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
                 <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
               </div>
               {currentUser && hasAuthenticated && (
-                <div className="hidden max-w-[240px] items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-1.5 xl:flex" title={`${currentUser.name} • ${currentUser.email}`}>
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
-                    <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</span>
-                  </span>
-                  {currentUser.role === 'seeker' && <button onClick={openSeekerProfile} title={isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile (Required)'} className="shrink-0 rounded-full bg-sky-600 p-1.5 text-white shadow-sm hover:bg-sky-700"><User className="h-3.5 w-3.5" /></button>}
-                  {currentUser.role === 'seeker' && <button onClick={openDeletionRequest} title={myDeletionRequest?.status === 'pending' ? 'Account deletion request pending' : 'Request Account Deletion'} className="shrink-0 rounded-full bg-white p-1.5 text-amber-600 shadow-sm hover:bg-amber-50 hover:text-amber-700"><FileText className="h-3.5 w-3.5" /></button>}
-                  {currentUser.role === 'recruiter' && <button onClick={() => setShowDeleteAccountConfirm(true)} title="Delete Recruiter Account" className="shrink-0 rounded-full bg-white p-1.5 text-red-500 shadow-sm hover:bg-red-50 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>}
-                  <button onClick={handleUserLogout} title="Logout" className="shrink-0 rounded-full bg-white p-1.5 text-slate-500 shadow-sm hover:text-red-600"><LogOut className="h-3.5 w-3.5" /></button>
+                <div className="relative hidden lg:block">
+                  <button type="button" onClick={() => setShowAccountMenu(prev => !prev)} aria-expanded={showAccountMenu} title="My Account" className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-2 shadow-sm transition hover:bg-sky-100">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                    <span className="hidden min-w-0 max-w-[135px] text-left 2xl:block">
+                      <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
+                      <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter Account' : 'Job Seeker Account'}</span>
+                    </span>
+                    <span className="text-xs font-extrabold text-slate-700 2xl:hidden">Account</span>
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${showAccountMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showAccountMenu && (
+                    <>
+                      <button type="button" aria-hidden="true" tabIndex={-1} onClick={() => setShowAccountMenu(false)} className="fixed inset-0 z-40 cursor-default" />
+                      <div className="absolute right-0 top-[calc(100%+10px)] z-50 w-[304px] overflow-hidden rounded-3xl border bg-white text-left shadow-2xl">
+                        <div className="bg-gradient-to-r from-sky-600 to-indigo-600 p-4 text-white">
+                          <p className="text-[10px] font-extrabold tracking-widest text-sky-100">MY ACCOUNT</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-sm font-extrabold text-sky-700 shadow">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-extrabold">{currentUser.name}</p>
+                              <p className="text-xs font-semibold text-sky-100">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
+                              <p className="truncate text-[11px] text-sky-100/90">{currentUser.email}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-1 p-2">
+                          {currentUser.role === 'seeker' ? (
+                            <>
+                              <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><User className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
+                              <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
+                              <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Account Deletion Request Pending' : 'Request Account Deletion'}</span></button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={openCandidateProfiles} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Users className="h-4 w-4 text-sky-600" /><span className="flex-1">Candidate Profiles</span></button>
+                              <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post Vacancy</span></button>
+                              <button type="button" onClick={() => { setShowAccountMenu(false); setShowDeleteAccountConfirm(true) }} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /><span className="flex-1">Delete Recruiter Account</span></button>
+                            </>
+                          )}
+                          <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
+                        </div>
+                        <div className="border-t bg-slate-50 p-2">
+                          <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
               <button onClick={() => handleSecretTap()} title="M Divakar Reddy — Founder" className="relative shrink-0 select-none">
@@ -1636,8 +1684,9 @@ export default function App() {
                 </button>
               </div>
 
-              {/* User tier card */}
+              {/* User tier/account card — account actions stay in the menu */}
               <div className="border-b bg-slate-50 px-4 py-3">
+                <p className="mb-2 text-[10px] font-extrabold tracking-widest text-slate-400">MY ACCOUNT &amp; PLAN</p>
                 <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
@@ -1729,7 +1778,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {page !== 'welcome' && page !== 'auth' && page !== 'profile' && currentUser?.role === 'seeker' && hasAuthenticated && !isSeekerProfileComplete(currentUser.profile) && (
+      {page === 'jobs' && currentUser?.role === 'seeker' && hasAuthenticated && !isSeekerProfileComplete(currentUser.profile) && (
         <div className="mx-auto max-w-[1280px] px-4 pt-4">
           <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400 text-slate-900"><AlertTriangle className="h-5 w-5" /></span>
@@ -2075,7 +2124,7 @@ export default function App() {
       <>
       {/* HERO */}
       <section className="mx-auto max-w-[1280px] px-4 pb-6 pt-6">
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="mx-auto max-w-[920px]">
           {/* left */}
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs font-semibold shadow-sm">
@@ -2165,54 +2214,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* right - preview cards */}
-          <div className="relative">
-            <div className="rounded-[24px] bg-gradient-to-br from-sky-600 via-indigo-600 to-violet-600 p-4 shadow-xl sm:p-6">
-              <div className="flex items-center justify-between text-white">
-                <p className="text-sm font-bold">Latest Verified Vacancies</p>
-                <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-sky-700">● LIVE updates</span>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {jobs.slice(0, 3).map(job => (
-                  <div key={job.id} className="flex gap-3 rounded-2xl bg-white p-3 shadow">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold">{job.company} • {job.title}</p>
-                      <p className="truncate text-xs text-slate-500">{job.hq} • {job.exp}</p>
-                      <div className="mt-1 flex gap-1.5">
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">Verified</span>
-                        {job.urgent && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">Urgent</span>}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-slate-900">{job.ctc.split(' ')[0]} {job.ctc.split(' ')[1]}</p>
-                      <p className="text-[11px] text-slate-500">{job.posted}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 rounded-2xl bg-white/95 p-4 text-slate-900">
-                <div className="flex items-center gap-3">
-                  <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy" className="h-12 w-12 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" />
-                  <div>
-                    <p className="text-sm font-extrabold">M Divakar Reddy</p>
-                    <p className="text-xs font-semibold text-sky-700">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience</p>
-                    <p className="text-xs text-slate-500">Verified 2,400+ vacancies • 50k+ MRs placed</p>
-                  </div>
-                  <BadgeCheck className="ml-auto h-6 w-6 text-sky-600" />
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-xl bg-slate-50 p-2"><p className="font-extrabold">18k+</p><p className="text-slate-500">Placements</p></div>
-                  <div className="rounded-xl bg-slate-50 p-2"><p className="font-extrabold">4.9★</p><p className="text-slate-500">Recruiter rating</p></div>
-                  <div className="rounded-xl bg-slate-50 p-2"><p className="font-extrabold">24h</p><p className="text-slate-500">Response time</p></div>
-                </div>
-                <button onClick={() => navigate('recruiters')} className="mt-3 w-full rounded-xl bg-sky-600 py-2.5 text-sm font-bold text-white">Contact Recruiter</button>
-              </div>
-            </div>
-
-          </div>
         </div>
 
         {/* Banner ad after hero */}
@@ -2253,23 +2254,6 @@ export default function App() {
                 </div>
               </div>
             ))}
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <button onClick={() => navigate('pricing')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
-              <Crown className="h-5 w-5 text-amber-500" />
-              <p className="mt-2 text-sm font-bold">Subscription Plans</p>
-              <p className="text-xs text-slate-500">Free vs Starter ₹99 vs Pro ₹499</p>
-            </button>
-            <button onClick={() => navigate('ai')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
-              <Sparkles className="h-5 w-5 text-violet-600" />
-              <p className="mt-2 text-sm font-bold">AI Assistant</p>
-              <p className="text-xs text-slate-500">Resume, interview, RCPA help</p>
-            </button>
-            <button onClick={() => navigate('recruiters')} className="rounded-2xl border bg-white p-4 text-left hover:shadow">
-              <Building2 className="h-5 w-5 text-sky-600" />
-              <p className="mt-2 text-sm font-bold">For Recruiters</p>
-              <p className="text-xs text-slate-500">Managed by M Divakar Reddy</p>
-            </button>
           </div>
         </section>
       )}
@@ -2795,21 +2779,6 @@ export default function App() {
       {page === 'recruiters' && (
       <section id="recruiters" className="border-y bg-white">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
-          {currentUser && currentUser.role === 'recruiter' && hasAuthenticated && (
-            <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-extrabold tracking-widest text-sky-700">MY RECRUITER ACCOUNT</p>
-                <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
-                <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => document.getElementById('candidate-profiles')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-slate-800"><Users className="h-3.5 w-3.5" /> Candidate Profiles</button>
-                <button onClick={() => navigate('postjob')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-3.5 w-3.5" /> Post Vacancy</button>
-                <button onClick={() => setShowDeleteAccountConfirm(true)} className="flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-extrabold text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /> Delete Account</button>
-              </div>
-            </div>
-          )}
           <div className="mb-6 flex flex-col items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-center text-white shadow-xl sm:flex-row sm:text-left">
             <div className="flex-1">
               <p className="text-[22px] font-extrabold leading-tight">Hiring Medical Representatives?</p>
@@ -2948,47 +2917,11 @@ export default function App() {
         </div>
       </section>
       )}
-      {page === 'home' && (
-      <section className="mx-auto max-w-[1280px] px-4 pb-10">
-        <div className="rounded-2xl border bg-white p-6">
-          <h3 className="text-lg font-extrabold">FAQ — MR Vacancies Hub</h3>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {[
-              { q: 'Is this free? Why masked contacts?', a: 'Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
-              { q: 'How is this verified?', a: 'Every vacancy is manually checked by M Divakar Reddy: company GST, recruiter ID, HQ & CTC confirmation. Unverified posts are never published.' },
-              { q: 'Can I upload my resume?', a: 'Yes — AI assistant helps build a 1-page MR resume (B.Pharm/B.Sc focused) and auto-attaches on Apply Now (Pro feature).' },
-              { q: 'Will I stay logged in?', a: 'Yes. After login, the app opens directly to your account until you logout. After logout, enter your mobile number: existing accounts open directly, and new users are asked for name and email.' },
-            ].map(f => (
-              <div key={f.q} className="rounded-xl bg-slate-50 p-4">
-                <p className="text-sm font-bold">{f.q}</p>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">{f.a}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-      )}
       {/* SAVED PAGE */}
       {page === 'saved' && (
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           <h2 className="text-[22px] font-extrabold">Saved Vacancies</h2>
           <p className="text-sm text-slate-500">{saved.size} jobs saved</p>
-          {currentUser && currentUser.role === 'seeker' && hasAuthenticated && (
-            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-extrabold tracking-widest text-sky-700">MY JOB SEEKER ACCOUNT</p>
-                <p className="truncate text-sm font-extrabold">{currentUser.name} <span className="font-semibold text-slate-500">• +91 {currentUser.mobile}</span></p>
-                <p className="truncate text-xs text-slate-500">{currentUser.email}</p>
-                <p className="mt-1 text-[11px] font-semibold text-slate-600">{myDeletionRequest?.status === 'pending' ? '⏳ Account deletion request pending with Admin.' : myDeletionRequest?.status === 'rejected' ? 'Previous deletion request was rejected by Admin.' : 'Account deletion is available only after Admin approves a proper reason.'}</p>
-                <p className="mt-1 text-[11px] font-bold text-sky-800">{isSeekerProfileComplete(currentUser.profile) ? '✅ Job profile complete.' : `⚠️ Job profile ${seekerProfileProgress(currentUser.profile)}% complete — required before applying.`}</p>
-              </div>
-              <div className="flex shrink-0 flex-col gap-2">
-                <button onClick={openSeekerProfile} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-sky-700"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</button>
-                <button onClick={openDeletionRequest} className="flex items-center justify-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-extrabold text-amber-700 hover:bg-amber-50"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'View Request' : 'Request Account Deletion'}</button>
-              </div>
-            </div>
-          )}
           <div className="mt-4 grid gap-4">
             {Array.from(saved).length===0 ? (
               <div className="rounded-2xl border bg-white p-10 text-center">
@@ -3187,6 +3120,23 @@ export default function App() {
                   <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-900">
                     <p className="flex items-center gap-2 font-extrabold"><AlertTriangle className="h-4 w-4" /> Safety reminder</p>
                     <p className="mt-1">Never share OTPs, passwords, bank details or unnecessary original documents. Never pay money to anyone promising a job. Report suspicious vacancies immediately through a support ticket.</p>
+                  </div>
+                  <div className="mt-5 border-t pt-5">
+                    <p className="text-sm font-extrabold">Frequently Asked Questions</p>
+                    <div className="mt-3 space-y-2">
+                      {[
+                        { q: 'Where are my account options?', a: 'Use the Account menu in the top menu bar on desktop, or My Account & Plan in the mobile menu. Job profile, account deletion and logout are kept there so the main pages stay clean.' },
+                        { q: 'Is the Free plan really free?', a: 'Yes. Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
+                        { q: 'How are vacancies verified?', a: 'Recruiter-submitted vacancies are reviewed by Admin M Divakar Reddy before they go LIVE. Still verify the company, role, CTC and interview details before joining, and never pay money for a job.' },
+                        { q: 'How can AI Assistant help me?', a: 'Open AI Assistant from the menu for resume wording, interview preparation, RCPA and salary guidance. You can also raise a support ticket there with a proper reason.' },
+                        { q: 'Will I stay logged in?', a: 'Yes. The app opens directly to your account until you logout. After logout, enter your mobile number: existing accounts open directly, and new users are asked for name and email.' },
+                      ].map(f => (
+                        <div key={f.q} className="rounded-2xl bg-slate-50 p-3.5">
+                          <p className="text-sm font-extrabold">{f.q}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-slate-600">{f.a}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
