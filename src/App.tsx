@@ -14,6 +14,15 @@ import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandi
 
 // TYPES
 type Tier = 'free' | 'starter' | 'pro'
+type ExtraRevealField = 'company' | 'manager' | 'phone'
+type SponsoredRevealAction = 'contact' | ExtraRevealField
+type ExtraJobReveals = Partial<Record<ExtraRevealField, boolean>>
+type StoredDailyJobAccess = {
+  date: string
+  revealed: string[]
+  dailyUnlocks: number
+  extraReveals: Record<string, ExtraJobReveals>
+}
 type Job = {
   id: string
   company: string
@@ -114,9 +123,9 @@ const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 mont
 }
 
 const TIERS = [
-  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['View 3 contacts/day (15-sec ad to unlock)', 'Blurred phone & email', 'Apply to jobs', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3/day' },
-  { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — ZERO ads', 'No 15-sec ad videos — instant unlock', 'Unmasked phone + email', 'WhatsApp Apply button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
-  { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited contacts (Ad-free)', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips', 'Early access 2hrs before free'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
+  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['3 daily jobs — 15-sec ad reveals full contact', 'After 3 unlocks: 7 extra jobs open', 'Extra jobs: separate ads for company, manager & number', 'Apply Now plays a sponsored ad', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3 + 7 extra/day' },
+  { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — no reveal ads', 'No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
+  { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
 // Helpers
@@ -142,6 +151,25 @@ const DELETION_REASON_OPTIONS = [
   'Other proper reason',
 ]
 const CANDIDATE_INTERESTS_KEY = 'mr-candidate-interests-v1'
+const DAILY_JOB_ACCESS_KEY = 'mr-daily-job-access-v1'
+const FREE_DAILY_JOB_LIMIT = 3
+const FREE_EXTRA_JOB_LIMIT = 7
+const getTodayKey = () => new Date().toLocaleDateString('en-CA')
+const emptyDailyJobAccess = (): StoredDailyJobAccess => ({ date: getTodayKey(), revealed: [], dailyUnlocks: 0, extraReveals: {} })
+const loadDailyJobAccess = (): StoredDailyJobAccess => {
+  try {
+    const raw = localStorage.getItem(DAILY_JOB_ACCESS_KEY)
+    if (!raw) return emptyDailyJobAccess()
+    const parsed = JSON.parse(raw) as Partial<StoredDailyJobAccess>
+    if (parsed.date !== getTodayKey()) return emptyDailyJobAccess()
+    return {
+      date: getTodayKey(),
+      revealed: Array.isArray(parsed.revealed) ? parsed.revealed.map(String) : [],
+      dailyUnlocks: Number.isFinite(parsed.dailyUnlocks) ? Math.max(0, Math.floor(parsed.dailyUnlocks as number)) : 0,
+      extraReveals: parsed.extraReveals && typeof parsed.extraReveals === 'object' && !Array.isArray(parsed.extraReveals) ? parsed.extraReveals : {},
+    }
+  } catch { return emptyDailyJobAccess() }
+}
 const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
 const SEEKER_EXPERIENCE_OPTIONS = ['0-6 months', '6 months - 1 year', '1-2 years', '2-4 years', '4-7 years', '7+ years']
 const EMPTY_SEEKER_PROFILE: SeekerProfile = {
@@ -325,14 +353,17 @@ export default function App() {
   const [verifiedOnly, setVerifiedOnly] = useState(false)
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [applied, setApplied] = useState<Set<string>>(new Set())
-  const [revealed, setRevealed] = useState<Set<string>>(new Set())
-  const [dailyUnlocks, setDailyUnlocks] = useState(0)
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadDailyJobAccess().revealed))
+  const [dailyUnlocks, setDailyUnlocks] = useState(() => loadDailyJobAccess().dailyUnlocks)
+  const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadDailyJobAccess().extraReveals)
   const [selected, setSelected] = useState<Job | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [showPricing, setShowPricing] = useState(false)
   const [showRewarded, setShowRewarded] = useState<Job | null>(null)
+  const [rewardAction, setRewardAction] = useState<SponsoredRevealAction>('contact')
   const [rewardProgress, setRewardProgress] = useState(0)
-  const [showInterstitial, setShowInterstitial] = useState(false)
+  const [applyAdJob, setApplyAdJob] = useState<Job | null>(null)
+  const [applyAdProgress, setApplyAdProgress] = useState(0)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [page, setPage] = useState<AppPage>(() => getInitialPage())
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
@@ -394,6 +425,9 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
   useEffect(() => {
+    try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
+  }, [revealed, dailyUnlocks, extraReveals])
+  useEffect(() => {
     if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
   }, [currentUser])
   useEffect(() => {
@@ -406,9 +440,10 @@ export default function App() {
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   const remoteSessionRefreshRef = useRef(false)
   const authLookupMobileRef = useRef('')
+  const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const limitForTier: Record<Tier, number> = { free: 3, starter: 15, pro: 9999 }
-  const isAdFree = isAdmin || tier !== 'free' // ₹99+ plans & Admin: ZERO ads (no banner / rewarded / interstitial)
+  const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
+  const isAdFree = isAdmin || tier !== 'free' // Paid/Admin: no browsing or contact-reveal ads. Apply Now has its own sponsored ad.
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -1024,19 +1059,82 @@ export default function App() {
 
   // (AI scroll handled above with prevAiLenRef to avoid jump-to-bottom on refresh)
 
-  const canReveal = (id: string) => revealed.has(id) || dailyUnlocks < limitForTier[tier]
+  const freeDailyUnlockedCount = jobs.slice(0, FREE_DAILY_JOB_LIMIT).filter(job => revealed.has(job.id)).length
+  const freeDailyLimitComplete = freeDailyUnlockedCount >= FREE_DAILY_JOB_LIMIT
+  const displayedDailyUnlocks = tier === 'free' ? freeDailyUnlockedCount : dailyUnlocks
+  const getJobAccessKind = (job: Job): 'standard' | 'extra' | 'hidden' => {
+    if (isAdmin || tier !== 'free') return 'standard'
+    const index = jobs.findIndex(j => j.id === job.id)
+    if (index >= 0 && index < FREE_DAILY_JOB_LIMIT) return 'standard'
+    if (index >= FREE_DAILY_JOB_LIMIT && index < FREE_DAILY_JOB_LIMIT + FREE_EXTRA_JOB_LIMIT) {
+      return freeDailyLimitComplete ? 'extra' : 'hidden'
+    }
+    return 'hidden'
+  }
+  const isExtraJob = (job: Job) => getJobAccessKind(job) === 'extra'
+  const isCompanyVisible = (job: Job) => !isExtraJob(job) || revealed.has(job.id) || !!extraReveals[job.id]?.company
+  const isManagerVisible = (job: Job) => revealed.has(job.id) || !!extraReveals[job.id]?.manager
+  const isPhoneVisible = (job: Job) => revealed.has(job.id) || !!extraReveals[job.id]?.phone
+  const isEmailVisible = (job: Job) => isPhoneVisible(job)
+  const getDisplayCompany = (job: Job) => isCompanyVisible(job) ? job.company : 'Hidden Pharma Company'
+  const getCompanyInitials = (job: Job) => isCompanyVisible(job) ? job.company.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
+  const getSafeJobText = (job: Job, text: string) => {
+    if (isCompanyVisible(job)) return text
+    const firstToken = job.company.split(' ')[0] || ''
+    const terms = Array.from(new Set([job.company, firstToken, firstToken.replace(/'s$/i, '')].filter(term => term.length >= 3))).sort((a, b) => b.length - a.length)
+    return terms.reduce((safe, term) => safe.split(term).join('Verified pharma company'), text)
+  }
+  const getExtraRevealCount = (job: Job) => [isCompanyVisible(job), isManagerVisible(job), isPhoneVisible(job)].filter(Boolean).length
+  const clearRewardTimer = () => {
+    if (rewardTimerRef.current) {
+      clearInterval(rewardTimerRef.current)
+      rewardTimerRef.current = null
+    }
+  }
+  const closeSponsoredReveal = (openPricing = false) => {
+    clearRewardTimer()
+    setShowRewarded(null)
+    setRewardAction('contact')
+    setRewardProgress(0)
+    if (openPricing) setShowPricing(true)
+  }
+  const openSponsoredReveal = (job: Job, action: SponsoredRevealAction) => {
+    clearRewardTimer()
+    setRewardAction(action)
+    setRewardProgress(0)
+    setShowRewarded(job)
+  }
+  const startRewardedAd = () => {
+    if (rewardTimerRef.current || rewardProgress > 0) return
+    let progress = 0
+    rewardTimerRef.current = setInterval(() => {
+      progress += 1
+      setRewardProgress(Math.min(progress, 100))
+      if (progress >= 100) clearRewardTimer()
+    }, 150)
+  }
+  const markExtraReveal = (job: Job, field: ExtraRevealField) => {
+    setExtraReveals(prev => ({ ...prev, [job.id]: { ...(prev[job.id] ?? {}), [field]: true } }))
+  }
 
   const attemptReveal = (job: Job) => {
     if (!requireCompletedSeekerProfile()) return
     if (revealed.has(job.id)) return
+    if (isExtraJob(job)) {
+      setToast('Extra job: company, manager name and contact number unlock with separate sponsored ads.')
+      return
+    }
+    if (getJobAccessKind(job) === 'hidden') {
+      setToast('Complete today’s 3 Free unlocks to open the 7 extra jobs.')
+      return
+    }
     if (isAdmin) { setRevealed(prev => new Set([...prev, job.id])); setToast('👑 Admin access: contact revealed (no ad, no unlock used)'); return }
     if (tier === 'free') {
-      if (dailyUnlocks >= 3) {
-        setToast('Free limit reached — subscribe or try tomorrow. Watch ad grants +1.')
-        setShowRewarded(job)
+      if (freeDailyLimitComplete) {
+        setToast('Today’s 3 Free full-contact unlocks are complete — 7 extra jobs are now open below.')
         return
       }
-      setShowRewarded(job)
+      openSponsoredReveal(job, 'contact')
       return
     }
     if (dailyUnlocks >= limitForTier[tier]) {
@@ -1045,37 +1143,88 @@ export default function App() {
       return
     }
     setRevealed(prev => new Set([...prev, job.id]))
-    setDailyUnlocks(v => v + 1)
-    setToast(`Contact revealed! ${limitForTier[tier] - dailyUnlocks - 1} unlocks left today.`)
+    const nextUnlocks = dailyUnlocks + 1
+    setDailyUnlocks(nextUnlocks)
+    setToast(`Contact revealed! ${limitForTier[tier] === 9999 ? 'Unlimited unlocks' : `${limitForTier[tier] - nextUnlocks} unlocks left today`}.`)
+  }
+
+  const attemptExtraReveal = (job: Job, field: ExtraRevealField) => {
+    if (!requireCompletedSeekerProfile()) return
+    if (field === 'company' && isCompanyVisible(job)) return
+    if (field === 'manager' && isManagerVisible(job)) return
+    if (field === 'phone' && isPhoneVisible(job)) return
+    if (isAdmin || tier !== 'free') {
+      markExtraReveal(job, field)
+      setToast(field === 'company' ? 'Company name revealed.' : field === 'manager' ? 'Manager name revealed.' : 'Contact number revealed.')
+      return
+    }
+    if (getJobAccessKind(job) === 'hidden') {
+      setToast('Complete today’s 3 Free unlocks to open the 7 extra jobs.')
+      return
+    }
+    openSponsoredReveal(job, field)
   }
 
   const handleRewardedComplete = () => {
     if (!showRewarded) return
-    setRevealed(prev => new Set([...prev, showRewarded.id]))
-    setDailyUnlocks(v => v + 1)
-    setToast('Reward granted: Contact unlocked for 24h! 🎉')
+    clearRewardTimer()
+    const job = showRewarded
+    if (rewardAction === 'contact') {
+      setRevealed(prev => new Set([...prev, job.id]))
+      const nextUnlocks = dailyUnlocks + 1
+      const nextFreeDailyUnlockedCount = Math.min(FREE_DAILY_JOB_LIMIT, freeDailyUnlockedCount + 1)
+      setDailyUnlocks(nextUnlocks)
+      setToast(nextFreeDailyUnlockedCount >= FREE_DAILY_JOB_LIMIT
+        ? 'Contact unlocked 🎉 Today’s 3 Free unlocks are complete — 7 extra jobs are now open!'
+        : `Contact unlocked 🎉 ${FREE_DAILY_JOB_LIMIT - nextFreeDailyUnlockedCount} Free full-contact unlock${FREE_DAILY_JOB_LIMIT - nextFreeDailyUnlockedCount === 1 ? '' : 's'} left today.`)
+    } else {
+      markExtraReveal(job, rewardAction)
+      setToast(rewardAction === 'company'
+        ? `Company revealed: ${job.company}`
+        : rewardAction === 'manager'
+          ? 'Manager name revealed.'
+          : 'Contact number and email revealed.')
+    }
     setShowRewarded(null)
+    setRewardAction('contact')
     setRewardProgress(0)
   }
 
+  const finishApply = (job: Job) => {
+    setApplied(prev => new Set([...prev, job.id]))
+    setToast(`Applied successfully ✅ ${isCompanyVisible(job) ? job.company : `${job.title} • ${job.hq}`} — recruiter will contact you within 24h.`)
+  }
+
+  useEffect(() => {
+    if (!applyAdJob) return
+    let progress = 0
+    setApplyAdProgress(0)
+    const id = setInterval(() => {
+      progress += 1
+      setApplyAdProgress(Math.min(progress, 100))
+      if (progress >= 100) {
+        clearInterval(id)
+        const job = applyAdJob
+        setApplyAdJob(null)
+        setApplyAdProgress(0)
+        finishApply(job)
+      }
+    }, 150)
+    return () => clearInterval(id)
+  }, [applyAdJob])
+
   const handleApply = (job: Job) => {
     if (!requireCompletedSeekerProfile()) return
-    if (!isAdmin && tier === 'free' && !revealed.has(job.id)) {
-      setToast('Unlock contact first to apply (Free: watch ad to reveal)')
-      attemptReveal(job)
+    if (applied.has(job.id)) { setToast('You have already applied to this vacancy ✅'); return }
+    if (applyAdJob) return
+    if (getJobAccessKind(job) === 'hidden') {
+      setToast('This job opens after today’s Free access step is complete.')
       return
     }
-    const finishApply = () => {
-      setApplied(prev => new Set([...prev, job.id]))
-      setToast(`Applied to ${job.company} — recruiter will contact you within 24h ✅`)
-    }
-    if (isAdFree) { finishApply(); return } // ₹99+ plans & Admin: ZERO ads — instant apply
-    // interstitial ad simulation before apply (Free plan only)
-    setShowInterstitial(true)
-    setTimeout(() => {
-      setShowInterstitial(false)
-      finishApply()
-    }, 2200)
+    if (isAdmin) { finishApply(job); return }
+    // New rule: Apply Now plays one sponsored ad for Free, Starter and Pro users.
+    setApplyAdProgress(0)
+    setApplyAdJob(job)
   }
 
   const toggleSave = (id: string) => {
@@ -1087,7 +1236,8 @@ export default function App() {
   }
 
   const filtered = jobs.filter(j => {
-    if (search && !(j.company.toLowerCase().includes(search.toLowerCase()) || j.title.toLowerCase().includes(search.toLowerCase()) || j.hq.toLowerCase().includes(search.toLowerCase()) || j.division.toLowerCase().includes(search.toLowerCase()))) return false
+    const searchableText = `${isCompanyVisible(j) ? j.company : ''} ${j.title} ${j.hq} ${getSafeJobText(j, j.division)}`.toLowerCase()
+    if (search && !searchableText.includes(search.toLowerCase())) return false
     if (location !== 'All India' && j.state !== location) return false
     const jCity = j.hq.split(' - ')[0].trim()
     if (city !== 'All Cities' && jCity !== city) return false
@@ -1098,6 +1248,14 @@ export default function App() {
     if (verifiedOnly && !j.verified) return false
     return true
   })
+
+  const visibleFiltered = filtered.filter(job => {
+    if (getJobAccessKind(job) === 'hidden') return false
+    // A selected company filter must not indirectly reveal a locked extra-job company.
+    if (company !== 'All Companies' && isExtraJob(job) && !isCompanyVisible(job)) return false
+    return true
+  })
+  const hiddenFilteredCount = filtered.length - visibleFiltered.length
 
   const sendAi = async () => {
     if (!aiInput.trim() || aiLoading) return
@@ -1232,7 +1390,7 @@ export default function App() {
             <span className="font-semibold text-slate-600 sm:hidden">Mankind • 100+ HQs Hiring →</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate('pricing')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Go Ad-Free</button>
+            <button onClick={() => navigate('pricing')} className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Skip Reveal Ads</button>
           </div>
         </div>
       </div>
@@ -1273,7 +1431,7 @@ export default function App() {
               <div className="hidden items-center gap-2 rounded-full border bg-slate-50 px-2 py-1 sm:flex">
                 <span className={`h-2 w-2 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : 'bg-violet-500'}`} />
                 <span className="text-xs font-bold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
-                <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
               </div>
               {currentUser && hasAuthenticated && (
                 <div className="hidden max-w-[240px] items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-1.5 xl:flex" title={`${currentUser.name} • ${currentUser.email}`}>
@@ -1340,7 +1498,7 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
                     <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${dailyUnlocks}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
                   </div>
                   <User className="h-4 w-4 text-slate-400" />
                 </div>
@@ -1398,7 +1556,7 @@ export default function App() {
 
                 <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
                   <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Watch a 15-sec rewarded video to reveal 1 recruiter contact. Starter ₹99/mo = ZERO ads, instant unlocks.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Free: 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Apply Now plays a sponsored ad on every plan.</p>
                 </div>
 
                 <div className="mt-4 grid gap-2">
@@ -1760,7 +1918,7 @@ export default function App() {
                     <button type="submit" disabled={profileSaving} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><Check className="h-4 w-4" /> {profileSaving ? 'Saving Profile...' : 'Save Profile & Browse Jobs'}</button>
                     <button type="button" onClick={() => navigate('jobs')} className="rounded-full border px-6 py-3 text-sm font-bold">Browse Jobs</button>
                   </div>
-                  <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">You can browse jobs, but Quick Apply and contact reveal unlock only after this required profile is saved.</p>
+                  <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">You can browse jobs, but Apply Now and contact reveal unlock only after this required profile is saved.</p>
                 </form>
 
                 <div className="lg:sticky lg:top-24">
@@ -1948,20 +2106,20 @@ export default function App() {
             <button onClick={() => navigate('jobs')} className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">View All Jobs →</button>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {filtered.slice(0, 4).map((job) => (
+            {visibleFiltered.slice(0, 4).map((job) => (
               <div key={job.id} className="rounded-2xl border bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-bold text-white" style={{ background: job.color }}>{job.company.slice(0,2).toUpperCase()}</div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-bold text-white" style={{ background: isCompanyVisible(job) ? job.color : '#475569' }}>{getCompanyInitials(job)}</div>
                   <div className="flex-1">
-                    <p className="text-sm font-bold">{job.company} • {job.title}</p>
+                    <p className="text-sm font-bold">{getDisplayCompany(job)} • {job.title}</p>
                     <p className="text-xs text-slate-500">{job.hq} • {job.exp} • {job.ctc}</p>
                   </div>
                   {job.verified && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Verified</span>}
                 </div>
-                <p className="mt-2 line-clamp-2 text-sm text-slate-600">{job.desc}</p>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-600">{getSafeJobText(job, job.desc)}</p>
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => setSelected(job)} className="flex-1 rounded-full border bg-white py-2 text-sm font-bold">View Details</button>
-                  <button onClick={() => navigate('jobs')} className="flex-1 rounded-full bg-sky-600 py-2 text-sm font-bold text-white">Apply</button>
+                  <button onClick={() => handleApply(job)} className={`flex-1 rounded-full py-2 text-sm font-bold text-white ${applied.has(job.id) ? 'bg-emerald-600' : 'bg-sky-600'}`}>{applied.has(job.id) ? 'Applied' : applyAdJob?.id === job.id ? 'Ad Playing…' : 'Apply Now'}</button>
                 </div>
               </div>
             ))}
@@ -2060,7 +2218,7 @@ export default function App() {
 
                   <div className="rounded-xl bg-sky-50 p-3">
                     <p className="text-xs font-bold text-sky-800">Tier Benefits</p>
-                    <p className="mt-1 text-xs leading-relaxed text-sky-700">Free users: watch a short ad to reveal 1 contact. Starter/Pro: direct unlocks, no ads, WhatsApp apply.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-sky-700">Free: 3 daily full-contact unlocks open 7 extra jobs. Extra jobs use separate ads for company, manager and number. Starter/Pro reveal contacts directly; Apply Now still plays one sponsored ad.</p>
                   </div>
                 </div>
               </div>
@@ -2092,14 +2250,14 @@ export default function App() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-[22px] font-extrabold leading-tight">Verified Pharma Vacancies</h2>
-                <p className="text-sm text-slate-500">Showing {filtered.length} openings • Updated every 2 hours • Masked contacts protect recruiters</p>
+                <p className="text-sm text-slate-500">Showing {visibleFiltered.length} of {filtered.length} openings • Updated every 2 hours • Masked contacts protect recruiters</p>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setShowFilters(!showFilters)} className="flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-sm font-bold lg:hidden">
                   <Filter className="h-4 w-4" /> Filters {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </button>
                 <div className="hidden items-center gap-2 rounded-full border bg-white px-3 py-2 text-xs font-semibold sm:flex">
-                  <Clock3 className="h-4 w-4 text-sky-600" /> Daily unlocks: <b>{dailyUnlocks}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]}</b>
+                  <Clock3 className="h-4 w-4 text-sky-600" /> Daily unlocks: <b>{Math.min(displayedDailyUnlocks, limitForTier[tier])}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]}</b>{tier === 'free' && <span className="font-bold text-amber-700">{freeDailyLimitComplete ? '• +7 extra open' : '• +7 extra locked'}</span>}
                 </div>
               </div>
             </div>
@@ -2161,8 +2319,8 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-white"><Crown className="h-5 w-5" /></div>
                 <div>
-                  <p className="text-sm font-extrabold">Unlock hidden contacts — watch ad (Free) or go ad-free</p>
-                  <p className="text-xs text-slate-600">Starter ₹99/mo: 15 unlocks/day • No ads • WhatsApp Apply. Pro ₹499/mo: Unlimited + recruiter chat.</p>
+                  <p className="text-sm font-extrabold">{tier === 'free' ? (freeDailyLimitComplete ? '7 extra jobs are open — each detail has its own sponsored reveal' : `Today’s Free progress: ${freeDailyUnlockedCount}/${FREE_DAILY_JOB_LIMIT} full-contact unlocks`) : 'Direct contact reveals are included with your plan'}</p>
+                  <p className="text-xs text-slate-600">{tier === 'free' ? (freeDailyLimitComplete ? 'On extra jobs, watch separate sponsored ads for company, manager name and contact number. Apply Now also plays a sponsored ad.' : 'Complete all 3 Free full-contact unlocks to open 7 extra jobs. Apply Now plays a sponsored ad before submission.') : 'No banner/native or contact-reveal ads. Apply Now still plays one sponsored ad per application.'}</p>
                 </div>
               </div>
               <button onClick={() => setShowPricing(true)} className="shrink-0 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">View Plans</button>
@@ -2170,31 +2328,35 @@ export default function App() {
 
             {/* job grid */}
             <div className="mt-4 grid gap-4">
-              {filtered.length === 0 ? (
+              {visibleFiltered.length === 0 ? (
                 <div className="rounded-2xl border bg-white p-10 text-center">
                   <SearchX className="mx-auto h-10 w-10 text-slate-300" />
-                  <p className="mt-3 text-sm font-bold">No vacancies match your filters</p>
-                  <p className="text-xs text-slate-500">Try clearing location/company or search with different HQ like Hyderabad/Pune</p>
+                  <p className="mt-3 text-sm font-bold">{filtered.length === 0 ? 'No vacancies match your filters' : 'No vacancies are available in today’s Free access for these filters'}</p>
+                  <p className="text-xs text-slate-500">{filtered.length === 0 ? 'Try clearing location/company or search with different HQ like Hyderabad/Pune' : 'Free shows today’s first 3 jobs, then 7 extra jobs after all 3 unlocks. Clear filters or view Starter/Pro for every matching job.'}</p>
                   <button onClick={() => { setSearch(''); setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setRole('All Roles'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="mt-4 rounded-full bg-sky-600 px-6 py-2 text-sm font-bold text-white">Clear filters</button>
                 </div>
               ) : (
-                filtered.map((job, idx) => (
+                visibleFiltered.map((job, idx) => (
                   <div key={job.id}>
                     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.02 }} className="group relative overflow-hidden rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md sm:p-5">
                       {/* top row */}
                       <div className="flex items-start gap-3">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-sm font-extrabold text-white shadow" style={{ background: job.color }}>
-                          {job.company.split(' ').map(w => w[0]).join('').slice(0, 2)}
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-sm font-extrabold text-white shadow" style={{ background: isCompanyVisible(job) ? job.color : '#475569' }}>
+                          {getCompanyInitials(job)}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-[15px] font-extrabold leading-tight">{job.company}</h3>
+                            <h3 className="text-[15px] font-extrabold leading-tight">{getDisplayCompany(job)}</h3>
                             {job.verified && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified</span>}
                             {job.hot && <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-600"><TrendingUp className="h-3.5 w-3.5" /> Hot</span>}
                             {job.urgent && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800"><Siren className="h-3.5 w-3.5" /> Urgent</span>}
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">{job.type}</span>
+                            {isExtraJob(job) && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800"><TvMinimalPlay className="h-3.5 w-3.5" /> Extra Job • Separate Ads</span>}
                           </div>
-                          <p className="mt-1 text-sm font-bold text-slate-900">{job.title} • <span className="font-semibold text-slate-600">{job.division}</span></p>
+                          <p className="mt-1 text-sm font-bold text-slate-900">{job.title} • <span className="font-semibold text-slate-600">{getSafeJobText(job, job.division)}</span></p>
+                          {isExtraJob(job) && !isCompanyVisible(job) && (
+                            <button onClick={() => attemptExtraReveal(job, 'company')} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-extrabold text-white shadow hover:bg-amber-600"><TvMinimalPlay className="h-3.5 w-3.5" /> Watch Ad to Reveal Company</button>
+                          )}
                           <div className="mt-2 flex flex-wrap gap-2 text-xs">
                             <span className="inline-flex items-center gap-1.5 rounded-full border bg-slate-50 px-3 py-1.5 font-semibold"><MapPin className="h-3.5 w-3.5 text-sky-600" /> {job.hq} • {job.state}</span>
                             <span className="inline-flex items-center gap-1.5 rounded-full border bg-slate-50 px-3 py-1.5 font-semibold"><GraduationCap className="h-3.5 w-3.5 text-violet-600" /> {job.qual}</span>
@@ -2231,7 +2393,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-slate-600">{job.desc}</p>
+                      <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-slate-600">{getSafeJobText(job, job.desc)}</p>
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {job.skills.map(s => <span key={s} className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">{s}</span>)}
                         {job.perks.slice(0, 2).map(p => <span key={p} className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{p}</span>)}
@@ -2241,37 +2403,52 @@ export default function App() {
                       <div className="mt-4 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50/60 p-3">
                         <div className="flex items-center justify-between">
                           <p className="flex items-center gap-1.5 text-xs font-extrabold tracking-wide text-sky-800"><LockKeyhole className="h-4 w-4" /> RECRUITER CONTACT (MASKED)</p>
-                          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600">{revealed.has(job.id) ? 'Unlocked • 24h valid' : `Watch ad to reveal • ${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier] - dailyUnlocks} left`}</span>
+                          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600">{isExtraJob(job) ? `Extra details • ${getExtraRevealCount(job)}/3 revealed` : revealed.has(job.id) ? 'Unlocked • 24h valid' : tier === 'free' ? `Full-contact ad • ${Math.max(0, FREE_DAILY_JOB_LIMIT - freeDailyUnlockedCount)} left` : `Direct reveal • ${limitForTier[tier] === 9999 ? '∞' : Math.max(0, limitForTier[tier] - dailyUnlocks)} left`}</span>
                         </div>
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <div className="rounded-xl bg-white p-3">
-                            <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-slate-500"><Building2 className="h-3.5 w-3.5" /> CONTACT PERSON</p>
-                            <p className="mt-1 text-sm font-bold">{revealed.has(job.id) ? job.contactPerson : maskPhone(job.contactPerson.split(' -')[0]) + ' •••'}</p>
+                            <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-slate-500"><Building2 className="h-3.5 w-3.5" /> MANAGER / CONTACT PERSON</p>
+                            <p className="mt-1 text-sm font-bold">{isManagerVisible(job) ? job.contactPerson : isExtraJob(job) ? 'Hidden Manager •••' : maskPhone(job.contactPerson.split(' -')[0]) + ' •••'}</p>
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-slate-500"><Phone className="h-3.5 w-3.5" /> PHONE</p>
-                            <p className={`mt-1 flex items-center gap-2 text-sm font-bold ${revealed.has(job.id) ? '' : 'select-none blur-[6px]'}`}>{job.phone} {revealed.has(job.id) && <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] text-white">Verified</span>}</p>
-                            {!revealed.has(job.id) && <p className="mt-1 text-center text-xs font-bold text-sky-700">+91 98XXX XXXXX</p>}
+                            <p className="mt-1 flex items-center gap-2 text-sm font-bold">{isPhoneVisible(job) ? job.phone : '+91 ••••• •••••'} {isPhoneVisible(job) && <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] text-white">Verified</span>}</p>
+                            {!isPhoneVisible(job) && <p className="mt-1 text-xs font-bold text-sky-700">Contact number hidden</p>}
                           </div>
                           <div className="rounded-xl bg-white p-3">
                             <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-slate-500"><Mail className="h-3.5 w-3.5" /> EMAIL</p>
-                            <p className={`mt-1 break-all text-sm font-bold ${revealed.has(job.id) ? '' : 'select-none blur-[6px]'}`}>{job.email}</p>
-                            {!revealed.has(job.id) && <p className="mt-1 text-center text-xs font-bold text-sky-700">rXXXX@company.com</p>}
-                            <div className="mt-3 flex gap-2">
-                              {revealed.has(job.id) ? (
+                            <p className="mt-1 break-all text-sm font-bold">{isEmailVisible(job) ? job.email : '••••@company.com'}</p>
+                            {!isEmailVisible(job) && <p className="mt-1 text-xs font-bold text-sky-700">Email hidden</p>}
+                            <div className="mt-3 flex flex-col gap-2">
+                              {isExtraJob(job) ? (
                                 <>
-                                  <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-xs font-bold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
-                                  <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(job.company + ' MR vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                                  {!isManagerVisible(job) && (
+                                    <button onClick={() => attemptExtraReveal(job, 'manager')} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-black"><TvMinimalPlay className="h-4 w-4" /> Watch Ad — Reveal Manager Name</button>
+                                  )}
+                                  {!isPhoneVisible(job) && (
+                                    <button onClick={() => attemptExtraReveal(job, 'phone')} className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-sky-800"><TvMinimalPlay className="h-4 w-4" /> Watch Ad — Reveal Contact Number</button>
+                                  )}
+                                  {isPhoneVisible(job) && (
+                                    <div className="flex gap-2">
+                                      <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-xs font-bold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
+                                      <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' MR vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                                    </div>
+                                  )}
                                 </>
+                              ) : revealed.has(job.id) ? (
+                                <div className="flex gap-2">
+                                  <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-xs font-bold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
+                                  <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' MR vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                                </div>
                               ) : (
                                 <button onClick={() => attemptReveal(job)} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-black">
-                                  {tier === 'free' ? <><TvMinimalPlay className="h-4 w-4" /> Watch Ad to Reveal</> : <><Unlock className="h-4 w-4" /> Reveal Contact (1/{limitForTier[tier]})</>}
+                                  {tier === 'free' ? <><TvMinimalPlay className="h-4 w-4" /> Watch Ad — Reveal Full Contact</> : <><Unlock className="h-4 w-4" /> Reveal Contact (1/{limitForTier[tier]})</>}
                                 </button>
                               )}
                             </div>
                           </div>
                         </div>
-                        {!revealed.has(job.id) && (
+                        {!revealed.has(job.id) && getExtraRevealCount(job) < 3 && (
                           <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11px] font-semibold text-slate-500">
-                            <Info className="h-3.5 w-3.5" /> {tier === 'free' ? 'Free: Watch a 15-sec ad to unlock — or go ad-free with Starter ₹99/mo.' : `Your ${tier} plan: ${limitForTier[tier]} unlocks/day • Ad-free`}
+                            <Info className="h-3.5 w-3.5 shrink-0" /> <span>{isExtraJob(job) ? 'Extra Free job: separate 15-sec ads reveal company, manager name and contact number. Apply Now also plays a sponsored ad.' : tier === 'free' ? 'Free daily job: one 15-sec ad reveals manager, contact number and email. Apply Now also plays a sponsored ad.' : `Your ${tier} plan: direct contact reveals included. Apply Now plays one sponsored ad.`}</span>
                           </p>
                         )}
                       </div>
@@ -2282,19 +2459,19 @@ export default function App() {
                           <Eye className="h-4 w-4" /> View Details
                         </button>
                         <button onClick={() => handleApply(job)} className={`flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white ${applied.has(job.id) ? 'bg-emerald-600' : 'bg-sky-600 hover:bg-sky-700'}`}>
-                          {applied.has(job.id) ? <><Check className="h-4 w-4" /> Applied</> : <><Send className="h-4 w-4" /> Quick Apply</>}
+                          {applied.has(job.id) ? <><Check className="h-4 w-4" /> Applied</> : applyAdJob?.id === job.id ? <><TvMinimalPlay className="h-4 w-4" /> Ad Playing…</> : <><Send className="h-4 w-4" /> Apply Now</>}
                         </button>
                         <button onClick={() => toggleSave(job.id)} className="flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold sm:hidden">
                           <Bookmark className="h-4 w-4" /> {saved.has(job.id) ? 'Saved' : 'Save'}
                         </button>
-                        <button onClick={() => { navigator.clipboard.writeText(`${job.company} MR vacancy at ${job.hq} — ${job.ctc} — Contact via MR Vacancies Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
+                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} MR vacancy at ${job.hq} — ${job.ctc} — Contact via MR Vacancies Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
                           <Share2 className="h-4 w-4" /> Share
                         </button>
                       </div>
                     </motion.div>
 
                     {/* inject ads every 4th */}
-                    {!isAdFree && (idx + 1) % 4 === 0 && idx !== filtered.length - 1 && (
+                    {!isAdFree && (idx + 1) % 4 === 0 && idx !== visibleFiltered.length - 1 && (
                       <div className="my-4">
                         <BannerAd label={`Sponsored • Appears after ${idx + 1} jobs`} />
                       </div>
@@ -2303,6 +2480,17 @@ export default function App() {
                 ))
               )}
             </div>
+
+            {tier === 'free' && hiddenFilteredCount > 0 && (
+              <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white"><LockKeyhole className="h-5 w-5" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-extrabold">{freeDailyLimitComplete ? 'Today’s Free 3 + 7 job access is complete' : '7 extra jobs are locked for now'}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{freeDailyLimitComplete ? `${hiddenFilteredCount} more matching ${hiddenFilteredCount === 1 ? 'job is' : 'jobs are'} outside today’s Free access. They open tomorrow, or immediately with Starter/Pro.` : `Complete all 3 Free full-contact unlocks (${freeDailyUnlockedCount}/${FREE_DAILY_JOB_LIMIT}) to open the next 7 jobs. Extra jobs use separate sponsored ads for company, manager name, contact number and Apply Now.`}</p>
+                </div>
+                <button onClick={() => setShowPricing(true)} className="shrink-0 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white">View Plans</button>
+              </div>
+            )}
 
             {/* compliance / data safety bar */}
             <div className="mt-6 rounded-2xl border bg-white p-4">
@@ -2323,7 +2511,7 @@ export default function App() {
           <div className="mx-auto max-w-3xl text-center">
             <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">SUBSCRIPTION TIERS</span>
             <h2 className="mt-3 text-[28px] font-extrabold leading-tight">Choose how you unlock contacts. <br className="hidden sm:block" /><span className="text-sky-600">Free works — Pro wins faster.</span></h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies & quick apply. Masked phone/email protects recruiters from spam. Go ad-free anytime.</p>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies. Apply Now plays one sponsored ad on every plan; Starter/Pro remove browsing and contact-reveal ads.</p>
           </div>
 
           <div className="mx-auto mt-8 grid max-w-5xl gap-4 md:grid-cols-3">
@@ -2336,7 +2524,7 @@ export default function App() {
                 </div>
                 <h3 className="mt-3 text-lg font-extrabold">{t.name} {t.id === 'pro' && 'MR'}</h3>
                 <p className="mt-1 text-2xl font-extrabold">{t.price} <span className="text-sm font-semibold text-slate-500">{t.period}</span></p>
-                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : 'Ad-free'}</p>
+                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : 'No reveal ads'}</p>
                 <ul className="mt-4 space-y-2">
                   {t.features.map(f => (
                     <li key={f} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
@@ -2356,7 +2544,7 @@ export default function App() {
 
           <div className="mt-6 grid gap-4 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3">
             <div className="flex gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" /><p className="text-sm leading-tight"><b>Why masked?</b> Prevents spam calls to recruiters. Free users prove intent by watching a short ad.</p></div>
-            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>Sponsored video:</b> Watch 15 seconds → 1 unlock for 24h. Starter ₹99/mo & Pro: ZERO ads at all.</p></div>
+            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>Sponsored video:</b> Free has 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Starter/Pro reveal directly; Apply Now still plays one sponsored ad.</p></div>
             <div className="flex gap-3"><BadgeCheck className="h-5 w-5 shrink-0 text-violet-600" /><p className="text-sm leading-tight"><b>Verified only:</b> Every vacancy is manually checked by M Divakar Reddy before publish.</p></div>
           </div>
 
@@ -2406,8 +2594,8 @@ export default function App() {
               <div className="mt-5 space-y-4">
                 {[
                   { n: '01', t: 'Browse verified HQs', d: 'Filter by HQ, company & experience. Every post is verified manually.' },
-                  { n: '02', t: 'Reveal contact (ad or subscribe)', d: 'Free: watch a short ad. Starter/Pro: instant, ad-free, WhatsApp.' },
-                  { n: '03', t: 'Apply & get placed', d: 'Recruiter contacts you in 24h. Track in Saved → Applied.' },
+                  { n: '02', t: 'Reveal the details you need', d: 'Free daily jobs use one full-contact ad. Extra jobs use separate company, manager and number ads. Starter/Pro reveal directly.' },
+                  { n: '03', t: 'Apply & get placed', d: 'Apply Now plays one sponsored ad on Free, Starter and Pro, then submits your application.' },
                 ].map(s => (
                   <div key={s.n} className="flex gap-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white font-extrabold text-slate-900">{s.n}</span>
@@ -2601,9 +2789,9 @@ export default function App() {
           <h3 className="text-lg font-extrabold">FAQ — MR Vacancies Hub</h3>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {[
-              { q: 'Is this free? Why masked contacts?', a: 'Yes, Free forever. Phone/email is masked to protect recruiters from spam. Watch a short ad to unlock 1 contact/day, or subscribe for ad-free unlocks.' },
+              { q: 'Is this free? Why masked contacts?', a: 'Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
               { q: 'How is this verified?', a: 'Every vacancy is manually checked by M Divakar Reddy: company GST, recruiter ID, HQ & CTC confirmation. Unverified posts are never published.' },
-              { q: 'Can I upload my resume?', a: 'Yes — AI assistant helps build a 1-page MR resume (B.Pharm/B.Sc focused) and auto-attaches on Quick Apply (Pro feature).' },
+              { q: 'Can I upload my resume?', a: 'Yes — AI assistant helps build a 1-page MR resume (B.Pharm/B.Sc focused) and auto-attaches on Apply Now (Pro feature).' },
               { q: 'Will I stay logged in?', a: 'Yes. After login, the app opens directly to your account until you logout. After logout, enter your mobile number: existing accounts open directly, and new users are asked for name and email.' },
             ].map(f => (
               <div key={f.q} className="rounded-xl bg-slate-50 p-4">
@@ -2646,11 +2834,11 @@ export default function App() {
             ) : (
               jobs.filter(j=>saved.has(j.id)).map(job=>(
                 <div key={job.id} className="rounded-2xl border bg-white p-4">
-                  <p className="font-bold">{job.company} • {job.title}</p>
+                  <p className="font-bold">{getDisplayCompany(job)} • {job.title}</p>
                   <p className="text-sm text-slate-500">{job.hq} • {job.ctc}</p>
                   <div className="mt-3 flex gap-2">
                     <button onClick={()=>setSelected(job)} className="flex-1 rounded-full border py-2 text-sm font-bold">View</button>
-                    <button onClick={()=>handleApply(job)} className="flex-1 rounded-full bg-sky-600 py-2 text-sm font-bold text-white">Apply</button>
+                    <button onClick={()=>handleApply(job)} className={`flex-1 rounded-full py-2 text-sm font-bold text-white ${applied.has(job.id) ? 'bg-emerald-600' : 'bg-sky-600'}`}>{applied.has(job.id) ? 'Applied' : applyAdJob?.id === job.id ? 'Ad Playing…' : 'Apply Now'}</button>
                   </div>
                 </div>
               ))
@@ -3086,9 +3274,9 @@ export default function App() {
             <motion.div initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 10 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[720px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-extrabold text-white" style={{ background: selected.color }}>{selected.company.slice(0, 2).toUpperCase()}</div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-extrabold text-white" style={{ background: isCompanyVisible(selected) ? selected.color : '#475569' }}>{getCompanyInitials(selected)}</div>
                   <div>
-                    <p className="text-sm font-extrabold">{selected.company} • {selected.title}</p>
+                    <p className="text-sm font-extrabold">{getDisplayCompany(selected)} • {selected.title}</p>
                     <p className="text-xs text-slate-500">{selected.hq} • {selected.posted}</p>
                   </div>
                 </div>
@@ -3100,32 +3288,47 @@ export default function App() {
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.type}</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.exp}</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.ctc}</span>
+                  {isExtraJob(selected) && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-extrabold text-amber-800">Extra Job • Separate Ads</span>}
                 </div>
                 <h4 className="mt-4 text-[15px] font-extrabold">Job Description</h4>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">{selected.desc} Must have 2-wheeler, valid license, willingness to do fieldwork, RCPA and stockist follow-up. Daily reporting via SFA app.</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">{getSafeJobText(selected, selected.desc)} Must have 2-wheeler, valid license, willingness to do fieldwork, RCPA and stockist follow-up. Daily reporting via SFA app.</p>
                 <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-500">Division</p><p className="text-sm font-bold">{selected.division}</p></div>
+                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-500">Division</p><p className="text-sm font-bold">{getSafeJobText(selected, selected.division)}</p></div>
                   <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-500">Qualification</p><p className="text-sm font-bold">{selected.qual}</p></div>
                   <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-500">HQ & Coverage</p><p className="text-sm font-bold">{selected.hq} • Covers nearby 30km</p></div>
                   <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-500">Perks</p><p className="text-sm font-bold">{selected.perks.join(' • ')}</p></div>
                 </div>
                 <div className="mt-4 rounded-xl border bg-sky-50 p-4">
-                  <p className="text-xs font-bold tracking-wide text-sky-800">CONTACT (MASKED PROTECTION)</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <span className={`rounded-full border bg-white px-3 py-2 text-sm font-bold ${revealed.has(selected.id) ? '' : 'blur-[5px]'}`}>{selected.phone}</span>
-                    <span className={`rounded-full border bg-white px-3 py-2 text-sm font-bold max-w-full truncate ${revealed.has(selected.id) ? '' : 'blur-[5px]'}`}>{selected.email}</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-bold tracking-wide text-sky-800">COMPANY & CONTACT DETAILS</p>
+                    {isExtraJob(selected) && <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold text-amber-700">{getExtraRevealCount(selected)}/3 revealed</span>}
                   </div>
-                  {!revealed.has(selected.id) ? (
-                    <button onClick={() => { attemptReveal(selected); setSelected(null) }} className="mt-3 w-full rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Reveal Contact</button>
-                  ) : (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl bg-white p-3"><p className="text-[11px] font-bold tracking-wide text-slate-500">COMPANY</p><p className="mt-1 text-sm font-bold">{getDisplayCompany(selected)}</p></div>
+                    <div className="rounded-xl bg-white p-3"><p className="text-[11px] font-bold tracking-wide text-slate-500">MANAGER</p><p className="mt-1 text-sm font-bold">{isManagerVisible(selected) ? selected.contactPerson : 'Hidden Manager •••'}</p></div>
+                    <div className="rounded-xl bg-white p-3"><p className="text-[11px] font-bold tracking-wide text-slate-500">CONTACT NUMBER</p><p className="mt-1 text-sm font-bold">{isPhoneVisible(selected) ? selected.phone : '+91 ••••• •••••'}</p></div>
+                  </div>
+                  <p className="mt-2 rounded-xl bg-white px-3 py-2 text-sm font-bold"><span className="text-xs font-bold text-slate-500">EMAIL: </span>{isEmailVisible(selected) ? selected.email : '••••@company.com'}</p>
+
+                  {isExtraJob(selected) ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      {!isCompanyVisible(selected) && <button onClick={() => attemptExtraReveal(selected, 'company')} className="flex items-center justify-center gap-1.5 rounded-full bg-amber-500 px-3 py-2.5 text-xs font-extrabold text-white"><TvMinimalPlay className="h-4 w-4" /> Ad — Company</button>}
+                      {!isManagerVisible(selected) && <button onClick={() => attemptExtraReveal(selected, 'manager')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 px-3 py-2.5 text-xs font-extrabold text-white"><TvMinimalPlay className="h-4 w-4" /> Ad — Manager</button>}
+                      {!isPhoneVisible(selected) && <button onClick={() => attemptExtraReveal(selected, 'phone')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-700 px-3 py-2.5 text-xs font-extrabold text-white"><TvMinimalPlay className="h-4 w-4" /> Ad — Number</button>}
+                    </div>
+                  ) : !revealed.has(selected.id) ? (
+                    <button onClick={() => attemptReveal(selected)} className="mt-3 w-full rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">{tier === 'free' ? 'Watch Ad — Reveal Full Contact' : 'Reveal Full Contact'}</button>
+                  ) : null}
+
+                  {isPhoneVisible(selected) && (
                     <div className="mt-3 flex gap-2">
-                      <a href={`tel:${selected.phone}`} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-emerald-500 py-2.5 text-sm font-bold text-white"><Phone className="h-4 w-4" /> Call</a>
-                      <a href={`https://wa.me/${selected.phone.replace(/\D/g, '')}`} target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp</a>
+                      <a href={`tel:${selected.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-emerald-500 py-2.5 text-sm font-bold text-white"><Phone className="h-4 w-4" /> Call</a>
+                      <a href={`https://wa.me/${selected.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(selected) + ' MR vacancy at ' + selected.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp</a>
                     </div>
                   )}
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <button onClick={() => { handleApply(selected); setSelected(null) }} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white"><Send className="h-4 w-4" /> Quick Apply</button>
+                  <button onClick={() => { handleApply(selected); setSelected(null) }} className={`flex flex-1 items-center justify-center gap-2 rounded-full py-3 text-sm font-bold text-white ${applied.has(selected.id) ? 'bg-emerald-600' : 'bg-sky-600'}`}><Send className="h-4 w-4" /> {applied.has(selected.id) ? 'Applied' : applyAdJob?.id === selected.id ? 'Ad Playing…' : 'Apply Now'}</button>
                   <button onClick={() => setSelected(null)} className="rounded-full border bg-white px-6 py-3 text-sm font-bold">Close</button>
                 </div>
               </div>
@@ -3137,14 +3340,14 @@ export default function App() {
       {/* REWARDED AD MODAL */}
       <AnimatePresence>
         {showRewarded && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
             <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white">
               <div className="bg-slate-900 p-4 text-white">
                 <div className="flex items-center justify-between">
                   <p className="flex items-center gap-2 text-sm font-bold"><TvMinimalPlay className="h-4 w-4 text-amber-400" /> Sponsored Video</p>
-                  <button onClick={() => { setShowRewarded(null); setRewardProgress(0) }} className="rounded-full bg-white/20 p-1"><X className="h-4 w-4" /></button>
+                  <button onClick={() => closeSponsoredReveal()} className="rounded-full bg-white/20 p-1"><X className="h-4 w-4" /></button>
                 </div>
-                <p className="mt-1 text-xs opacity-80">Watch to unlock <b>{showRewarded.company}</b> contact for 24h. No payment — ad supports free access.</p>
+                <p className="mt-1 text-xs opacity-80">{rewardAction === 'contact' ? <>Watch the full ad to reveal manager, contact number and email for <b>{getDisplayCompany(showRewarded)}</b>.</> : rewardAction === 'company' ? <>Watch the full ad to reveal the <b>company name</b> for this {showRewarded.hq} vacancy.</> : rewardAction === 'manager' ? <>Watch the full ad to reveal the <b>manager / contact person name</b>.</> : <>Watch the full ad to reveal the <b>contact number and email</b>.</>}</p>
               </div>
               <div className="p-4">
                 <div className="rounded-xl bg-black p-3 text-white">
@@ -3162,37 +3365,58 @@ export default function App() {
                   </div>
                 </div>
                 {rewardProgress < 100 ? (
-                  <button disabled={rewardProgress > 0} onClick={() => { let p = 0; const id = setInterval(() => { p += 1; setRewardProgress(Math.min(p, 100)); if (p >= 100) { clearInterval(id); } }, 150) }} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-3 text-sm font-bold text-white disabled:opacity-80">
+                  <button disabled={rewardProgress > 0} onClick={startRewardedAd} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-3 text-sm font-bold text-white disabled:opacity-80">
                     {rewardProgress > 0 ? <>Ad playing… {Math.max(0, Math.ceil(15 - (rewardProgress * 15) / 100))}s left</> : <><Play className="h-4 w-4" /> Play Ad (15 sec)</>}
                   </button>
                 ) : (
                   <button onClick={handleRewardedComplete} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white">
-                    <Gift className="h-4 w-4" /> Claim Reward — Reveal Contact
+                    <Gift className="h-4 w-4" /> Claim Reward — {rewardAction === 'contact' ? 'Reveal Full Contact' : rewardAction === 'company' ? 'Reveal Company' : rewardAction === 'manager' ? 'Reveal Manager Name' : 'Reveal Contact Number'}
                   </button>
                 )}
                 <p className="mt-2 text-center text-xs text-slate-500">Reward granted only after watching full 15 sec</p>
-                <button onClick={() => { setShowRewarded(null); setRewardProgress(0); setShowPricing(true) }} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip ads forever — Starter ₹99/mo (Zero Ads)</button>
+                <button onClick={() => closeSponsoredReveal(true)} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip reveal ads — Starter ₹99/mo (Apply ad still plays once)</button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* INTERSTITIAL */}
+      {/* APPLY NOW SPONSORED AD — Free, Starter and Pro */}
       <AnimatePresence>
-        {showInterstitial && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
-            <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} className="w-full max-w-[360px] rounded-2xl bg-white p-6 text-center">
-              <p className="rounded-full bg-amber-400 px-3 py-1 text-xs font-bold inline-flex">SPONSORED</p>
-              <div className="mt-4 rounded-xl bg-gradient-to-br from-sky-600 to-indigo-600 p-6 text-white">
-                <Smartphone className="mx-auto h-8 w-8" />
-                <p className="mt-2 text-sm font-bold">MedDetail Pro — E-Detailing for MRs</p>
-                <p className="text-xs opacity-90">Create visual aids in 30 seconds</p>
-                <span className="mt-3 inline-block rounded-full bg-white px-4 py-1.5 text-xs font-bold text-slate-900">Learn More</span>
+        {applyAdJob && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4">
+            <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} exit={{ scale: 0.96 }} className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white">
+              <div className="bg-slate-900 p-4 text-white">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="flex items-center gap-2 text-sm font-bold"><TvMinimalPlay className="h-4 w-4 text-amber-400" /> Sponsored • Apply Now Ad</p>
+                  <button onClick={() => { setApplyAdJob(null); setApplyAdProgress(0); setToast('Application cancelled — the Apply ad was closed.') }} className="rounded-full bg-white/20 p-1" aria-label="Cancel application"><X className="h-4 w-4" /></button>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed opacity-80">This one sponsored ad runs for Free, Starter and Pro users. Your application will submit automatically after the full 15 seconds.</p>
               </div>
-              <p className="mt-4 text-sm font-bold">Submitting your application…</p>
-              <p className="text-xs text-slate-500">Ad will close automatically</p>
-              <div className="mx-auto mt-3 h-1 w-24 rounded-full bg-slate-200 overflow-hidden"><div className="h-1 w-full animate-[shimmer_1.2s_ease-in-out_infinite] bg-sky-500" /></div>
+              <div className="p-4">
+                <div className="rounded-xl bg-black p-3 text-white">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="rounded bg-amber-400 px-2 py-1 font-bold text-black">AD • VIDEO</span>
+                    <span className="rounded bg-white/20 px-2 py-1">{Math.max(0, Math.ceil(15 - (applyAdProgress * 15) / 100))}s</span>
+                  </div>
+                  <div className="mt-4 flex flex-col items-center justify-center py-6 text-center">
+                    <Megaphone className="h-10 w-10 text-amber-400" />
+                    <p className="mt-3 text-sm font-bold">Pharma Sales Mastery — 40% OFF</p>
+                    <p className="text-xs opacity-70">Trusted by 12,000 MRs • 4.8★</p>
+                    <div className="mt-4 h-2 w-full rounded-full bg-white/20">
+                      <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${applyAdProgress}%` }} />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-xl bg-sky-50 p-3 text-center">
+                  <p className="text-xs font-bold text-sky-700">APPLICATION READY TO SUBMIT</p>
+                  <p className="mt-1 text-sm font-extrabold">{getDisplayCompany(applyAdJob)} • {applyAdJob.title}</p>
+                  <p className="text-xs text-slate-500">{applyAdJob.hq} • {applyAdJob.ctc}</p>
+                </div>
+                <p className="mt-3 text-center text-sm font-bold">Submitting in {Math.max(0, Math.ceil(15 - (applyAdProgress * 15) / 100))} sec…</p>
+                <button onClick={() => { setApplyAdJob(null); setApplyAdProgress(0); setToast('Application cancelled — the Apply ad was closed.') }} className="mt-3 w-full rounded-full border py-2.5 text-sm font-bold">Cancel Application</button>
+                <p className="mt-2 text-center text-xs text-slate-500">If you cancel before the ad finishes, your application will not be submitted.</p>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -3206,7 +3430,7 @@ export default function App() {
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
                   <p className="text-lg font-extrabold">Subscription Plans — MR Vacancies Hub</p>
-                  <p className="text-xs text-slate-500">Choose the Free plan with ads or go ad-free with Starter/Pro.</p>
+                  <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
               </div>
@@ -3223,8 +3447,8 @@ export default function App() {
                 ))}
               </div>
               <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                <p><b>Free plan:</b> Watch a short sponsored video to unlock a recruiter contact.</p>
-                <p className="mt-1"><b>Starter & Pro:</b> No ads and faster contact unlocks.</p>
+                <p><b>Free plan:</b> 3 daily full-contact unlocks open 7 extra jobs. Extra jobs use separate sponsored ads for company, manager name and contact number.</p>
+                <p className="mt-1"><b>Starter & Pro:</b> Direct contact reveals and no browsing/native ads. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
               </div>
             </motion.div>
           </motion.div>
