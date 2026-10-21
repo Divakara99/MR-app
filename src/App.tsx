@@ -166,7 +166,7 @@ const TIERS = [
 ]
 
 const SEEKER_AI_WELCOME = 'Hi! I’m your PharmaSales AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
-const RECRUITER_AI_WELCOME = 'Hi! I’m your PharmaSales Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
+const RECRUITER_AI_WELCOME = 'Hi! I’m your PharmaSales Jobs recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
 const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
 
 // Helpers
@@ -523,6 +523,7 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
+  const welcomeRoleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const remoteSessionRefreshRef = useRef(false)
   const authLookupMobileRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -535,6 +536,7 @@ export default function App() {
   // Welcome, Auth, both Admin states, and guest Legal are isolated screens.
   // They must not expose the normal Jobs/Home/Recruiter navigation shell.
   const isIsolatedShellPage = page === 'welcome' || page === 'auth' || page === 'admin' || (page === 'legal' && !hasAuthenticated && !isAdmin)
+  const welcomeSelectedRole: EntryRole = entryRole ?? 'seeker'
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -747,6 +749,16 @@ export default function App() {
     }
     navigate('auth')
   }
+  const handleWelcomeRoleSelect = (r: EntryRole) => {
+    // Move the visible selection to the tapped role first. A short pause
+    // lets the user clearly see the highlight/check shift before Auth opens.
+    setEntryRole(r)
+    if (welcomeRoleTimerRef.current) clearTimeout(welcomeRoleTimerRef.current)
+    welcomeRoleTimerRef.current = setTimeout(() => {
+      welcomeRoleTimerRef.current = null
+      enterAs(r)
+    }, 240)
+  }
   const handleMobileContinue = async () => {
     if (authLoading) return
     const selectedRole = entryRole ?? 'seeker'
@@ -952,15 +964,15 @@ export default function App() {
     navigate('candidates')
   }
   const buildSupportMailto = (ticket?: SupportTicket) => {
-    const subject = ticket ? `PharmaSales Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'PharmaSales Hub Support Request'
+    const subject = ticket ? `PharmaSales Jobs Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'PharmaSales Jobs Support Request'
     const body = ticket
-      ? ['Hello PharmaSales Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
-      : ['Hello PharmaSales Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
+      ? ['Hello PharmaSales Jobs Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
+      : ['Hello PharmaSales Jobs Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
     return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const buildAdminReplyMailto = (ticket: SupportTicket) => {
-    const subject = `Update on your PharmaSales Hub support ticket ${ticket.ticketNo}`
-    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — PharmaSales Hub'].join('\n')
+    const subject = `Update on your PharmaSales Jobs support ticket ${ticket.ticketNo}`
+    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — PharmaSales Jobs'].join('\n')
     return `mailto:${ticket.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const openSupportTicket = (source: SupportTicketSource = 'ai') => {
@@ -1549,7 +1561,7 @@ export default function App() {
       return
     }
     if (lowerPrompt.includes('contact support') || lowerPrompt.includes('support email') || lowerPrompt === 'support') {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact PharmaSales Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
+      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact PharmaSales Jobs Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
       openSupportTicket('ai')
       return
     }
@@ -1728,11 +1740,11 @@ export default function App() {
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Hub — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
-              <img src="/icon-192.png" alt="PharmaSales Hub" className="h-8 w-8 shrink-0 rounded-xl object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
+            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
+              <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-xl object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[380px]:text-[17px] sm:text-[20px]">PharmaSales Hub</p>
+                  <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[380px]:text-[17px] sm:text-[20px]">PharmaSales Jobs</p>
                   <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white xl:inline-flex">VERIFIED</span>
                 </div>
                 <p className="mt-0.5 whitespace-nowrap text-[7.5px] font-semibold leading-none tracking-wide text-sky-700 min-[380px]:text-[8px] sm:text-[10px]">The MR to NSM Jobs Network</p>
@@ -1858,9 +1870,9 @@ export default function App() {
               {/* Header */}
               <div className="flex items-center justify-between gap-3 border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
                 <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur min-[380px]:gap-3 min-[380px]:px-3">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
                   <div className="min-w-0">
-                    <p className="truncate text-[16px] font-extrabold leading-none min-[380px]:text-[17px]">PharmaSales Hub</p>
+                    <p className="truncate text-[16px] font-extrabold leading-none min-[380px]:text-[17px]">PharmaSales Jobs</p>
                     <p className="mt-1 truncate text-[8.5px] font-semibold leading-none tracking-wide text-sky-50 min-[380px]:text-[9px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
@@ -1981,7 +1993,7 @@ export default function App() {
               {/* Footer */}
               <div className="border-t bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-500">© 2026 PharmaSales Hub • Since 2026</span>
+                  <span className="font-semibold text-slate-500">© 2026 PharmaSales Jobs • Since 2026</span>
                   <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">Verified Jobs</span>
                 </div>
               </div>
@@ -2009,11 +2021,11 @@ export default function App() {
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <div className="flex w-full items-center gap-2.5 rounded-[22px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3 sm:gap-4 sm:p-4">
-                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="block shrink-0 select-none transition active:scale-95">
-                  <img src="/icon-192.png" alt="PharmaSales Hub — The MR to NSM Jobs Network" className="h-14 w-14 rounded-[20px] object-cover shadow-lg min-[420px]:h-16 min-[420px]:w-16 sm:h-[72px] sm:w-[72px]" />
+                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
+                  <img src="/icon-192.png" alt="PharmaSales Jobs — The MR to NSM Jobs Network" className="h-14 w-14 rounded-[20px] object-cover shadow-lg min-[420px]:h-16 min-[420px]:w-16 sm:h-[72px] sm:w-[72px]" />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <h1 className="whitespace-nowrap text-[19px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[23px] sm:text-[28px]">PharmaSales Hub</h1>
+                  <h1 className="whitespace-nowrap text-[19px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[23px] sm:text-[28px]">PharmaSales Jobs</h1>
                   <p className="mt-1.5 whitespace-nowrap text-[9px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[10px] sm:text-xs">The MR to NSM Jobs Network</p>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[9px] font-bold text-white">VERIFIED</span>
@@ -2023,28 +2035,37 @@ export default function App() {
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
-              {/* Two separate role choices, each on its own line with a clear gap. */}
-              <div className="mt-3 space-y-4">
-                <button onClick={() => enterAs('seeker')} className="flex w-full items-center gap-3 rounded-2xl bg-sky-600 p-4 text-left text-white shadow transition hover:bg-sky-700 active:scale-[0.99]">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20"><User className="h-5 w-5" /></span>
-                  <span className="flex-1">
+              {/* Two separate role choices. The blue fill and check mark move to
+                  whichever role is tapped before the login screen opens. */}
+              <div className="mt-3 space-y-4" role="radiogroup" aria-label="Continue as">
+                <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'seeker'} onClick={() => handleWelcomeRoleSelect('seeker')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'seeker' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
+                  <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'bg-white/20 text-white' : 'bg-sky-100 text-sky-700'}`}><User className="h-5 w-5" /></span>
+                  <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR to NSM)</span>
-                    <span className="block text-xs opacity-90">Complete job profile • Find verified vacancies • Apply faster</span>
+                    <span className={`block text-xs transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'text-sky-50' : 'text-slate-500'}`}>Complete job profile • Find verified vacancies • Apply faster</span>
                   </span>
-                  <ChevronRight className="h-5 w-5 shrink-0" />
+                  {welcomeSelectedRole === 'seeker' ? (
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow" aria-label="Selected"><Check className="h-4 w-4" /></span>
+                  ) : (
+                    <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
+                  )}
                 </button>
-                <button onClick={() => enterAs('recruiter')} className="flex w-full items-center gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 text-left text-slate-900 transition hover:bg-slate-50 active:scale-[0.99]">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600"><Building2 className="h-5 w-5" /></span>
-                  <span className="flex-1">
+                <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'recruiter'} onClick={() => handleWelcomeRoleSelect('recruiter')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'recruiter' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
+                  <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-600'}`}><Building2 className="h-5 w-5" /></span>
+                  <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
-                    <span className="block text-xs text-slate-500">Post MR to NSM vacancies • View anonymous candidate profiles • Admin approval</span>
+                    <span className={`block text-xs transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'text-sky-50' : 'text-slate-500'}`}>Post MR to NSM vacancies • View anonymous candidate profiles • Admin approval</span>
                   </span>
-                  <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
+                  {welcomeSelectedRole === 'recruiter' ? (
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow" aria-label="Selected"><Check className="h-4 w-4" /></span>
+                  ) : (
+                    <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
+                  )}
                 </button>
               </div>
 
-              {/* Clear separator: the Founder card stands alone below the two role choices. */}
-              <div className="my-5 flex items-center gap-3" aria-hidden="true">
+              {/* Clear separator and double gap: the Founder card stands alone. */}
+              <div className="my-10 flex items-center gap-3" aria-hidden="true">
                 <span className="h-px flex-1 bg-slate-200" />
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-300" />
                 <span className="h-px flex-1 bg-slate-200" />
@@ -2056,19 +2077,19 @@ export default function App() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1 text-[13px] font-extrabold leading-none"><span className="truncate">M Divakar Reddy</span> <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-sky-600" /></p>
-                  <p className="mt-1 truncate text-[10px] font-bold leading-none text-sky-700">Managed by • App Founder — PharmaSales Hub</p>
+                  <p className="mt-1 truncate text-[10px] font-bold leading-none text-sky-700">Managed by • App Founder — PharmaSales Jobs</p>
                   <p className="mt-1 line-clamp-2 text-[10px] leading-[1.2] text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
                 </div>
               </div>
 
-              <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
+              <p className="mt-10 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
               <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-extrabold text-sky-700">
                 <button type="button" onClick={() => openLegal('privacy')} className="hover:text-sky-900 hover:underline">Privacy Policy</button><span className="text-slate-300">•</span>
                 <button type="button" onClick={() => openLegal('terms')} className="hover:text-sky-900 hover:underline">Terms &amp; Privacy</button><span className="text-slate-300">•</span>
                 <button type="button" onClick={() => openLegal('support')} className="hover:text-sky-900 hover:underline">Contact Support</button>
               </div>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 PharmaSales Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 PharmaSales Jobs • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -2080,11 +2101,11 @@ export default function App() {
               <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
               <div className="mt-3">
                 <div className="flex items-center gap-2.5 rounded-[20px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3">
-                  <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="block shrink-0 select-none transition active:scale-95">
-                    <img src="/icon-192.png" alt="PharmaSales Hub" className="h-12 w-12 rounded-2xl object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
+                  <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
+                    <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-12 w-12 rounded-2xl object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
                   </button>
                   <div className="min-w-0 flex-1">
-                    <p className="whitespace-nowrap text-[18px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[20px]">PharmaSales Hub</p>
+                    <p className="whitespace-nowrap text-[18px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[20px]">PharmaSales Jobs</p>
                     <p className="mt-1 whitespace-nowrap text-[9px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[10px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
@@ -2095,9 +2116,10 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-1 rounded-full bg-slate-100 p-1">
-                <button type="button" onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError('') }} className={`flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold ${entryRole !== 'recruiter' ? 'bg-white text-slate-900 shadow' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker</button>
-                <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className={`flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold ${entryRole === 'recruiter' ? 'bg-white text-slate-900 shadow' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter</button>
+              <div className="relative mt-5 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
+                <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-300 ease-out ${entryRole === 'recruiter' ? 'translate-x-full' : 'translate-x-0'}`} />
+                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError('') }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
               </div>
 
               {authStep === 'mobile' ? (
@@ -2178,7 +2200,7 @@ export default function App() {
               </div>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">PharmaSales Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">PharmaSales Jobs • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -2378,7 +2400,7 @@ export default function App() {
               <BadgeCheck className="h-4 w-4 text-emerald-600" />
             </div>
             <h1 className="mt-4 text-[32px] font-extrabold leading-[0.95] tracking-tight sm:text-[44px]">
-              India’s most <span className="bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent">trusted hub</span> for pharma vacancies from MR to NSM
+              India’s most <span className="bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent">trusted jobs network</span> for pharma vacancies from MR to NSM
             </h1>
             <p className="mt-3 max-w-[640px] text-[15px] leading-relaxed text-slate-600">Verified vacancies for Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles, with masked contact protection & subscription unlocks. Trusted by <b>50,000+ pharma professionals</b> across 700+ HQs and territories. Daily updates from Sun, Cipla, Mankind, Zydus, Alkem & more.</p>
 
@@ -2823,7 +2845,7 @@ export default function App() {
                         <button onClick={() => toggleSave(job.id)} className="flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold sm:hidden">
                           <Bookmark className="h-4 w-4" /> {saved.has(job.id) ? 'Saved' : 'Save'}
                         </button>
-                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} ${job.type} vacancy at ${job.hq} — ${job.ctc} — Contact via PharmaSales Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
+                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} ${job.type} vacancy at ${job.hq} — ${job.ctc} — Contact via PharmaSales Jobs`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
                           <Share2 className="h-4 w-4" /> Share
                         </button>
                       </div>
@@ -3032,7 +3054,7 @@ export default function App() {
               <p className="text-sm font-extrabold">What pharma professionals say</p>
               <div className="mt-3 grid gap-3">
                 {[
-                  { name: 'Rahul K, Hyderabad', role: 'Sun Pharma MR (Placed via Hub)', text: 'Got 3 interviews in a week. Masked contact is genius — no spam, genuine recruiters only.' },
+                  { name: 'Rahul K, Hyderabad', role: 'Sun Pharma MR (Placed via PharmaSales Jobs)', text: 'Got 3 interviews in a week. Masked contact is genius — no spam, genuine recruiters only.' },
                   { name: 'Priya S, Bengaluru', role: 'Cipla Trainee MR', text: 'Free plan + rewarded ad is fair. I watched ad and got recruiter number instantly. Now Pro user!' },
                 ].map(t => (
                   <div key={t.name} className="rounded-xl bg-slate-50 p-3">
@@ -3171,7 +3193,7 @@ export default function App() {
                 <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
-                  <p className="text-sm font-semibold text-sky-700">App Founder — PharmaSales Hub</p>
+                  <p className="text-sm font-semibold text-sky-700">App Founder — PharmaSales Jobs</p>
                   <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ pharma professionals.</p>
                   <div className="mt-2 flex gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">{shouldHideJobSeekerExperience ? 'Candidate contact via Admin only' : '📞 +91 98XXX XXXXX (Pro unlock)'}</span>
@@ -3308,7 +3330,7 @@ export default function App() {
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
               <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
-              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust PharmaSales Hub.</p>
+              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust PharmaSales Jobs.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
           </div>
@@ -3335,7 +3357,7 @@ export default function App() {
                   <div>
                     <p className="text-[10px] font-extrabold tracking-widest text-sky-100">SUPPORT ADMIN</p>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
-                    <p className="text-xs text-sky-100">App Founder — PharmaSales Hub</p>
+                    <p className="text-xs text-sky-100">App Founder — PharmaSales Jobs</p>
                   </div>
                 </div>
                 <button onClick={() => { if (isAdmin) openAdmin('support'); else navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome') }} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{isAdmin ? 'Back to Admin Dashboard' : currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
@@ -3352,12 +3374,12 @@ export default function App() {
           {legalTab !== 'support' ? (
             <article className="mt-5 rounded-[28px] border bg-white p-5 shadow-sm sm:p-8">
               <div className="border-b pb-5">
-                <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} PHARMASALES HUB • THE MR TO NSM JOBS NETWORK</p>
+                <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} PHARMASALES JOBS • THE MR TO NSM JOBS NETWORK</p>
                 <h3 className="mt-2 text-[26px] font-extrabold leading-tight">{legalTab === 'privacy' ? 'Privacy Policy' : 'Terms & Privacy'}</h3>
-                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — PharmaSales Hub</p>
+                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — PharmaSales Jobs</p>
                 <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm leading-relaxed text-sky-900">
                   {legalTab === 'privacy'
-                    ? 'Your privacy matters. This policy explains what information PharmaSales Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
+                    ? 'Your privacy matters. This policy explains what information PharmaSales Jobs collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
                     : 'Please read these terms carefully. They explain account rules, Job Seeker and Recruiter responsibilities, Admin approval, sponsored ads, AI Assistant use, support tickets, prohibited activity and account deletion.'}
                 </div>
               </div>
@@ -3482,10 +3504,10 @@ export default function App() {
           {!isAdmin ? (
             <div className="mx-auto max-w-md">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-sky-100 bg-white px-2.5 py-2 shadow-sm min-[420px]:gap-3 min-[420px]:px-3" aria-label="PharmaSales Hub — The MR to NSM Jobs Network">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-2xl object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-sky-100 bg-white px-2.5 py-2 shadow-sm min-[420px]:gap-3 min-[420px]:px-3" aria-label="PharmaSales Jobs — The MR to NSM Jobs Network">
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-2xl object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
                   <div className="min-w-0">
-                    <p className="truncate text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[18px]">PharmaSales Hub</p>
+                    <p className="truncate text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[18px]">PharmaSales Jobs</p>
                     <p className="mt-1 truncate text-[8px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[9px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
@@ -3497,7 +3519,7 @@ export default function App() {
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
-                  <p className="text-xs text-slate-500">App Founder — PharmaSales Hub • Admin</p>
+                  <p className="text-xs text-slate-500">App Founder — PharmaSales Jobs • Admin</p>
                 </div>
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
@@ -3535,10 +3557,10 @@ export default function App() {
           ) : (
             <div>
               <div className="mb-4 flex flex-wrap items-center gap-3">
-                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Hub Admin overview" className="flex min-w-0 items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-2 text-left shadow-sm">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
+                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="flex min-w-0 items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-2 text-left shadow-sm">
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
                   <span className="min-w-0">
-                    <span className="block truncate text-[18px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</span>
+                    <span className="block truncate text-[18px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Jobs</span>
                     <span className="mt-1 block truncate text-[9px] font-semibold leading-none tracking-wide text-sky-700">The MR to NSM Jobs Network</span>
                   </span>
                 </button>
@@ -3691,7 +3713,7 @@ export default function App() {
                           <span className="text-slate-500">{job.submittedAt}</span>
                           <span className="ml-auto flex gap-2">
                             <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 font-bold text-white"><Phone className="h-3 w-3" /> Call to Verify</a>
-                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from PharmaSales Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from PharmaSales Jobs. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           </span>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -3735,7 +3757,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from PharmaSales Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from PharmaSales Jobs. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
                           <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
                         </div>
@@ -3809,7 +3831,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${ticket.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from PharmaSales Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from PharmaSales Jobs. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <a href={buildAdminReplyMailto(ticket)} className="flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"><Mail className="h-3 w-3" /> Email Reply</a>
                           <div className="ml-auto flex flex-wrap gap-1.5">
                             {[
@@ -3890,8 +3912,8 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-3 py-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover" /><div className="min-w-0"><p className="truncate text-[17px] font-extrabold leading-none text-white">PharmaSales Hub</p><p className="mt-1 truncate text-[9px] font-semibold leading-none tracking-wide text-sky-300">The MR to NSM Jobs Network</p></div></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Hub — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Hub — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
+              <div className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-3 py-2"><img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-xl object-cover" /><div className="min-w-0"><p className="truncate text-[17px] font-extrabold leading-none text-white">PharmaSales Jobs</p><p className="mt-1 truncate text-[9px] font-semibold leading-none tracking-wide text-sky-300">The MR to NSM Jobs Network</p></div></div>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Jobs — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Jobs — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
             </div>
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
@@ -3927,9 +3949,9 @@ export default function App() {
             <div className="rounded-2xl bg-white/10 p-4">
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
-              <p className="text-xs opacity-80">App Founder — PharmaSales Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
+              <p className="text-xs opacity-80">App Founder — PharmaSales Jobs • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
-              <p className="mt-3 text-xs opacity-80">© 2026 PharmaSales Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
+              <p className="mt-3 text-xs opacity-80">© 2026 PharmaSales Jobs • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">Verified Jobs</span>
                 <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">Since 2026</span>
@@ -4103,7 +4125,7 @@ export default function App() {
             <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[980px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
-                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Hub</p>
+                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Jobs</p>
                   <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>

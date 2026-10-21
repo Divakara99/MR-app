@@ -1,8 +1,8 @@
 {
   "packageId": "com.mrvacancieshub.app",
   "host": "mrvacancieshub.in",
-  "name": "PharmaSales Hub",
-  "launcherName": "PharmaSales Hub",
+  "name": "PharmaSales Jobs",
+  "launcherName": "PharmaSales Jobs",
   "display": "standalone",
   "themeColor": "#0284c7",
   "navigationColor": "#0284c7",

@@ -1,4 +1,4 @@
--- PharmaSales Hub — Supabase account backend
+-- PharmaSales Jobs — Supabase account backend
 -- Run this once in Supabase Dashboard → SQL Editor.
 --
 -- Account flow used by the app:

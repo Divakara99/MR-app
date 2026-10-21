@@ -30,7 +30,7 @@ Replace test IDs in `src/App.tsx` & `AndroidManifest.xml`:
 ```
 
 ## 4. Play Console Steps
-- Create app: `PharmaSales Hub — The MR to NSM Jobs Network`, package `com.mrvacancieshub.app`
+- Create app: `PharmaSales Jobs — The MR to NSM Jobs Network`, package `com.mrvacancieshub.app`
 - Upload `app-release-bundle.aab`
 - Complete: Data Safety (contact, app activity, ads), Content Rating questionnaire (Everyone), Ads declaration (Yes), Privacy Policy URL (`https://yourdomain.com/privacy-policy.html`), In-app products (subscriptions: starter_monthly, pro_monthly (Job Seeker plans only; no Recruiter plan)), Screenshots (1080x1920) + Feature graphic 1024x500 + Icon 512x512.
 - Digital Asset Links: copy SHA256 from Play Console → Signing → paste into `.well-known/assetlinks.json`, redeploy, verify at `https://digitalassetlinks.googleapis.com`.
