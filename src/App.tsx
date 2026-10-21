@@ -2039,16 +2039,14 @@ export default function App() {
                   <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                 </button>
               </div>
-              <div className="mt-5 flex items-center gap-3 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-3 text-left">
+              <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 px-3 py-2.5 text-left">
                 <button onClick={() => handleSecretTap()} aria-label="M Divakar Reddy — Founder" className="shrink-0 select-none transition active:scale-95">
-                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Founder" className="h-14 w-14 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Founder" className="h-11 w-11 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[9px] font-extrabold tracking-widest text-sky-700">MANAGED BY • APP FOUNDER</p>
-                  <p className="flex items-center gap-1 text-[15px] font-extrabold leading-tight">M Divakar Reddy <BadgeCheck className="h-4 w-4 shrink-0 text-sky-600" /></p>
-                  <p className="text-[11px] font-semibold text-sky-700">App Founder — PharmaSales Hub</p>
-                  <p className="text-[11px] leading-snug text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
-                  <p className="mt-1 text-[10px] font-semibold text-slate-500">50K+ Professionals • 2,400+ Verified Jobs • 18K Placements</p>
+                  <p className="flex items-center gap-1 text-[13px] font-extrabold leading-none"><span className="truncate">M Divakar Reddy</span> <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-sky-600" /></p>
+                  <p className="mt-1 truncate text-[10px] font-bold leading-none text-sky-700">Managed by • App Founder — PharmaSales Hub</p>
+                  <p className="mt-1 line-clamp-2 text-[10px] leading-[1.2] text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
                 </div>
               </div>
 
