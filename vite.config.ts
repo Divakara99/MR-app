@@ -9,16 +9,17 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon.svg', 'apple-touch-icon.png'],
+      includeAssets: ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'pharmasales-hub-logo.png'],
       manifest: {
-        name: 'MR to NSM Vacancies Hub',
-        short_name: 'MR to NSM',
-        description: 'Verified pharma field-force vacancies from Trainee MR to ASM, RSM, ZSM and NSM. Managed by M Divakar Reddy.',
+        name: 'PharmaSales Hub',
+        short_name: 'PharmaSales Hub',
+        description: 'PharmaSales Hub — The MR to NSM Jobs Network. Verified pharma field-force vacancies from Trainee MR to ASM, RSM, ZSM and NSM. Managed by M Divakar Reddy.',
         theme_color: '#0284c7',
         background_color: '#f0f7ff',
         display: 'standalone',
         icons: [
-          { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
         ]
       },
       workbox: {

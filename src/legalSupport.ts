@@ -25,8 +25,8 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
   {
     title: '1. Who We Are',
     bullets: [
-      'MR to NSM Vacancies Hub is a pharma field-force vacancy platform operating since 2026 for roles from Trainee MR and Field MR to Senior MR, ASM, RSM, ZSM and NSM.',
-      'The app is managed by M Divakar Reddy, App Founder — MR to NSM Vacancies Hub.',
+      'PharmaSales Hub — The MR to NSM Jobs Network — is a pharma field-force vacancy platform operating since 2026 for roles from Trainee MR and Field MR to Senior MR, ASM, RSM, ZSM and NSM.',
+      'The app is managed by M Divakar Reddy, App Founder — PharmaSales Hub.',
       `For privacy questions, data requests or support, email ${SUPPORT_EMAIL} or raise a support ticket from the AI Assistant section in the app.`,
     ],
   },
@@ -129,7 +129,7 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
   {
     title: '12. Children & External Links',
     bullets: [
-      'MR to NSM Vacancies Hub is intended for users who are 18 years or older and are seeking or offering employment.',
+      'PharmaSales Hub is intended for users who are 18 years or older and are seeking or offering employment.',
       'The app may link to phone, WhatsApp, email or external company services. Their privacy practices are governed by their own policies, and we are not responsible for external websites or apps.',
       'Never pay money to any person promising a job. Report suspicious vacancy or payment requests through the support ticket option in AI Assistant.',
     ],
@@ -139,7 +139,7 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
     bullets: [
       `This Privacy Policy is effective from ${LEGAL_POLICY_DATE}. We may update it when app features, legal requirements or data practices change.`,
       'The latest version will be available inside the app under Legal & Support → Privacy Policy.',
-      `Privacy contact: M Divakar Reddy, App Founder — MR to NSM Vacancies Hub • Support email: ${SUPPORT_EMAIL}.`,
+      `Privacy contact: M Divakar Reddy, App Founder — PharmaSales Hub • Support email: ${SUPPORT_EMAIL}.`,
     ],
   },
 ]
@@ -148,7 +148,7 @@ export const TERMS_SECTIONS: LegalSection[] = [
   {
     title: '1. Acceptance & Eligibility',
     bullets: [
-      'By using MR to NSM Vacancies Hub, you agree to these Terms & Privacy conditions and the Privacy Policy available inside the app.',
+      'By using PharmaSales Hub, you agree to these Terms & Privacy conditions and the Privacy Policy available inside the app.',
       'You must be at least 18 years old and legally capable of seeking or offering employment in India.',
       'You must provide true, current and complete information and update it when it changes.',
     ],
@@ -192,7 +192,7 @@ export const TERMS_SECTIONS: LegalSection[] = [
   {
     title: '6. Vacancy Verification & Job Safety',
     bullets: [
-      'Vacancies are reviewed before going LIVE, but MR to NSM Vacancies Hub cannot guarantee that every company, recruiter, salary, vacancy or interview claim is complete or remains available.',
+      'Vacancies are reviewed before going LIVE, but PharmaSales Hub cannot guarantee that every company, recruiter, salary, vacancy or interview claim is complete or remains available.',
       'Never pay money for a job, interview, offer letter, ID card, training kit or joining process. Genuine employers should not ask candidates to make such payments.',
       'Do not share bank details, OTPs, passwords or unnecessary original documents with any recruiter.',
       `Report a wrong or suspicious vacancy through the AI Assistant support ticket option or email ${SUPPORT_EMAIL}.`,
@@ -239,8 +239,8 @@ export const TERMS_SECTIONS: LegalSection[] = [
   {
     title: '11. Content, Ownership & Liability',
     bullets: [
-      'The MR to NSM Vacancies Hub name, app design and original app content belong to MR to NSM Vacancies Hub / M Divakar Reddy unless otherwise stated.',
-      'By submitting a profile, vacancy or support information, you permit MR to NSM Vacancies Hub to store and display it as needed to operate the services described in the Privacy Policy.',
+      'The PharmaSales Hub name, app design and original app content belong to PharmaSales Hub / M Divakar Reddy unless otherwise stated.',
+      'By submitting a profile, vacancy or support information, you permit PharmaSales Hub to store and display it as needed to operate the services described in the Privacy Policy.',
       'The app is provided on an “as available” basis. We are not responsible for a Recruiter’s hiring decision, a candidate’s statements, interview outcomes, salary negotiations, joining, or losses caused by relying on inaccurate third-party information.',
       'Nothing in these Terms excludes liability that cannot legally be excluded under applicable Indian law.',
     ],
@@ -251,7 +251,7 @@ export const TERMS_SECTIONS: LegalSection[] = [
       `These Terms & Privacy conditions are effective from ${LEGAL_POLICY_DATE} and may be updated inside the app when features or legal requirements change.`,
       'Continued use after an update means you accept the revised Terms. Material changes should be reviewed under Legal & Support in the app.',
       'These Terms are governed by the laws of India. Users should first contact support to resolve a concern informally and in good faith.',
-      `Support: MR to NSM Vacancies Hub, managed by M Divakar Reddy • Email: ${SUPPORT_EMAIL} • Support tickets: AI Assistant → Raise Support Ticket.`,
+      `Support: PharmaSales Hub, managed by M Divakar Reddy • Email: ${SUPPORT_EMAIL} • Support tickets: AI Assistant → Raise Support Ticket.`,
     ],
   },
 ]

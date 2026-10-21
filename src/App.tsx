@@ -165,8 +165,8 @@ const TIERS = [
   { id: 'pro' as Tier, name: 'Pro', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
-const SEEKER_AI_WELCOME = 'Hi! I’m your MR to NSM AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
-const RECRUITER_AI_WELCOME = 'Hi! I’m your MR to NSM Vacancies Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
+const SEEKER_AI_WELCOME = 'Hi! I’m your PharmaSales AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
+const RECRUITER_AI_WELCOME = 'Hi! I’m your PharmaSales Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
 const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
 
 // Helpers
@@ -903,15 +903,15 @@ export default function App() {
     navigate('candidates')
   }
   const buildSupportMailto = (ticket?: SupportTicket) => {
-    const subject = ticket ? `MR to NSM Vacancies Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'MR to NSM Vacancies Hub Support Request'
+    const subject = ticket ? `PharmaSales Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'PharmaSales Hub Support Request'
     const body = ticket
-      ? ['Hello MR to NSM Vacancies Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
-      : ['Hello MR to NSM Vacancies Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
+      ? ['Hello PharmaSales Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
+      : ['Hello PharmaSales Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
     return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const buildAdminReplyMailto = (ticket: SupportTicket) => {
-    const subject = `Update on your MR to NSM Vacancies Hub support ticket ${ticket.ticketNo}`
-    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — MR to NSM Vacancies Hub'].join('\n')
+    const subject = `Update on your PharmaSales Hub support ticket ${ticket.ticketNo}`
+    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — PharmaSales Hub'].join('\n')
     return `mailto:${ticket.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const openSupportTicket = (source: SupportTicketSource = 'ai') => {
@@ -1484,7 +1484,7 @@ export default function App() {
       return
     }
     if (lowerPrompt.includes('contact support') || lowerPrompt.includes('support email') || lowerPrompt === 'support') {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact MR to NSM Vacancies Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
+      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact PharmaSales Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
       openSupportTicket('ai')
       return
     }
@@ -1664,15 +1664,13 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
             <button onClick={() => { if (!handleSecretTap()) navigate(shouldHideJobSeekerExperience ? 'recruiters' : 'home') }} className="flex select-none items-center gap-3 text-left">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600 text-white shadow-md">
-                <Briefcase className="h-5 w-5" />
-              </div>
+              <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow-md" />
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">MR to NSM Vacancies Hub</p>
+                  <p className="text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">PharmaSales Hub</p>
                   <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white sm:inline-flex">VERIFIED</span>
                 </div>
-                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">MR to NSM Pharma Jobs • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
+                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">The MR to NSM Jobs Network • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
               </div>
             </button>
 
@@ -1795,10 +1793,10 @@ export default function App() {
               {/* Header */}
               <div className="flex items-center justify-between border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sky-600"><Briefcase className="h-5 w-5" /></div>
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow" />
                   <div>
-                    <p className="text-sm font-extrabold leading-none">MR to NSM Vacancies Hub</p>
-                    <p className="text-[11px] font-semibold opacity-90">M Divakar Reddy • Verified</p>
+                    <p className="text-sm font-extrabold leading-none">PharmaSales Hub</p>
+                    <p className="text-[11px] font-semibold opacity-90">The MR to NSM Jobs Network • Verified</p>
                   </div>
                 </div>
                 <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
@@ -1918,7 +1916,7 @@ export default function App() {
               {/* Footer */}
               <div className="border-t bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-500">© 2026 MR to NSM Vacancies Hub • Since 2026</span>
+                  <span className="font-semibold text-slate-500">© 2026 PharmaSales Hub • Since 2026</span>
                   <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">Verified Jobs</span>
                 </div>
               </div>
@@ -1946,15 +1944,15 @@ export default function App() {
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <div className="text-center">
-                <button onClick={() => handleSecretTap()} aria-label="MR to NSM Vacancies Hub" className="mx-auto flex h-[72px] w-[72px] select-none items-center justify-center rounded-3xl bg-sky-600 text-white shadow-lg transition active:scale-95">
-                  <Briefcase className="h-9 w-9" />
+                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
+                  <img src="/icon-192.png" alt="PharmaSales Hub — The MR to NSM Jobs Network" className="h-[76px] w-[76px] rounded-[24px] object-cover shadow-lg" />
                 </button>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <h1 className="text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">MR to NSM Vacancies Hub</h1>
+                  <h1 className="text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">PharmaSales Hub</h1>
                   <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">SINCE 2026</span>
                 </div>
-                <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Field-Force Jobs — MR to NSM</p>
+                <p className="mt-1.5 text-xs font-semibold text-slate-500">The MR to NSM Jobs Network</p>
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
@@ -1983,7 +1981,7 @@ export default function App() {
                 <div className="min-w-0 flex-1">
                   <p className="text-[9px] font-extrabold tracking-widest text-sky-700">MANAGED BY • APP FOUNDER</p>
                   <p className="flex items-center gap-1 text-[15px] font-extrabold leading-tight">M Divakar Reddy <BadgeCheck className="h-4 w-4 shrink-0 text-sky-600" /></p>
-                  <p className="text-[11px] font-semibold text-sky-700">App Founder — MR to NSM Vacancies Hub</p>
+                  <p className="text-[11px] font-semibold text-sky-700">App Founder — PharmaSales Hub</p>
                   <p className="text-[11px] leading-snug text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
                   <p className="mt-1 text-[10px] font-semibold text-slate-500">50K+ Professionals • 2,400+ Verified Jobs • 18K Placements</p>
                 </div>
@@ -1996,7 +1994,7 @@ export default function App() {
                 <button type="button" onClick={() => openLegal('support')} className="hover:text-sky-900 hover:underline">Contact Support</button>
               </div>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR to NSM Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 PharmaSales Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -2007,8 +2005,8 @@ export default function App() {
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
               <div className="mt-3 text-center">
-                <button onClick={() => handleSecretTap()} aria-label="MR to NSM Vacancies Hub" className="mx-auto flex h-14 w-14 select-none items-center justify-center rounded-2xl bg-sky-600 text-white shadow-lg transition active:scale-95">
-                  <Briefcase className="h-7 w-7" />
+                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-14 w-14 rounded-2xl object-cover shadow-lg" />
                 </button>
                 <h1 className="mt-3 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
@@ -2098,7 +2096,7 @@ export default function App() {
               </div>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR to NSM Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">PharmaSales Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -2743,7 +2741,7 @@ export default function App() {
                         <button onClick={() => toggleSave(job.id)} className="flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold sm:hidden">
                           <Bookmark className="h-4 w-4" /> {saved.has(job.id) ? 'Saved' : 'Save'}
                         </button>
-                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} ${job.type} vacancy at ${job.hq} — ${job.ctc} — Contact via MR to NSM Vacancies Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
+                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} ${job.type} vacancy at ${job.hq} — ${job.ctc} — Contact via PharmaSales Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
                           <Share2 className="h-4 w-4" /> Share
                         </button>
                       </div>
@@ -2838,7 +2836,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white"><Sparkles className="h-5 w-5" /></div>
               <div>
-                <h3 className="text-lg font-extrabold">MR to NSM AI Assistant</h3>
+                <h3 className="text-lg font-extrabold">PharmaSales AI Assistant</h3>
                 <p className="text-xs font-semibold text-slate-500">{shouldHideJobSeekerExperience ? 'Vacancy writing • Interview questions • Shortlisting • Support tickets' : 'Resume • Interview • RCPA • Salary • Support tickets'}</p>
               </div>
               <span className="ml-auto rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">ONLINE</span>
@@ -3091,7 +3089,7 @@ export default function App() {
                 <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
-                  <p className="text-sm font-semibold text-sky-700">App Founder — MR to NSM Vacancies Hub</p>
+                  <p className="text-sm font-semibold text-sky-700">App Founder — PharmaSales Hub</p>
                   <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ pharma professionals.</p>
                   <div className="mt-2 flex gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">{shouldHideJobSeekerExperience ? 'Candidate contact via Admin only' : '📞 +91 98XXX XXXXX (Pro unlock)'}</span>
@@ -3228,7 +3226,7 @@ export default function App() {
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
               <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
-              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust MR to NSM Vacancies Hub.</p>
+              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust PharmaSales Hub.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
           </div>
@@ -3255,7 +3253,7 @@ export default function App() {
                   <div>
                     <p className="text-[10px] font-extrabold tracking-widest text-sky-100">SUPPORT ADMIN</p>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
-                    <p className="text-xs text-sky-100">App Founder — MR to NSM Vacancies Hub</p>
+                    <p className="text-xs text-sky-100">App Founder — PharmaSales Hub</p>
                   </div>
                 </div>
                 <button onClick={() => navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
@@ -3274,10 +3272,10 @@ export default function App() {
               <div className="border-b pb-5">
                 <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} MR VACANCIES HUB • SINCE 2026</p>
                 <h3 className="mt-2 text-[26px] font-extrabold leading-tight">{legalTab === 'privacy' ? 'Privacy Policy' : 'Terms & Privacy'}</h3>
-                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — MR to NSM Vacancies Hub</p>
+                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — PharmaSales Hub</p>
                 <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm leading-relaxed text-sky-900">
                   {legalTab === 'privacy'
-                    ? 'Your privacy matters. This policy explains what information MR to NSM Vacancies Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
+                    ? 'Your privacy matters. This policy explains what information PharmaSales Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
                     : 'Please read these terms carefully. They explain account rules, Job Seeker and Recruiter responsibilities, Admin approval, sponsored ads, AI Assistant use, support tickets, prohibited activity and account deletion.'}
                 </div>
               </div>
@@ -3407,7 +3405,7 @@ export default function App() {
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
-                  <p className="text-xs text-slate-500">App Founder — MR to NSM Vacancies Hub • Admin</p>
+                  <p className="text-xs text-slate-500">App Founder — PharmaSales Hub • Admin</p>
                 </div>
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
@@ -3591,7 +3589,7 @@ export default function App() {
                           <span className="text-slate-500">{job.submittedAt}</span>
                           <span className="ml-auto flex gap-2">
                             <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 font-bold text-white"><Phone className="h-3 w-3" /> Call to Verify</a>
-                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from MR to NSM Vacancies Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from PharmaSales Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           </span>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -3635,7 +3633,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from MR to NSM Vacancies Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from PharmaSales Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
                           <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
                         </div>
@@ -3709,7 +3707,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${ticket.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from MR to NSM Vacancies Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from PharmaSales Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <a href={buildAdminReplyMailto(ticket)} className="flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"><Mail className="h-3 w-3" /> Email Reply</a>
                           <div className="ml-auto flex flex-wrap gap-1.5">
                             {[
@@ -3790,8 +3788,8 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR to NSM Vacancies Hub</p></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'Post verified MR to NSM vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'India’s trusted job app for pharma field-force roles from MR to NSM — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.'}</p>
+              <div className="flex items-center gap-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-9 w-9 rounded-xl object-cover" /><p className="font-extrabold text-white">PharmaSales Hub</p></div>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Hub — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Hub — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
             </div>
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
@@ -3827,9 +3825,9 @@ export default function App() {
             <div className="rounded-2xl bg-white/10 p-4">
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
-              <p className="text-xs opacity-80">App Founder — MR to NSM Vacancies Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
+              <p className="text-xs opacity-80">App Founder — PharmaSales Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
-              <p className="mt-3 text-xs opacity-80">© 2026 MR to NSM Vacancies Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
+              <p className="mt-3 text-xs opacity-80">© 2026 PharmaSales Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">Verified Jobs</span>
                 <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">Since 2026</span>
@@ -4003,7 +4001,7 @@ export default function App() {
             <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[980px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
-                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — MR to NSM Vacancies Hub</p>
+                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Hub</p>
                   <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>

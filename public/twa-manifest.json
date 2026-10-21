@@ -1,8 +1,8 @@
 {
   "packageId": "com.mrvacancieshub.app",
   "host": "mrvacancieshub.in",
-  "name": "MR to NSM Vacancies Hub",
-  "launcherName": "MR to NSM",
+  "name": "PharmaSales Hub",
+  "launcherName": "PharmaSales Hub",
   "display": "standalone",
   "themeColor": "#0284c7",
   "navigationColor": "#0284c7",

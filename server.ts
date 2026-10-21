@@ -41,9 +41,9 @@ app.post('/api/gemini', async (req, res) => {
       } else if (lower.includes('shortlist') || lower.includes('candidate') || lower.includes('screen')) {
         mock = `**Candidate shortlist checklist:**\n• Desired role matches your vacancy\n• HQ/state is workable without relocation risk\n• Experience/company/division fit\n• Current vs expected package is realistic\n• Qualification and two-wheeler confirmed\n• Notice period / immediate joining checked\n\nOpen **Candidates List**, tap a row to view anonymous details, and request contact through Admin after shortlisting.`;
       } else if (lower.includes('plan') || lower.includes('subscription') || lower.includes('pricing') || lower.includes('price')) {
-        mock = `Recruiters do **not** need a subscription plan on MR to NSM Vacancies Hub. Free, Starter and Pro are Job Seeker plans for job search, contact reveals and Apply Now. As a Recruiter, you can register free, post vacancies for Admin approval, and use the Candidates List.`;
+        mock = `Recruiters do **not** need a subscription plan on PharmaSales Hub. Free, Starter and Pro are Job Seeker plans for job search, contact reveals and Apply Now. As a Recruiter, you can register free, post vacancies for Admin approval, and use the Candidates List.`;
       } else {
-        mock = `Hi! I'm your MR to NSM Vacancies Hub recruiter assistant 🤝\n\nI can help with:\n• Writing a vacancy / JD for MR to NSM roles\n• Interview questions for pharma field-force candidates\n• Candidate shortlist checklists\n• Improving vacancy response\n\nTry: \"Write ASM vacancy JD for Hyderabad HQ\" or \"Candidate shortlist checklist\".`;
+        mock = `Hi! I'm your PharmaSales Hub recruiter assistant 🤝\n\nI can help with:\n• Writing a vacancy / JD for MR to NSM roles\n• Interview questions for pharma field-force candidates\n• Candidate shortlist checklists\n• Improving vacancy response\n\nTry: \"Write ASM vacancy JD for Hyderabad HQ\" or \"Candidate shortlist checklist\".`;
       }
       return res.json({ text: mock, mocked: true });
     }
@@ -54,7 +54,7 @@ app.post('/api/gemini', async (req, res) => {
     } else if (lower.includes('salary') || lower.includes('ctc')) {
       mock = `**Pharma Field-Force Salary Insights (India):**\n• Trainee/Fresher MR: ₹2.4 - 3.6 LPA + TA/DA\n• Field MR (2-5 yrs): ₹4 - 6.5 LPA + incentives\n• Senior MR: ₹5.5 - 7.5 LPA + incentives\n• ASM: ₹7 - 10 LPA + car allowance/incentives\n• RSM: ₹10 - 15 LPA + car/incentives\n• ZSM: ₹14 - 22 LPA + car/leadership incentives\n• NSM: ₹25 - 40 LPA + car/leadership incentives\nActual CTC depends on company, therapy area, HQ/territory and performance history.`;
     } else {
-      mock = `Hi! I'm your MR to NSM Vacancies Hub AI Assistant 🤝\n\nI can help you with:\n• Finding best vacancies matching your HQ & experience\n• Resume & cover letter for Pharma jobs\n• Interview preparation & detailing practice\n• Salary & growth roadmap\n\nTry: "Suggest vacancies for B.Pharm fresher in Hyderabad" or "Prepare me for Mankind MR interview"`;
+      mock = `Hi! I'm your PharmaSales Hub AI Assistant 🤝\n\nI can help you with:\n• Finding best vacancies matching your HQ & experience\n• Resume & cover letter for Pharma jobs\n• Interview preparation & detailing practice\n• Salary & growth roadmap\n\nTry: "Suggest vacancies for B.Pharm fresher in Hyderabad" or "Prepare me for Mankind MR interview"`;
     }
     return res.json({ text: mock, mocked: true });
   }
@@ -74,8 +74,8 @@ app.post('/api/gemini', async (req, res) => {
       contents,
       config: {
         systemInstruction: isRecruiterAudience
-          ? `You are MR to NSM Vacancies Hub AI for a logged-in Recruiter in India. The Recruiter gives jobs; they are not job searching. Help only with vacancy writing, hiring process, field-force interview questions across Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles, candidate screening/shortlisting and support. Do not recommend job searching, Apply Now, saved jobs or Free/Starter/Pro subscriptions to the Recruiter. Clearly state that Recruiters do not need a plan if pricing is mentioned. Candidate name, mobile and email remain hidden; contact goes through Admin after candidate consent. Be concise and practical. Managed by M Divakar Reddy.`
-          : `You are MR to NSM Vacancies Hub AI — expert assistant for pharma field-force professionals in India seeking Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles. You help with job search, resume, interview prep, pharma knowledge, RCPA, detailing, territory planning and sales-leadership growth. Be concise, friendly, use Indian pharma context (Sun, Cipla, Dr Reddy's, Mankind, Alkem, Torrent, Zydus, Lupin, Abbott, Glenmark, etc). Managed by M Divakar Reddy.`,
+          ? `You are PharmaSales Hub AI for a logged-in Recruiter in India. The Recruiter gives jobs; they are not job searching. Help only with vacancy writing, hiring process, field-force interview questions across Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles, candidate screening/shortlisting and support. Do not recommend job searching, Apply Now, saved jobs or Free/Starter/Pro subscriptions to the Recruiter. Clearly state that Recruiters do not need a plan if pricing is mentioned. Candidate name, mobile and email remain hidden; contact goes through Admin after candidate consent. Be concise and practical. Managed by M Divakar Reddy.`
+          : `You are PharmaSales Hub AI — expert assistant for pharma field-force professionals in India seeking Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles. You help with job search, resume, interview prep, pharma knowledge, RCPA, detailing, territory planning and sales-leadership growth. Be concise, friendly, use Indian pharma context (Sun, Cipla, Dr Reddy's, Mankind, Alkem, Torrent, Zydus, Lupin, Abbott, Glenmark, etc). Managed by M Divakar Reddy.`,
       },
     });
     const text = (response as any).text || (response as any).candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
