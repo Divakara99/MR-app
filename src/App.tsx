@@ -1728,14 +1728,14 @@ export default function App() {
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Hub — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-3 text-left">
-              <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow-md" />
+            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Hub — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
+              <img src="/icon-192.png" alt="PharmaSales Hub" className="h-8 w-8 shrink-0 rounded-xl object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="whitespace-nowrap text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">PharmaSales Hub</p>
-                  <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white sm:inline-flex">VERIFIED</span>
+                  <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[380px]:text-[17px] sm:text-[20px]">PharmaSales Hub</p>
+                  <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white xl:inline-flex">VERIFIED</span>
                 </div>
-                <p className="mt-1 whitespace-nowrap text-[9px] font-bold leading-none text-sky-700 sm:text-[11px]">The MR to NSM Jobs Network</p>
+                <p className="mt-0.5 whitespace-nowrap text-[7.5px] font-semibold leading-none tracking-wide text-sky-700 min-[380px]:text-[8px] sm:text-[10px]">The MR to NSM Jobs Network</p>
               </div>
             </button>
 
@@ -1856,15 +1856,15 @@ export default function App() {
               className="fixed right-0 top-0 z-50 flex h-[100dvh] w-[86%] max-w-[360px] flex-col bg-white shadow-2xl lg:hidden"
             >
               {/* Header */}
-              <div className="flex items-center justify-between border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
-                <div className="flex items-center gap-3">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow" />
-                  <div>
-                    <p className="text-sm font-extrabold leading-none">PharmaSales Hub</p>
-                    <p className="mt-1 text-[11px] font-bold leading-none opacity-95">The MR to NSM Jobs Network</p>
+              <div className="flex items-center justify-between gap-3 border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
+                <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur min-[380px]:gap-3 min-[380px]:px-3">
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[16px] font-extrabold leading-none min-[380px]:text-[17px]">PharmaSales Hub</p>
+                    <p className="mt-1 truncate text-[8.5px] font-semibold leading-none tracking-wide text-sky-50 min-[380px]:text-[9px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
-                <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
+                <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -2008,15 +2008,17 @@ export default function App() {
         <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
-              <div className="text-center">
-                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
-                  <img src="/icon-192.png" alt="PharmaSales Hub — The MR to NSM Jobs Network" className="h-[76px] w-[76px] rounded-[24px] object-cover shadow-lg" />
+              <div className="flex w-full items-center gap-2.5 rounded-[22px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3 sm:gap-4 sm:p-4">
+                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="block shrink-0 select-none transition active:scale-95">
+                  <img src="/icon-192.png" alt="PharmaSales Hub — The MR to NSM Jobs Network" className="h-14 w-14 rounded-[20px] object-cover shadow-lg min-[420px]:h-16 min-[420px]:w-16 sm:h-[72px] sm:w-[72px]" />
                 </button>
-                <h1 className="mt-3 text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">PharmaSales Hub</h1>
-                <p className="mt-1 text-xs font-bold text-sky-700">The MR to NSM Jobs Network</p>
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-                  <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
-                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">SINCE 2026</span>
+                <div className="min-w-0 flex-1">
+                  <h1 className="whitespace-nowrap text-[19px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[23px] sm:text-[28px]">PharmaSales Hub</h1>
+                  <p className="mt-1.5 whitespace-nowrap text-[9px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[10px] sm:text-xs">The MR to NSM Jobs Network</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[9px] font-bold text-white">VERIFIED</span>
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-extrabold text-sky-700">SINCE 2026</span>
+                  </div>
                 </div>
               </div>
 
@@ -2067,15 +2069,21 @@ export default function App() {
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
-              <div className="mt-3 text-center">
-                <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-14 w-14 rounded-2xl object-cover shadow-lg" />
-                </button>
-                <p className="mt-3 text-[16px] font-extrabold leading-none tracking-tight">PharmaSales Hub</p>
-                <p className="mt-1 text-[11px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</p>
-                <h1 className="mt-4 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
-                <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
+              <div className="mt-3">
+                <div className="flex items-center gap-2.5 rounded-[20px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3">
+                  <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="block shrink-0 select-none transition active:scale-95">
+                    <img src="/icon-192.png" alt="PharmaSales Hub" className="h-12 w-12 rounded-2xl object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="whitespace-nowrap text-[18px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[20px]">PharmaSales Hub</p>
+                    <p className="mt-1 whitespace-nowrap text-[9px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[10px]">The MR to NSM Jobs Network</p>
+                  </div>
+                </div>
+                <div className="text-center">
+                  <h1 className="mt-5 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
+                </div>
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-1 rounded-full bg-slate-100 p-1">
@@ -3465,11 +3473,11 @@ export default function App() {
           {!isAdmin ? (
             <div className="mx-auto max-w-md">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3" aria-label="PharmaSales Hub — The MR to NSM Jobs Network">
-                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-sky-100 bg-white px-2.5 py-2 shadow-sm min-[420px]:gap-3 min-[420px]:px-3" aria-label="PharmaSales Hub — The MR to NSM Jobs Network">
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-2xl object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</p>
-                    <p className="mt-1 whitespace-nowrap text-[10px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</p>
+                    <p className="truncate text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[18px]">PharmaSales Hub</p>
+                    <p className="mt-1 truncate text-[8px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[9px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
                 <button onClick={handleExitAdminLogin} className="flex shrink-0 items-center gap-1 rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-slate-600 shadow-sm hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
@@ -3518,11 +3526,11 @@ export default function App() {
           ) : (
             <div>
               <div className="mb-4 flex flex-wrap items-center gap-3">
-                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Hub Admin overview" className="flex min-w-0 items-center gap-3 text-left">
+                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Hub Admin overview" className="flex min-w-0 items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-2 text-left shadow-sm">
                   <img src="/icon-192.png" alt="PharmaSales Hub" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
                   <span className="min-w-0">
-                    <span className="block whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</span>
-                    <span className="mt-1 block whitespace-nowrap text-[10px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</span>
+                    <span className="block truncate text-[18px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</span>
+                    <span className="mt-1 block truncate text-[9px] font-semibold leading-none tracking-wide text-sky-700">The MR to NSM Jobs Network</span>
                   </span>
                 </button>
                 <span className="ml-auto rounded-full bg-slate-900 px-3 py-1.5 text-[10px] font-extrabold tracking-widest text-white">ADMIN WORKSPACE</span>
@@ -3873,7 +3881,7 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="flex items-center gap-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-9 w-9 rounded-xl object-cover" /><div><p className="font-extrabold leading-none text-white">PharmaSales Hub</p><p className="mt-1 text-[10px] font-bold leading-none text-sky-300">The MR to NSM Jobs Network</p></div></div>
+              <div className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-3 py-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover" /><div className="min-w-0"><p className="truncate text-[17px] font-extrabold leading-none text-white">PharmaSales Hub</p><p className="mt-1 truncate text-[9px] font-semibold leading-none tracking-wide text-sky-300">The MR to NSM Jobs Network</p></div></div>
               <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Hub — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Hub — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
             </div>
             <div>
