@@ -523,7 +523,6 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
-  const welcomeRoleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const remoteSessionRefreshRef = useRef(false)
   const authLookupMobileRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -536,7 +535,7 @@ export default function App() {
   // Welcome, Auth, both Admin states, and guest Legal are isolated screens.
   // They must not expose the normal Jobs/Home/Recruiter navigation shell.
   const isIsolatedShellPage = page === 'welcome' || page === 'auth' || page === 'admin' || (page === 'legal' && !hasAuthenticated && !isAdmin)
-  const welcomeSelectedRole: EntryRole = entryRole ?? 'seeker'
+  const welcomeSelectedRole: EntryRole | null = entryRole
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -750,14 +749,11 @@ export default function App() {
     navigate('auth')
   }
   const handleWelcomeRoleSelect = (r: EntryRole) => {
-    // Move the visible selection to the tapped role first. A short pause
-    // lets the user clearly see the highlight/check shift before Auth opens.
+    // Welcome is a two-step flow: first select the role, then use the
+    // Login / Register button that appears below the two role cards.
     setEntryRole(r)
-    if (welcomeRoleTimerRef.current) clearTimeout(welcomeRoleTimerRef.current)
-    welcomeRoleTimerRef.current = setTimeout(() => {
-      welcomeRoleTimerRef.current = null
-      enterAs(r)
-    }, 240)
+    setAuthStep('mobile')
+    setAuthError('')
   }
   const handleMobileContinue = async () => {
     if (authLoading) return
@@ -1045,6 +1041,7 @@ export default function App() {
     setAiMessages(getAiWelcomeMessages())
     setCurrentUser(null)
     setHasAuthenticated(false)
+    setEntryRole(null)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
     setAuthForm({ name: '', mobile: '', email: '' })
     setAuthStep('mobile')
@@ -2035,8 +2032,8 @@ export default function App() {
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
-              {/* Two separate role choices. The blue fill and check mark move to
-                  whichever role is tapped before the login screen opens. */}
+              {/* Two separate role choices. Tapping one moves the blue fill/check
+                  mark to it and reveals the Login / Register button below. */}
               <div className="mt-3 space-y-4" role="radiogroup" aria-label="Continue as">
                 <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'seeker'} onClick={() => handleWelcomeRoleSelect('seeker')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'seeker' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
                   <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'bg-white/20 text-white' : 'bg-sky-100 text-sky-700'}`}><User className="h-5 w-5" /></span>
@@ -2063,6 +2060,25 @@ export default function App() {
                   )}
                 </button>
               </div>
+
+              <AnimatePresence initial={false}>
+                {welcomeSelectedRole && (
+                  <motion.button
+                    key="welcome-login-register"
+                    type="button"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
+                    onClick={() => enterAs(welcomeSelectedRole)}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg transition hover:bg-slate-800 active:scale-[0.99]"
+                  >
+                    <LogIn className="h-4 w-4 shrink-0" />
+                    <span>{welcomeSelectedRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</span>
+                    <ChevronRight className="h-4 w-4 shrink-0" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
 
               {/* Clear separator and double gap: the Founder card stands alone. */}
               <div className="my-10 flex items-center gap-3" aria-hidden="true">
