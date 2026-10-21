@@ -531,6 +531,10 @@ export default function App() {
   const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
   const shouldHideJobSeekerExperience = isRecruiterUser && !isAdmin
   const isAdFree = isAdmin || isRecruiterUser || tier !== 'free' // Admin/Recruiter/paid: no Job Seeker browsing or contact-reveal ads. Apply ad is Job Seeker-only.
+  const isAdminLoginPage = page === 'admin' && !isAdmin
+  // Welcome, Auth, both Admin states, and guest Legal are isolated screens.
+  // They must not expose the normal Jobs/Home/Recruiter navigation shell.
+  const isIsolatedShellPage = page === 'welcome' || page === 'auth' || page === 'admin' || (page === 'legal' && !hasAuthenticated && !isAdmin)
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -597,6 +601,15 @@ export default function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
+    if (p === 'candidates' && currentUser && currentUser.role === 'seeker' && !isAdmin) {
+      setPage(getAccountDestination(currentUser))
+      setShowMobileMenu(false)
+      setShowAccountMenu(false)
+      setSelectedCandidate(null)
+      setToast('Candidates List is only for Recruiters and Admin. Job Seeker accounts stay in the Job Seeker view.')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
     setPage(p)
     setShowMobileMenu(false)
     setShowAccountMenu(false)
@@ -606,7 +619,22 @@ export default function App() {
 
   // ---- ADMIN: M Divakar Reddy ----
   const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
-  const openAdmin = (tab: typeof adminTab = 'overview') => { setAdminTab(tab); navigate('admin') }
+  const openAdmin = (tab: typeof adminTab = 'overview') => {
+    setAdminTab(tab)
+    setSelected(null)
+    setSelectedCandidate(null)
+    setShowPricing(false)
+    setShowRewarded(null)
+    setRewardProgress(0)
+    setApplyAdJob(null)
+    setApplyAdProgress(0)
+    setShowSupportTicketModal(false)
+    setShowDeletionRequestModal(false)
+    setShowDeleteAccountConfirm(false)
+    setShowAccountMenu(false)
+    setShowMobileMenu(false)
+    navigate('admin')
+  }
   // SECRET: Admin Login opens only after tapping the logo or Divakar Reddy's photo 5 times quickly
   const handleSecretTap = (): boolean => {
     const s = secretTapRef.current
@@ -623,6 +651,27 @@ export default function App() {
     if (s.count === 3) setToast('2 more taps…')
     if (s.count === 4) setToast('1 more tap…')
     return false
+  }
+  const getSafeHomeDestination = (): typeof page => {
+    if (isAdmin) return 'admin'
+    if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
+    return 'welcome'
+  }
+  const handleBrandLogoClick = () => {
+    if (page === 'admin') {
+      if (isAdmin) openAdmin('overview')
+      else handleSecretTap()
+      return
+    }
+    if (handleSecretTap()) return
+    if (isAdmin) { openAdmin('overview'); return }
+    navigate(getSafeHomeDestination())
+  }
+  const handleExitAdminLogin = () => {
+    setAdminError('')
+    setAdminPass('')
+    setShowAdminPass(false)
+    navigate(hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
   const writeAccounts = (nextAccounts: Account[]) => {
@@ -1114,10 +1163,26 @@ export default function App() {
     }
   }
   const handleAdminLogout = () => {
+    const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
     setIsAdmin(false)
     try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
+    setAdminPass('')
+    setAdminError('')
+    setShowAdminPass(false)
+    setSelected(null)
+    setSelectedCandidate(null)
+    setShowPricing(false)
+    setShowRewarded(null)
+    setRewardProgress(0)
+    setApplyAdJob(null)
+    setApplyAdProgress(0)
+    setShowSupportTicketModal(false)
+    setShowDeletionRequestModal(false)
+    setShowDeleteAccountConfirm(false)
+    setShowAccountMenu(false)
+    setShowMobileMenu(false)
     setToast('Admin logged out. See you soon, Divakar Reddy!')
-    navigate('home')
+    navigate(destination)
   }
   const handlePostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
@@ -1490,7 +1555,7 @@ export default function App() {
     }
     setAiLoading(true)
     try {
-      const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, audience: shouldHideJobSeekerExperience ? 'recruiter' : currentUser?.role ?? 'guest', history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
+      const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, audience: shouldHideJobSeekerExperience ? 'recruiter' : isAdmin ? 'admin' : currentUser?.role ?? 'guest', history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
       const data = await res.json()
       setAiMessages(prev => [...prev, { role: 'assistant', text: data.text || 'No response' }])
     } catch {
@@ -1643,7 +1708,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
       {/* Sponsored banner — hidden for ad-free plans */}
-      {page !== 'welcome' && page !== 'auth' && !isAdFree && (
+      {!isIsolatedShellPage && !isAdFree && (
       <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
           <div className="flex items-center gap-2 text-[11px]">
@@ -1659,18 +1724,18 @@ export default function App() {
       )}
 
       {/* NAVBAR */}
-      {page !== 'welcome' && page !== 'auth' && (
+      {!isIsolatedShellPage && (
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={() => { if (!handleSecretTap()) navigate(shouldHideJobSeekerExperience ? 'recruiters' : 'home') }} className="flex select-none items-center gap-3 text-left">
+            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Hub — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-3 text-left">
               <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow-md" />
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">PharmaSales Hub</p>
+                  <p className="whitespace-nowrap text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">PharmaSales Hub</p>
                   <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white sm:inline-flex">VERIFIED</span>
                 </div>
-                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">The MR to NSM Jobs Network • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
+                <p className="mt-1 whitespace-nowrap text-[9px] font-bold leading-none text-sky-700 sm:text-[11px]">The MR to NSM Jobs Network</p>
               </div>
             </button>
 
@@ -1688,7 +1753,7 @@ export default function App() {
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
               <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:block ${page==='legal'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Legal &amp; Support</button>
               {isAdmin && (
-              <button onClick={() => openAdmin()} className={`ml-1 flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold ${page==='admin'?'bg-amber-500 text-white':'bg-slate-900 text-white hover:bg-slate-800'}`}>
+              <button onClick={() => openAdmin()} className="ml-1 flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800">
                 <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length} pending</span>}
               </button>
               )}
@@ -1796,7 +1861,7 @@ export default function App() {
                   <img src="/icon-192.png" alt="PharmaSales Hub" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow" />
                   <div>
                     <p className="text-sm font-extrabold leading-none">PharmaSales Hub</p>
-                    <p className="text-[11px] font-semibold opacity-90">The MR to NSM Jobs Network • Verified</p>
+                    <p className="mt-1 text-[11px] font-bold leading-none opacity-95">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
                 <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
@@ -1867,7 +1932,7 @@ export default function App() {
                   ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
                     <button
                       key={item.label}
-                      onClick={() => navigate(item.page)}
+                      onClick={() => item.page === 'admin' ? openAdmin() : navigate(item.page)}
                       className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left hover:bg-slate-50 active:scale-[0.98] transition"
                     >
                       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600"><item.icon className="h-5 w-5" /></div>
@@ -1947,12 +2012,12 @@ export default function App() {
                 <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
                   <img src="/icon-192.png" alt="PharmaSales Hub — The MR to NSM Jobs Network" className="h-[76px] w-[76px] rounded-[24px] object-cover shadow-lg" />
                 </button>
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <h1 className="text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">PharmaSales Hub</h1>
+                <h1 className="mt-3 text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">PharmaSales Hub</h1>
+                <p className="mt-1 text-xs font-bold text-sky-700">The MR to NSM Jobs Network</p>
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
                   <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">SINCE 2026</span>
                 </div>
-                <p className="mt-1.5 text-xs font-semibold text-slate-500">The MR to NSM Jobs Network</p>
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
@@ -2008,7 +2073,9 @@ export default function App() {
                 <button onClick={() => handleSecretTap()} aria-label="PharmaSales Hub" className="mx-auto block select-none transition active:scale-95">
                   <img src="/icon-192.png" alt="PharmaSales Hub" className="h-14 w-14 rounded-2xl object-cover shadow-lg" />
                 </button>
-                <h1 className="mt-3 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
+                <p className="mt-3 text-[16px] font-extrabold leading-none tracking-tight">PharmaSales Hub</p>
+                <p className="mt-1 text-[11px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</p>
+                <h1 className="mt-4 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
                 <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
               </div>
@@ -3256,12 +3323,12 @@ export default function App() {
                     <p className="text-xs text-sky-100">App Founder — PharmaSales Hub</p>
                   </div>
                 </div>
-                <button onClick={() => navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
+                <button onClick={() => { if (isAdmin) openAdmin('support'); else navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome') }} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{isAdmin ? 'Back to Admin Dashboard' : currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
               </div>
             </div>
           </div>
 
-          <div className={`sticky ${isAdFree ? 'top-[72px]' : 'top-[109px]'} z-10 mt-5 grid grid-cols-3 gap-1 rounded-full border bg-white p-1 shadow-sm`}>
+          <div className={`sticky ${isIsolatedShellPage ? 'top-3' : isAdFree ? 'top-[72px]' : 'top-[109px]'} z-10 mt-5 grid grid-cols-3 gap-1 rounded-full border bg-white p-1 shadow-sm`}>
             <button onClick={() => setLegalTab('privacy')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'privacy' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><ShieldCheck className="hidden h-4 w-4 sm:block" /> Privacy Policy</button>
             <button onClick={() => setLegalTab('terms')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'terms' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><FileText className="hidden h-4 w-4 sm:block" /> Terms &amp; Privacy</button>
             <button onClick={() => setLegalTab('support')} className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2.5 text-xs font-extrabold sm:text-sm ${legalTab === 'support' ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}><MessageCircle className="hidden h-4 w-4 sm:block" /> Contact Support</button>
@@ -3270,7 +3337,7 @@ export default function App() {
           {legalTab !== 'support' ? (
             <article className="mt-5 rounded-[28px] border bg-white p-5 shadow-sm sm:p-8">
               <div className="border-b pb-5">
-                <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} MR VACANCIES HUB • SINCE 2026</p>
+                <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} PHARMASALES HUB • THE MR TO NSM JOBS NETWORK</p>
                 <h3 className="mt-2 text-[26px] font-extrabold leading-tight">{legalTab === 'privacy' ? 'Privacy Policy' : 'Terms & Privacy'}</h3>
                 <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — PharmaSales Hub</p>
                 <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm leading-relaxed text-sky-900">
@@ -3399,9 +3466,19 @@ export default function App() {
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           {!isAdmin ? (
             <div className="mx-auto max-w-md">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3" aria-label="PharmaSales Hub — The MR to NSM Jobs Network">
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</p>
+                    <p className="mt-1 whitespace-nowrap text-[10px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</p>
+                  </div>
+                </div>
+                <button onClick={handleExitAdminLogin} className="flex shrink-0 items-center gap-1 rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-slate-600 shadow-sm hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
+              </div>
               <div className="rounded-3xl border bg-white p-6 shadow-xl">
                 <div className="text-center">
-                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="mx-auto h-24 w-24 aspect-square rounded-full object-cover object-center border-4 border-sky-100 shadow" />
+                  <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="mx-auto h-24 w-24 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-4 border-sky-100 shadow" />
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
@@ -3442,6 +3519,16 @@ export default function App() {
             </div>
           ) : (
             <div>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Hub Admin overview" className="flex min-w-0 items-center gap-3 text-left">
+                  <img src="/icon-192.png" alt="PharmaSales Hub" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
+                  <span className="min-w-0">
+                    <span className="block whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Hub</span>
+                    <span className="mt-1 block whitespace-nowrap text-[10px] font-bold leading-none text-sky-700">The MR to NSM Jobs Network</span>
+                  </span>
+                </button>
+                <span className="ml-auto rounded-full bg-slate-900 px-3 py-1.5 text-[10px] font-extrabold tracking-widest text-white">ADMIN WORKSPACE</span>
+              </div>
               <div className="flex flex-wrap items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-5 text-white shadow-lg">
                 <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="h-16 w-16 shrink-0 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
                 <div className="min-w-[200px] flex-1">
@@ -3454,7 +3541,7 @@ export default function App() {
                   <p className="mt-1 text-sm opacity-90">Admin Dashboard — you have full access: post vacancies, delete jobs, unlimited contact reveal.</p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">View Website</button>
+                  <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">Preview Job Seeker Website</button>
                   <button onClick={handleAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                 </div>
               </div>
@@ -3783,12 +3870,12 @@ export default function App() {
       )}
       {/* FOOTER - always visible */}
       {/* FOOTER */}
-      {page !== 'welcome' && page !== 'auth' && (
+      {!isIsolatedShellPage && (
       <footer className="border-t bg-slate-900 text-slate-300">
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="flex items-center gap-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-9 w-9 rounded-xl object-cover" /><p className="font-extrabold text-white">PharmaSales Hub</p></div>
+              <div className="flex items-center gap-2"><img src="/icon-192.png" alt="PharmaSales Hub" className="h-9 w-9 rounded-xl object-cover" /><div><p className="font-extrabold leading-none text-white">PharmaSales Hub</p><p className="mt-1 text-[10px] font-bold leading-none text-sky-300">The MR to NSM Jobs Network</p></div></div>
               <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Hub — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Hub — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
             </div>
             <div>
@@ -4234,7 +4321,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Bottom nav for mobile (app-like) - page navigation */}
-      {page !== 'welcome' && page !== 'auth' && (
+      {!isIsolatedShellPage && (
       <>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white/95 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-[1280px] items-center justify-around px-2 py-2">
