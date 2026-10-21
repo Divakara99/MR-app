@@ -1,4 +1,4 @@
--- MR Vacancies Hub — Supabase account backend
+-- MR to NSM Vacancies Hub — Supabase account backend
 -- Run this once in Supabase Dashboard → SQL Editor.
 --
 -- Account flow used by the app:

@@ -1,7 +1,7 @@
 {
-  "name": "MR Vacancies Hub",
-  "short_name": "MR Vacancies",
-  "description": "Verified pharma job vacancies for Medical Representatives. Managed by M Divakar Reddy.",
+  "name": "MR to NSM Vacancies Hub",
+  "short_name": "MR to NSM",
+  "description": "Verified pharma field-force vacancies from Trainee MR to ASM, RSM, ZSM and NSM. Managed by M Divakar Reddy.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f0f7ff",

@@ -36,7 +36,7 @@ type Job = {
   ctc: string
   vacancies: number
   qual: string
-  type: 'Field MR' | 'ASM' | 'RSM' | 'Trainee MR'
+  type: 'Trainee MR' | 'Field MR' | 'Senior MR' | 'ASM' | 'RSM' | 'ZSM' | 'NSM'
   posted: string
   verified: boolean
   urgent: boolean
@@ -125,6 +125,10 @@ const JOBS: Job[] = [
   { id:'10', company:'Glenmark Pharma', color:'#be123c', division:'Glenmark - Dermatology', title:'Medical Representative', hq:'Kolkata - Salt Lake', state:'West Bengal', exp:'0-2 yrs', ctc:'₹3.0 - 4.0 LPA', vacancies:6, qual:'Any Graduate with Science', type:'Trainee MR', posted:'12 hrs ago', verified:true, urgent:false, hot:false, desc:'Glenmark Dermatology division mass hiring in Kolkata. Freshers welcome - 15 days induction at Mumbai HQ. Stipend during training.', contactPerson:'Subhojit Das - Zonal Manager', phone:'+91 98310 99887', email:'subhojit.das@glenmark.com', skills:['Dermatology','Field Work'], perks:['Training + Stipend','Fast Growth'] },
   { id:'11', company:'Intas Pharmaceuticals', color:'#4338ca', division:'Intas - Nephrology', title:'Medical Representative', hq:'Hyderabad - Kukatpally', state:'Telangana', exp:'2-5 yrs', ctc:'₹4.5 - 5.8 LPA', vacancies:2, qual:'B.Pharm / B.Sc', type:'Field MR', posted:'3 days ago', verified:true, urgent:false, hot:false, desc:'Intas Nephrology - super specialty. Handle nephrologists, dialysis centres. Hyderabad HQ with own vehicle.', contactPerson:'Kiran Kumar - DM', phone:'+91 98485 77665', email:'kiran.k@intaspharma.com', skills:['Nephrology','Dialysis KOL'], perks:['Special Allowance','Conference Support'] },
   { id:'12', company:'Aurobindo Pharma', color:'#047857', division:'Aurobindo - ARV & General', title:'RSM - Regional Sales Manager', hq:'Delhi - Connaught Place', state:'Delhi', exp:'6-10 yrs', ctc:'₹10 - 13 LPA + Car + Incentives', vacancies:1, qual:'B.Pharm + MBA', type:'RSM', posted:'5 days ago', verified:true, urgent:false, hot:false, desc:'Aurobindo hiring RSM for North Delhi region. Manage 4 ASMs & 25 MRs. Proven leadership in pharma sales required.', contactPerson:'Rajeev Malhotra - VP Sales', phone:'+91 98101 23456', email:'rajeev.m@aurobindo.com', skills:['Leadership','P&L Management'], perks:['Company Car','Stock Options'] },
+  { id:'13', company:'Mankind Pharma', color:'#f97316', division:'Mankind - Cardio Diabetic', title:'Senior Medical Representative', hq:'Hyderabad - Banjara Hills', state:'Telangana', exp:'3-6 yrs', ctc:'₹5.5 - 7.0 LPA + Incentives', vacancies:2, qual:'B.Pharm / B.Sc', type:'Senior MR', posted:'4 hrs ago', verified:true, urgent:false, hot:true, desc:'Senior MR role for a high-value Hyderabad HQ. Own key doctors, KOL coverage, RCPA, chemist mapping and new-product launch execution. Strong cardio-diabetic territory performance preferred.', contactPerson:'Ramesh Reddy - ASM', phone:'+91 98491 44556', email:'careers@mankindpharma.co.in', skills:['KOL Coverage','RCPA','Territory Planning'], perks:['Top Incentives','Mobile Allowance','Field TA/DA'] },
+  { id:'14', company:'Cipla Ltd', color:'#0ea5e9', division:'Cipla - Respiratory', title:'ZSM - Zonal Sales Manager', hq:'Bengaluru - Koramangala', state:'Karnataka', exp:'8-12 yrs', ctc:'₹14 - 18 LPA + Car + Incentives', vacancies:1, qual:'B.Pharm / B.Sc + MBA Preferred', type:'ZSM', posted:'1 day ago', verified:true, urgent:true, hot:false, desc:'Lead the South Zone field force through RSMs and ASMs. Responsible for zonal primary/secondary targets, launch execution, KOL strategy, team coaching and stockist performance.', contactPerson:'Anita Sharma - HR Talent', phone:'+91 91008 11234', email:'anita.sharma@cipla.com', skills:['Zonal Leadership','Team Coaching','Sales Strategy'], perks:['Company Car','Laptop','Leadership Bonus'] },
+  { id:'15', company:'Abbott India', color:'#1d4ed8', division:'Abbott - Specialty Care', title:'NSM - National Sales Manager', hq:'Mumbai - BKC', state:'Maharashtra', exp:'12-18 yrs', ctc:'₹28 - 38 LPA + Car + Leadership Incentives', vacancies:1, qual:'B.Pharm / B.Sc + MBA', type:'NSM', posted:'2 days ago', verified:true, urgent:true, hot:true, desc:'Pan-India national sales leadership role. Own national targets, field-force productivity, ZSM/RSM coaching, launch planning, KOL engagement and cross-functional execution with marketing and medical teams.', contactPerson:'Sarah D\'Souza - Talent Partner', phone:'+91 98190 55667', email:'sarah.dsouza@abbott.com', skills:['National Sales Leadership','P&L Ownership','Launch Excellence'], perks:['Company Car','Leadership Incentives','Global Exposure'] },
+
 ]
 
 const COMPANIES = ['All Companies', 'Sun Pharma', 'Cipla Ltd', 'Mankind Pharma', 'Dr. Reddy\'s', 'Alkem Laboratories', 'Torrent Pharma', 'Zydus Lifesciences', 'Lupin Ltd', 'Abbott India', 'Glenmark Pharma', 'Intas Pharmaceuticals', 'Aurobindo Pharma']
@@ -132,7 +136,20 @@ const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tam
 const CITIES_ALL = ['All Cities', ...Array.from(new Set(JOBS.map(j => j.hq.split(' - ')[0].trim())))]
 const HQ_ALL = ['All HQs', ...JOBS.map(j => j.hq)]
 const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
-const ROLES = ['All Roles', 'Field MR', 'Trainee MR', 'ASM', 'RSM'] as const
+const JOB_ROLES = ['Trainee MR', 'Field MR', 'Senior MR', 'ASM', 'RSM', 'ZSM', 'NSM'] as const
+const ROLES = ['All Roles', ...JOB_ROLES] as const
+const ROLE_LABELS: Record<string, string> = {
+  'All Roles': 'All Roles (MR to NSM)',
+  'Trainee MR': 'Trainee MR',
+  'Field MR': 'Field MR (Medical Representative)',
+  'Senior MR': 'Senior MR (Senior Medical Representative)',
+  ASM: 'ASM (Area Sales Manager)',
+  RSM: 'RSM (Regional Sales Manager)',
+  ZSM: 'ZSM (Zonal Sales Manager)',
+  NSM: 'NSM (National Sales Manager)',
+}
+const getRoleLabel = (roleName: string) => ROLE_LABELS[roleName] ?? roleName
+const VACANCY_EXPERIENCE_OPTIONS = ['0-2 yrs (Freshers can apply)', '0.5-2 yrs', '1-3 yrs', '1-4 yrs', '2-5 yrs', '3-6 yrs', '4-7 yrs', '5-8 yrs', '6-10 yrs', '8-12 yrs', '10-15 yrs', '12-18 yrs', '15+ yrs']
 
 // helper to get experience bucket from exp string like "0-2 yrs", "0.5-3 yrs", "1-4 yrs"
 const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 months' => {
@@ -145,11 +162,11 @@ const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 mont
 const TIERS = [
   { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['3 daily jobs — 15-sec ad reveals full contact', 'After 3 unlocks: 7 extra jobs open', 'Extra jobs: separate ads for company, manager & number', 'Apply Now plays a sponsored ad', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3 + 7 extra/day' },
   { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — no reveal ads', 'No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
-  { id: 'pro' as Tier, name: 'Pro MR', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
+  { id: 'pro' as Tier, name: 'Pro', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
-const SEEKER_AI_WELCOME = 'Hi! I’m your MR Vacancies AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for Mankind Pharma”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
-const RECRUITER_AI_WELCOME = 'Hi! I’m your MR Vacancies Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear MR vacancy description\n• Interview questions for MR candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
+const SEEKER_AI_WELCOME = 'Hi! I’m your MR to NSM AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
+const RECRUITER_AI_WELCOME = 'Hi! I’m your MR to NSM Vacancies Hub recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
 const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
 
 // Helpers
@@ -162,6 +179,7 @@ const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
+const ROLE_SEED_MIGRATION_KEY = 'mr-to-nsm-seed-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
@@ -195,8 +213,25 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     }
   } catch { return emptyDailyJobAccess() }
 }
+const loadInitialJobs = (): Job[] => {
+  try {
+    const raw = localStorage.getItem(ADMIN_JOBS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length) {
+        const storedJobs = parsed as Job[]
+        if (localStorage.getItem(ROLE_SEED_MIGRATION_KEY) === '1') return storedJobs
+        const existingIds = new Set(storedJobs.map(job => job.id))
+        const roleSeedJobs = JOBS.filter(job => ['13', '14', '15'].includes(job.id) && !existingIds.has(job.id))
+        try { localStorage.setItem(ROLE_SEED_MIGRATION_KEY, '1') } catch { /* ignore */ }
+        return [...storedJobs, ...roleSeedJobs]
+      }
+    }
+  } catch { /* ignore */ }
+  return JOBS
+}
 const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
-const SEEKER_EXPERIENCE_OPTIONS = ['0-6 months', '6 months - 1 year', '1-2 years', '2-4 years', '4-7 years', '7+ years']
+const SEEKER_EXPERIENCE_OPTIONS = ['0-6 months', '6 months - 1 year', '1-2 years', '2-4 years', '4-7 years', '7-10 years', '10-15 years', '15+ years']
 const EMPTY_SEEKER_PROFILE: SeekerProfile = {
   experienceType: 'fresher',
   desiredRole: 'Trainee MR',
@@ -243,11 +278,16 @@ const anonymousCandidateCode = (mobile: string) => {
 }
 const SAMPLE_CANDIDATE_PROFILES: CandidateProfileView[] = [
   { id: 'sample-mr-2026-1011', code: 'MR-2026-1011', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Trainee MR', qualification: 'B.Pharm', passingYear: '2026', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹3.0 - 3.6 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Ameerpet', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Communication, Product Knowledge, MS Excel' } },
-  { id: 'sample-mr-2026-1042', code: 'MR-2026-1042', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '2-4 years', currentCompany: 'Sun Pharma', currentRole: 'Field MR', currentPackage: '₹4.8 LPA', expectedPackage: '₹5.5 - 6.0 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Jayanagar', preferredHq: 'Bengaluru', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'RCPA, Doctor Calling, Stockist Handling' } },
+  { id: 'sample-mr-2026-1042', code: 'MR-2026-1042', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Senior MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '2-4 years', currentCompany: 'Sun Pharma', currentRole: 'Field MR', currentPackage: '₹4.8 LPA', expectedPackage: '₹5.5 - 6.0 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Jayanagar', preferredHq: 'Bengaluru', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'RCPA, Doctor Calling, Stockist Handling' } },
   { id: 'sample-mr-2026-1075', code: 'MR-2026-1075', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'D.Pharm', passingYear: '', totalExperience: '1-2 years', currentCompany: 'Mankind Pharma', currentRole: 'Field MR', currentPackage: '₹3.9 LPA', expectedPackage: '₹4.5 LPA', state: 'Andhra Pradesh', city: 'Vijayawada', currentHq: 'Vijayawada', preferredHq: 'Vijayawada / Guntur', noticePeriod: '15 days', twoWheeler: 'Yes', skills: 'Chemist Relations, Local HQ Knowledge, Order Booking' } },
   { id: 'sample-mr-2026-1108', code: 'MR-2026-1108', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Field MR', qualification: 'B.Sc', passingYear: '2025', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹2.8 - 3.4 LPA', state: 'Maharashtra', city: 'Pune', currentHq: 'Pune - Kothrud', preferredHq: 'Pune', noticePeriod: 'Immediate', twoWheeler: 'Will arrange', skills: 'Communication, Field Work, Hindi / Marathi / English' } },
   { id: 'sample-mr-2026-1136', code: 'MR-2026-1136', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ASM', qualification: 'B.Sc + MBA', passingYear: '', totalExperience: '4-7 years', currentCompany: "Dr. Reddy's", currentRole: 'Field MR', currentPackage: '₹6.8 LPA', expectedPackage: '₹8.0 - 9.0 LPA', state: 'Tamil Nadu', city: 'Chennai', currentHq: 'Chennai - T Nagar', preferredHq: 'Chennai', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'Team Handling, KOL Management, Sales Planning' } },
   { id: 'sample-mr-2026-1164', code: 'MR-2026-1164', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '6 months - 1 year', currentCompany: 'Cipla Ltd', currentRole: 'Trainee MR', currentPackage: '₹3.2 LPA', expectedPackage: '₹3.8 - 4.2 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Kukatpally', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Product Detailing, Sampling, SFA Reporting' } },
+  { id: 'sample-mr-2026-1180', code: 'MR-2026-1180', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'RSM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '7-10 years', currentCompany: 'Alkem Laboratories', currentRole: 'ASM', currentPackage: '₹9.5 LPA', expectedPackage: '₹11 - 13 LPA', state: 'Maharashtra', city: 'Pune', currentHq: 'Pune - Kothrud', preferredHq: 'Maharashtra Region', noticePeriod: '45 days', twoWheeler: 'Yes / Car', skills: 'Area Leadership, Team Handling, Secondary Sales, Stockist Strategy' } },
+  { id: 'sample-mr-2026-1192', code: 'MR-2026-1192', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ASM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '4-7 years', currentCompany: 'Sun Pharma', currentRole: 'Senior MR', currentPackage: '₹6.5 LPA', expectedPackage: '₹7.5 - 8.5 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Banjara Hills', preferredHq: 'Hyderabad', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'Territory Leadership, KOL Management, RCPA, Team Coaching' } },
+  { id: 'sample-mr-2026-1220', code: 'MR-2026-1220', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ZSM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '7-10 years', currentCompany: 'Cipla Ltd', currentRole: 'RSM', currentPackage: '₹13.0 LPA', expectedPackage: '₹16 - 18 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Koramangala', preferredHq: 'South Zone', noticePeriod: '45 days', twoWheeler: 'Yes / Car', skills: 'Regional Leadership, Sales Strategy, Launch Planning, P&L' } },
+  { id: 'sample-mr-2026-1248', code: 'MR-2026-1248', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'NSM', qualification: 'B.Sc + MBA', passingYear: '', totalExperience: '10-15 years', currentCompany: 'Abbott India', currentRole: 'ZSM', currentPackage: '₹21.0 LPA', expectedPackage: '₹28 - 32 LPA', state: 'Maharashtra', city: 'Mumbai', currentHq: 'Mumbai - BKC', preferredHq: 'Pan India', noticePeriod: '60 days', twoWheeler: 'Yes / Car', skills: 'National Sales Leadership, Zonal Management, Launch Excellence, Team Building' } },
+
 ]
 const normalizeMobile = (value: string) => {
   const digits = value.replace(/\D/g, '')
@@ -413,10 +453,7 @@ export default function App() {
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
   const [aiLoading, setAiLoading] = useState(false)
   // Jobs are now state (Admin can post/delete; saved on this device)
-  const [jobs, setJobs] = useState<Job[]>(() => {
-    try { const raw = localStorage.getItem(ADMIN_JOBS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.length) return parsed as Job[] } } catch { /* ignore */ }
-    return JOBS
-  })
+  const [jobs, setJobs] = useState<Job[]>(() => loadInitialJobs())
   useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
   // Admin auth (M Divakar Reddy only)
   const [isAdmin, setIsAdmin] = useState(() => { try { return localStorage.getItem(ADMIN_AUTH_KEY) === '1' } catch { return false } })
@@ -805,7 +842,7 @@ export default function App() {
     if (profile.experienceType === 'fresher') {
       const year = Number(profile.passingYear)
       if (!/^\d{4}$/.test(profile.passingYear) || year < 1990 || year > 2026) { setSeekerProfileError('Freshers: please enter a correct passing year, for example 2025 or 2026.'); return }
-      if (profile.desiredRole !== 'Trainee MR' && profile.desiredRole !== 'Field MR') { setSeekerProfileError('Freshers can apply for Trainee MR or Field MR roles. ASM/RSM requires experience.'); return }
+      if (profile.desiredRole !== 'Trainee MR' && profile.desiredRole !== 'Field MR') { setSeekerProfileError('Freshers can apply for Trainee MR or Field MR roles. Senior MR, ASM, RSM, ZSM and NSM roles require experience.'); return }
       profile.totalExperience = 'Fresher (0 years)'
       profile.currentCompany = 'Fresher — No current company'
       profile.currentRole = 'Fresher'
@@ -866,15 +903,15 @@ export default function App() {
     navigate('candidates')
   }
   const buildSupportMailto = (ticket?: SupportTicket) => {
-    const subject = ticket ? `MR Vacancies Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'MR Vacancies Hub Support Request'
+    const subject = ticket ? `MR to NSM Vacancies Hub Support Ticket ${ticket.ticketNo} — ${ticket.subject}` : 'MR to NSM Vacancies Hub Support Request'
     const body = ticket
-      ? ['Hello MR Vacancies Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
-      : ['Hello MR Vacancies Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
+      ? ['Hello MR to NSM Vacancies Hub Support,', '', `Ticket No: ${ticket.ticketNo}`, `Name: ${ticket.name}`, `Registered Mobile: +91 ${ticket.mobile}`, `Email: ${ticket.email}`, `Reason: ${ticket.category}`, `Subject: ${ticket.subject}`, '', 'Problem Details:', ticket.details, '', 'Please help me with this request.'].join('\n')
+      : ['Hello MR to NSM Vacancies Hub Support,', '', 'Name:', 'Registered Mobile:', 'Reason:', 'Problem Details:', '', 'Please help me with this request.'].join('\n')
     return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const buildAdminReplyMailto = (ticket: SupportTicket) => {
-    const subject = `Update on your MR Vacancies Hub support ticket ${ticket.ticketNo}`
-    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — MR Vacancies Hub'].join('\n')
+    const subject = `Update on your MR to NSM Vacancies Hub support ticket ${ticket.ticketNo}`
+    const body = [`Hi ${ticket.name},`, '', `This is regarding your support ticket ${ticket.ticketNo} (${ticket.category}).`, '', 'Regards,', 'M Divakar Reddy', 'App Founder — MR to NSM Vacancies Hub'].join('\n')
     return `mailto:${ticket.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
   const openSupportTicket = (source: SupportTicketSource = 'ai') => {
@@ -1447,7 +1484,7 @@ export default function App() {
       return
     }
     if (lowerPrompt.includes('contact support') || lowerPrompt.includes('support email') || lowerPrompt === 'support') {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact MR Vacancies Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
+      setAiMessages(prev => [...prev, { role: 'assistant', text: `You can contact MR to NSM Vacancies Hub Support at ${SUPPORT_EMAIL}. For faster tracking, tap “Raise Support Ticket” below and give a proper reason. I am opening the ticket form for you.` }])
       openSupportTicket('ai')
       return
     }
@@ -1526,7 +1563,7 @@ export default function App() {
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${isFresher ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700'}`}>{isFresher ? 'FRESHER' : 'EXPERIENCED'}</span>
             <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-extrabold text-sky-700">{candidate.source === 'registered' ? 'REGISTERED' : 'SAMPLE'}</span>
           </span>
-          <span className="mt-1 block truncate text-xs font-bold text-slate-700">{profile.desiredRole || 'Role not filled'} • {profile.qualification || 'Qualification not filled'}{isFresher && profile.passingYear ? ` • ${profile.passingYear}` : ''}</span>
+          <span className="mt-1 block truncate text-xs font-bold text-slate-700">{profile.desiredRole ? getRoleLabel(profile.desiredRole) : 'Role not filled'} • {profile.qualification || 'Qualification not filled'}{isFresher && profile.passingYear ? ` • ${profile.passingYear}` : ''}</span>
           <span className="mt-0.5 block truncate text-[11px] font-semibold text-slate-500">{isFresher ? 'Fresher' : (profile.totalExperience || 'Experience not filled')} • {profile.currentHq || profile.city || 'HQ not filled'}{profile.state ? `, ${profile.state}` : ''}</span>
         </span>
         <span className="hidden shrink-0 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white sm:block">View Details</span>
@@ -1542,7 +1579,7 @@ export default function App() {
     const detailItems = [
       { label: 'Experience', value: isFresher ? 'Fresher (0 years)' : (profile.totalExperience || 'Not filled') },
       { label: 'Current Company', value: isFresher ? 'Fresher — No current company' : (profile.currentCompany || 'Not filled') },
-      { label: 'Current Role', value: isFresher ? 'Fresher' : (profile.currentRole || 'Not filled') },
+      { label: 'Current Role', value: isFresher ? 'Fresher' : (profile.currentRole ? getRoleLabel(profile.currentRole) : 'Not filled') },
       { label: 'Current Package', value: isFresher ? 'Not applicable' : (profile.currentPackage || 'Not filled') },
       { label: 'Expected Package', value: profile.expectedPackage || 'Not filled' },
       { label: 'Qualification', value: profile.qualification ? (isFresher && profile.passingYear ? `${profile.qualification} • ${profile.passingYear}` : profile.qualification) : 'Not filled' },
@@ -1558,7 +1595,7 @@ export default function App() {
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white"><User className="h-5 w-5" /></span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-extrabold">Candidate {candidate.code}</p>
-            <p className="truncate text-xs font-semibold text-slate-500">{profile.desiredRole || 'Role not filled'} • {profile.city || 'City not filled'}{profile.state ? `, ${profile.state}` : ''}</p>
+            <p className="truncate text-xs font-semibold text-slate-500">{profile.desiredRole ? getRoleLabel(profile.desiredRole) : 'Role not filled'} • {profile.city || 'City not filled'}{profile.state ? `, ${profile.state}` : ''}</p>
           </div>
           <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isFresher ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700'}`}>{isFresher ? 'FRESHER' : 'EXPERIENCED'}</span>
         </div>
@@ -1632,10 +1669,10 @@ export default function App() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="text-[17px] font-extrabold leading-none tracking-tight">MR Vacancies Hub</p>
+                  <p className="text-[15px] font-extrabold leading-none tracking-tight sm:text-[17px]">MR to NSM Vacancies Hub</p>
                   <span className="hidden rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white sm:inline-flex">VERIFIED</span>
                 </div>
-                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">India’s Trusted Pharma Jobs • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
+                <p className="hidden text-[11px] font-medium text-slate-500 sm:block">MR to NSM Pharma Jobs • Since 2026 • Managed by <span className="font-bold text-sky-700">M Divakar Reddy</span></p>
               </div>
             </button>
 
@@ -1760,7 +1797,7 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sky-600"><Briefcase className="h-5 w-5" /></div>
                   <div>
-                    <p className="text-sm font-extrabold leading-none">MR Vacancies Hub</p>
+                    <p className="text-sm font-extrabold leading-none">MR to NSM Vacancies Hub</p>
                     <p className="text-[11px] font-semibold opacity-90">M Divakar Reddy • Verified</p>
                   </div>
                 </div>
@@ -1881,7 +1918,7 @@ export default function App() {
               {/* Footer */}
               <div className="border-t bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-500">© 2026 MR Vacancies Hub • Since 2026</span>
+                  <span className="font-semibold text-slate-500">© 2026 MR to NSM Vacancies Hub • Since 2026</span>
                   <span className="rounded-full bg-slate-900 px-2.5 py-1 font-bold text-white text-[11px]">Verified Jobs</span>
                 </div>
               </div>
@@ -1896,7 +1933,7 @@ export default function App() {
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-400 text-slate-900"><AlertTriangle className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-extrabold text-amber-900">Complete your required Job Seeker profile ({seekerProfileProgress(currentUser.profile)}%)</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-amber-800">Freshers and experienced MRs must fill role, experience, qualification, package and HQ details before applying.</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-amber-800">Freshers and experienced pharma professionals must fill role, experience, qualification, package and HQ details before applying.</p>
             </div>
             <button onClick={openSeekerProfile} className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white"><User className="h-4 w-4" /> Complete Profile</button>
           </div>
@@ -1909,15 +1946,15 @@ export default function App() {
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <div className="text-center">
-                <button onClick={() => handleSecretTap()} aria-label="MR Vacancies Hub" className="mx-auto flex h-[72px] w-[72px] select-none items-center justify-center rounded-3xl bg-sky-600 text-white shadow-lg transition active:scale-95">
+                <button onClick={() => handleSecretTap()} aria-label="MR to NSM Vacancies Hub" className="mx-auto flex h-[72px] w-[72px] select-none items-center justify-center rounded-3xl bg-sky-600 text-white shadow-lg transition active:scale-95">
                   <Briefcase className="h-9 w-9" />
                 </button>
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  <h1 className="text-[24px] font-extrabold leading-none tracking-tight">MR Vacancies Hub</h1>
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                  <h1 className="text-[22px] font-extrabold leading-tight tracking-tight sm:text-[24px]">MR to NSM Vacancies Hub</h1>
                   <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">VERIFIED</span>
                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">SINCE 2026</span>
                 </div>
-                <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Jobs for Medical Representatives</p>
+                <p className="mt-1.5 text-xs font-semibold text-slate-500">India’s Trusted Pharma Field-Force Jobs — MR to NSM</p>
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
@@ -1925,7 +1962,7 @@ export default function App() {
                 <button onClick={() => enterAs('seeker')} className="flex w-full items-center gap-3 rounded-2xl bg-sky-600 p-4 text-left text-white shadow transition hover:bg-sky-700 active:scale-[0.99]">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20"><User className="h-5 w-5" /></span>
                   <span className="flex-1">
-                    <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR)</span>
+                    <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR to NSM)</span>
                     <span className="block text-xs opacity-90">Complete job profile • Find verified vacancies • Apply faster</span>
                   </span>
                   <ChevronRight className="h-5 w-5 shrink-0" />
@@ -1934,7 +1971,7 @@ export default function App() {
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600"><Building2 className="h-5 w-5" /></span>
                   <span className="flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
-                    <span className="block text-xs text-slate-500">Post a vacancy • View anonymous MR profiles • Admin approval</span>
+                    <span className="block text-xs text-slate-500">Post MR to NSM vacancies • View anonymous candidate profiles • Admin approval</span>
                   </span>
                   <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                 </button>
@@ -1946,9 +1983,9 @@ export default function App() {
                 <div className="min-w-0 flex-1">
                   <p className="text-[9px] font-extrabold tracking-widest text-sky-700">MANAGED BY • APP FOUNDER</p>
                   <p className="flex items-center gap-1 text-[15px] font-extrabold leading-tight">M Divakar Reddy <BadgeCheck className="h-4 w-4 shrink-0 text-sky-600" /></p>
-                  <p className="text-[11px] font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
+                  <p className="text-[11px] font-semibold text-sky-700">App Founder — MR to NSM Vacancies Hub</p>
                   <p className="text-[11px] leading-snug text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
-                  <p className="mt-1 text-[10px] font-semibold text-slate-500">50K+ MRs • 2,400+ Verified Jobs • 18K Placements</p>
+                  <p className="mt-1 text-[10px] font-semibold text-slate-500">50K+ Professionals • 2,400+ Verified Jobs • 18K Placements</p>
                 </div>
               </div>
 
@@ -1959,7 +1996,7 @@ export default function App() {
                 <button type="button" onClick={() => openLegal('support')} className="hover:text-sky-900 hover:underline">Contact Support</button>
               </div>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">© 2026 MR to NSM Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -1970,7 +2007,7 @@ export default function App() {
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
               <div className="mt-3 text-center">
-                <button onClick={() => handleSecretTap()} aria-label="MR Vacancies Hub" className="mx-auto flex h-14 w-14 select-none items-center justify-center rounded-2xl bg-sky-600 text-white shadow-lg transition active:scale-95">
+                <button onClick={() => handleSecretTap()} aria-label="MR to NSM Vacancies Hub" className="mx-auto flex h-14 w-14 select-none items-center justify-center rounded-2xl bg-sky-600 text-white shadow-lg transition active:scale-95">
                   <Briefcase className="h-7 w-7" />
                 </button>
                 <h1 className="mt-3 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
@@ -2061,7 +2098,7 @@ export default function App() {
               </div>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
             </div>
-            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
+            <p className="mt-4 text-center text-[11px] font-semibold text-white/70">MR to NSM Vacancies Hub • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
         </section>
       )}
@@ -2092,7 +2129,7 @@ export default function App() {
                     <span className="rounded-full bg-amber-400 px-3 py-1 text-[10px] font-extrabold tracking-widest text-slate-900">REQUIRED TO APPLY</span>
                   </div>
                   <h2 className="mt-3 text-[26px] font-extrabold leading-tight">Complete your job profile</h2>
-                  <p className="mt-1 max-w-2xl text-sm leading-relaxed opacity-90">Fill the required data once. Freshers choose the Fresher option. Experienced MRs add current company, current role and current package.</p>
+                  <p className="mt-1 max-w-2xl text-sm leading-relaxed opacity-90">Fill the required data once. Freshers choose the Fresher option. Experienced candidates add current company, current role and current package.</p>
                 </div>
                 <div className="w-full shrink-0 rounded-2xl bg-white/15 p-4 sm:w-[220px]">
                   <div className="flex items-center justify-between text-xs font-bold"><span>Profile completion</span><span>{seekerProfileProgress(seekerProfileForm)}%</span></div>
@@ -2117,7 +2154,7 @@ export default function App() {
                     <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
                       <GraduationCap className={`h-6 w-6 ${seekerProfileForm.experienceType === 'fresher' ? 'text-emerald-600' : 'text-slate-400'}`} />
                       <span className="mt-2 block text-sm font-extrabold">Fresher</span>
-                      <span className="block text-xs text-slate-500">No pharma MR job experience</span>
+                      <span className="block text-xs text-slate-500">No pharma field-force experience</span>
                     </button>
                     <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
                       <Briefcase className={`h-6 w-6 ${seekerProfileForm.experienceType === 'experienced' ? 'text-violet-600' : 'text-slate-400'}`} />
@@ -2138,7 +2175,7 @@ export default function App() {
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Role You Are Looking For *</label>
                       <select value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
-                        {(seekerProfileForm.experienceType === 'fresher' ? ['Trainee MR', 'Field MR'] : ['Field MR', 'Trainee MR', 'ASM', 'RSM']).map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                        {(seekerProfileForm.experienceType === 'fresher' ? ['Trainee MR', 'Field MR'] : JOB_ROLES).map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                       </select>
                     </div>
 
@@ -2165,7 +2202,7 @@ export default function App() {
                           <label className="mb-1 block text-xs font-bold text-slate-600">Current Role *</label>
                           <select value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
                             <option value="">Select current role</option>
-                            {['Trainee MR', 'Field MR', 'ASM', 'RSM', 'Other Pharma Role'].map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                            {[...JOB_ROLES, 'Other Pharma Role'].map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                           </select>
                         </div>
                         <div>
@@ -2261,9 +2298,9 @@ export default function App() {
               <BadgeCheck className="h-4 w-4 text-emerald-600" />
             </div>
             <h1 className="mt-4 text-[32px] font-extrabold leading-[0.95] tracking-tight sm:text-[44px]">
-              India’s most <span className="bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent">trusted hub</span> for Medical Representative vacancies
+              India’s most <span className="bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent">trusted hub</span> for pharma vacancies from MR to NSM
             </h1>
-            <p className="mt-3 max-w-[640px] text-[15px] leading-relaxed text-slate-600">Verified pharma jobs, masked contact protection & subscription unlocks. Trusted by <b>50,000+ MRs</b> across 700+ HQs. Daily updates from Sun, Cipla, Mankind, Zydus, Alkem & more.</p>
+            <p className="mt-3 max-w-[640px] text-[15px] leading-relaxed text-slate-600">Verified vacancies for Trainee MR, Field MR, Senior MR, ASM, RSM, ZSM and NSM roles, with masked contact protection & subscription unlocks. Trusted by <b>50,000+ pharma professionals</b> across 700+ HQs and territories. Daily updates from Sun, Cipla, Mankind, Zydus, Alkem & more.</p>
 
             {/* hero search */}
             <div className="mt-5 rounded-2xl border bg-white p-3 shadow-sm">
@@ -2299,7 +2336,7 @@ export default function App() {
                     <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm animate-in fade-in">
                       <Briefcase className="h-4 w-4 text-amber-600" />
                       <select value={role} onChange={e => setRole(e.target.value as any)} className="bg-transparent text-sm font-semibold outline-none">
-                        {ROLES.map(r => <option key={r}>{r}</option>)}
+                        {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
                       </select>
                     </div>
                   )}
@@ -2319,7 +2356,7 @@ export default function App() {
             {/* stats */}
             <div className="mt-5 grid grid-cols-3 gap-3">
               {[
-                { k: '50K+ MRs', v: 'Active jobseekers', icon: Users },
+                { k: '50K+', v: 'Pharma professionals', icon: Users },
                 { k: '2,400+ Jobs', v: 'Verified & active', icon: BadgeCheck },
                 { k: '18K+ Placements', v: 'MR career support', icon: Star },
               ].map(s => (
@@ -2333,7 +2370,7 @@ export default function App() {
 
             {/* trust logos */}
             <div className="mt-5 flex flex-wrap items-center gap-2 rounded-2xl border bg-white px-4 py-3">
-              <span className="text-xs font-bold text-slate-500">Trusted by MRs at:</span>
+              <span className="text-xs font-bold text-slate-500">Trusted by pharma professionals at:</span>
               <div className="flex flex-wrap gap-1.5">
                 {['Sun', 'Cipla', 'Mankind', 'Zydus', 'Torrent', 'Alkem', 'Lupin', 'Abbott'].map(c => (
                   <span key={c} className="rounded-full border bg-slate-50 px-3 py-1 text-xs font-bold">{c}</span>
@@ -2433,7 +2470,7 @@ export default function App() {
                   <div className={`${hq === 'All HQs' ? 'opacity-40' : ''}`}>
                     <label className="text-xs font-bold text-slate-700">4. Filter — Role {hq !== 'All HQs' ? <span className="font-normal text-sky-600">• for {hq}</span> : <span className="font-normal text-slate-400">• Select HQ first</span>}</label>
                     <select value={role} onChange={e => setRole(e.target.value as any)} disabled={hq === 'All HQs'} className={`mt-1 w-full rounded-xl border px-3 py-2.5 text-sm font-semibold ${hq === 'All HQs' ? 'bg-slate-100 text-slate-400' : 'bg-slate-50'}`}>
-                      {ROLES.map(r => <option key={r}>{r}</option>)}
+                      {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
                     </select>
                   </div>
 
@@ -2519,7 +2556,7 @@ export default function App() {
                       {availableHQs.map(h => <option key={h}>{h}</option>)}
                     </select>
                     <select value={role} onChange={e => setRole(e.target.value as any)} disabled={hq==='All HQs'} className={`rounded-xl border px-3 py-2.5 text-sm font-semibold ${hq==='All HQs' ? 'bg-slate-100 text-slate-400' : 'bg-slate-50'}`}>
-                      {ROLES.map(r => <option key={r}>{r}</option>)}
+                      {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
                     </select>
                     <div className="grid grid-cols-2 gap-3">
                       <select value={company} onChange={e => setCompany(e.target.value)} className="rounded-xl border bg-slate-50 px-3 py-2.5 text-sm font-semibold">
@@ -2549,7 +2586,7 @@ export default function App() {
                 {city !== 'All Cities' && <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white">City: {city} <button onClick={() => setCity('All Cities')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
                 {hq !== 'All HQs' && <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3 py-1.5 text-xs font-bold text-white">HQ: {hq} <button onClick={() => setHq('All HQs')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
                 {company !== 'All Companies' && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">{company} <button onClick={() => setCompany('All Companies')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
-                {role !== 'All Roles' && <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white">Role: {role} <button onClick={() => setRole('All Roles')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
+                {role !== 'All Roles' && <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white">Role: {getRoleLabel(role)} <button onClick={() => setRole('All Roles')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
                 {expFilter !== 'All Experience' && <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">{expFilter} <button onClick={() => setExpFilter('All Experience')} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
                 {verifiedOnly && <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white">Verified only <button onClick={() => setVerifiedOnly(false)} className="rounded-full bg-white/20 p-0.5"><X className="h-3 w-3" /></button></span>}
                 <button onClick={() => { setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setRole('All Roles'); setExpFilter('All Experience'); setVerifiedOnly(false); setSearch('') }} className="rounded-full border bg-white px-3 py-1.5 text-xs font-bold">Clear all ✕</button>
@@ -2671,14 +2708,14 @@ export default function App() {
                                   {isPhoneVisible(job) && (
                                     <div className="flex gap-2">
                                       <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-xs font-bold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
-                                      <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' MR vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                                      <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' ' + job.type + ' vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
                                     </div>
                                   )}
                                 </>
                               ) : revealed.has(job.id) ? (
                                 <div className="flex gap-2">
                                   <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-500 px-3 py-2 text-xs font-bold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
-                                  <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' MR vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                                  <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(job) + ' ' + job.type + ' vacancy at ' + job.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
                                 </div>
                               ) : (
                                 <button onClick={() => attemptReveal(job)} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-black">
@@ -2706,7 +2743,7 @@ export default function App() {
                         <button onClick={() => toggleSave(job.id)} className="flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold sm:hidden">
                           <Bookmark className="h-4 w-4" /> {saved.has(job.id) ? 'Saved' : 'Save'}
                         </button>
-                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} MR vacancy at ${job.hq} — ${job.ctc} — Contact via MR Vacancies Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
+                        <button onClick={() => { navigator.clipboard.writeText(`${getDisplayCompany(job)} ${job.type} vacancy at ${job.hq} — ${job.ctc} — Contact via MR to NSM Vacancies Hub`); setToast('Link copied to share on WhatsApp!') }} className="ml-auto flex items-center gap-2 rounded-full border bg-white px-4 py-2.5 text-sm font-bold">
                           <Share2 className="h-4 w-4" /> Share
                         </button>
                       </div>
@@ -2801,7 +2838,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white"><Sparkles className="h-5 w-5" /></div>
               <div>
-                <h3 className="text-lg font-extrabold">MR Vacancies AI Assistant</h3>
+                <h3 className="text-lg font-extrabold">MR to NSM AI Assistant</h3>
                 <p className="text-xs font-semibold text-slate-500">{shouldHideJobSeekerExperience ? 'Vacancy writing • Interview questions • Shortlisting • Support tickets' : 'Resume • Interview • RCPA • Salary • Support tickets'}</p>
               </div>
               <span className="ml-auto rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">ONLINE</span>
@@ -2819,12 +2856,12 @@ export default function App() {
               </div>
             </div>
             <div className="mt-3 flex gap-2">
-              <input value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAi()} placeholder={shouldHideJobSeekerExperience ? "Ask: Write an MR vacancy for Hyderabad HQ..." : "Ask: Resume for B.Pharm fresher in Hyderabad..."} className="flex-1 rounded-full border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:bg-white" />
+              <input value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAi()} placeholder={shouldHideJobSeekerExperience ? "Ask: Write an ASM vacancy for Hyderabad HQ..." : "Ask: Resume for B.Pharm fresher in Hyderabad..."} className="flex-1 rounded-full border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:bg-white" />
               <button onClick={sendAi} disabled={aiLoading} className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4 sm:mr-2 sm:inline" /><span className="hidden sm:inline">Send</span></button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button onClick={() => openSupportTicket('ai')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-extrabold text-white shadow hover:bg-sky-700"><FileText className="h-3.5 w-3.5" /> Raise Support Ticket</button>
-              {(shouldHideJobSeekerExperience ? ['Write MR vacancy JD', 'Interview questions for MR', 'Candidate shortlist checklist', 'Improve vacancy response'] : ['Resume for fresher', 'Mankind interview Q&A', 'Best salary in Hyderabad', 'RCPA tips']).map(q => (
+              {(shouldHideJobSeekerExperience ? ['Write MR to NSM vacancy JD', 'Interview questions for ASM', 'Candidate shortlist checklist', 'Improve vacancy response'] : ['Resume for fresher', 'Mankind interview Q&A', 'Best salary in Hyderabad', 'RCPA tips']).map(q => (
                 <button key={q} onClick={() => setAiInput(q)} className="rounded-full border bg-slate-50 px-3 py-1 text-xs font-semibold hover:bg-white">{q}</button>
               ))}
             </div>
@@ -2912,7 +2949,7 @@ export default function App() {
             </div>
 
             <div className="rounded-2xl border bg-white p-5">
-              <p className="text-sm font-extrabold">What MRs say</p>
+              <p className="text-sm font-extrabold">What pharma professionals say</p>
               <div className="mt-3 grid gap-3">
                 {[
                   { name: 'Rahul K, Hyderabad', role: 'Sun Pharma MR (Placed via Hub)', text: 'Got 3 interviews in a week. Masked contact is genius — no spam, genuine recruiters only.' },
@@ -2980,7 +3017,7 @@ export default function App() {
                     <input value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} placeholder="Search company, HQ, qualification, skill..." className="w-full bg-transparent text-sm outline-none" />
                   </div>
                   <select value={candidateRoleFilter} onChange={e => setCandidateRoleFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500">
-                    {['All Roles', 'Field MR', 'Trainee MR', 'ASM', 'RSM'].map(roleName => <option key={roleName} value={roleName}>{roleName}</option>)}
+                    {ROLES.map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                   </select>
                   <select value={candidateExperienceFilter} onChange={e => setCandidateExperienceFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500">
                     {['All Candidates', 'Freshers', 'Experienced'].map(expType => <option key={expType} value={expType}>{expType}</option>)}
@@ -3023,8 +3060,8 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="mb-6 flex flex-col items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-center text-white shadow-xl sm:flex-row sm:text-left">
             <div className="flex-1">
-              <p className="text-[22px] font-extrabold leading-tight">Hiring Medical Representatives?</p>
-              <p className="mt-1 text-sm opacity-90">Post FREE, reach 50K+ MRs, and shortlist anonymous Job Seeker profiles by experience, company, package, role & HQ. Vacancies go LIVE after Admin verification.</p>
+              <p className="text-[22px] font-extrabold leading-tight">Hiring Pharma Field-Force Talent?</p>
+              <p className="mt-1 text-sm opacity-90">Post FREE for Trainee MR to NSM roles, reach 50K+ pharma professionals, and shortlist anonymous Job Seeker profiles by experience, company, package, role & HQ. Vacancies go LIVE after Admin verification.</p>
             </div>
             <button onClick={() => navigate('postjob')} className="flex shrink-0 items-center gap-2 rounded-full bg-amber-400 px-8 py-4 text-lg font-extrabold text-slate-900 shadow-lg transition hover:bg-amber-300 active:scale-95">
               <Plus className="h-6 w-6" /> Post Vacancy
@@ -3054,8 +3091,8 @@ export default function App() {
                 <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
-                  <p className="text-sm font-semibold text-sky-700">App Founder — MR Vacancies Hub</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ MRs.</p>
+                  <p className="text-sm font-semibold text-sky-700">App Founder — MR to NSM Vacancies Hub</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">9+ years of pharma experience. Ex-Employee (Business Development Manager) at Wallace Pharmaceuticals Pvt. Ltd. Personally verifies every vacancy, mentors 50K+ pharma professionals.</p>
                   <div className="mt-2 flex gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold border">{shouldHideJobSeekerExperience ? 'Candidate contact via Admin only' : '📞 +91 98XXX XXXXX (Pro unlock)'}</span>
                     <BadgeCheck className="h-5 w-5 text-emerald-600" />
@@ -3063,7 +3100,7 @@ export default function App() {
                 </div>
               </div>
               <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-                <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">50K+</p><p className="text-xs text-slate-500">MRs Community</p></div>
+                <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">50K+</p><p className="text-xs text-slate-500">Field-Force Community</p></div>
                 <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">2,400+</p><p className="text-xs text-slate-500">Vacancies verified</p></div>
                 <div className="rounded-xl bg-white p-3"><p className="text-lg font-extrabold">18K</p><p className="text-xs text-slate-500">Placements</p></div>
               </div>
@@ -3075,7 +3112,7 @@ export default function App() {
 
             <div className="rounded-2xl border bg-white p-6">
               <h3 className="text-lg font-extrabold">Recruiter Dashboard</h3>
-              <p className="text-sm text-slate-500">For pharma companies & stockist managers. Post once, reach 50k+ MRs instantly.</p>
+              <p className="text-sm text-slate-500">For pharma companies & stockist managers. Post once, reach 50k+ pharma professionals instantly.</p>
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-4 py-3">
                   <div><p className="text-sm font-bold">Post New Vacancy</p><p className="text-xs text-slate-500">Takes 2 mins • Goes LIVE after Admin approval</p></div>
@@ -3142,7 +3179,7 @@ export default function App() {
             <div className="mt-5 grid grid-cols-3 gap-2 text-center">
               <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-sky-600">1</p><p className="text-xs font-bold">Fill the Form</p><p className="text-[11px] text-slate-500">Takes 2 minutes</p></div>
               <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-amber-500">2</p><p className="text-xs font-bold">Admin Verifies</p><p className="text-[11px] text-slate-500">Divakar Reddy calls you</p></div>
-              <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-emerald-600">3</p><p className="text-xs font-bold">Goes LIVE ✅</p><p className="text-[11px] text-slate-500">Visible to 50K+ MRs</p></div>
+              <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-emerald-600">3</p><p className="text-xs font-bold">Goes LIVE ✅</p><p className="text-[11px] text-slate-500">Visible to 50K+ professionals</p></div>
             </div>
 
             {recruiterSubmitted ? (
@@ -3167,11 +3204,11 @@ export default function App() {
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Company Name *</label><input value={recruiterJob.company} onChange={e => setRecruiterJob({ ...recruiterJob, company: e.target.value })} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Job Title</label><input value={recruiterJob.title} onChange={e => setRecruiterJob({ ...recruiterJob, title: e.target.value })} placeholder="Medical Representative" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Division</label><input value={recruiterJob.division} onChange={e => setRecruiterJob({ ...recruiterJob, division: e.target.value })} placeholder="e.g. Cardio Diabetic" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={recruiterJob.type} onChange={e => setRecruiterJob({ ...recruiterJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Field MR">Field MR</option><option value="Trainee MR">Trainee MR</option><option value="ASM">ASM</option><option value="RSM">RSM</option></select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={recruiterJob.type} onChange={e => setRecruiterJob({ ...recruiterJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{JOB_ROLES.map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}</select></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">State</label><select value={recruiterJob.state} onChange={e => setRecruiterJob({ ...recruiterJob, state: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{LOCATIONS.slice(1).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">City (HQ)</label><input value={recruiterJob.city} onChange={e => setRecruiterJob({ ...recruiterJob, city: e.target.value })} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">HQ Area (optional)</label><input value={recruiterJob.area} onChange={e => setRecruiterJob({ ...recruiterJob, area: e.target.value })} placeholder="e.g. Ameerpet → Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience Required</label><select value={recruiterJob.exp} onChange={e => setRecruiterJob({ ...recruiterJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option>0-2 yrs (Freshers can apply)</option><option>0.5-2 yrs</option><option>1-3 yrs</option><option>1-4 yrs</option><option>2-5 yrs</option><option>4-7 yrs</option><option>6-10 yrs</option></select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience Required</label><select value={recruiterJob.exp} onChange={e => setRecruiterJob({ ...recruiterJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{VACANCY_EXPERIENCE_OPTIONS.map(expOption => <option key={expOption} value={expOption}>{expOption}</option>)}</select></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">CTC / Salary *</label><input value={recruiterJob.ctc} onChange={e => setRecruiterJob({ ...recruiterJob, ctc: e.target.value })} placeholder="e.g. ₹3.5 - 4.5 LPA + TA/DA" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">No. of Openings</label><input type="number" min="1" value={recruiterJob.vacancies} onChange={e => setRecruiterJob({ ...recruiterJob, vacancies: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={recruiterJob.qual} onChange={e => setRecruiterJob({ ...recruiterJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
@@ -3191,7 +3228,7 @@ export default function App() {
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
               <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
-              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ MRs trust MR Vacancies Hub.</p>
+              <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust MR to NSM Vacancies Hub.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
           </div>
@@ -3218,7 +3255,7 @@ export default function App() {
                   <div>
                     <p className="text-[10px] font-extrabold tracking-widest text-sky-100">SUPPORT ADMIN</p>
                     <p className="text-sm font-extrabold">M Divakar Reddy</p>
-                    <p className="text-xs text-sky-100">App Founder — MR Vacancies Hub</p>
+                    <p className="text-xs text-sky-100">App Founder — MR to NSM Vacancies Hub</p>
                   </div>
                 </div>
                 <button onClick={() => navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
@@ -3237,10 +3274,10 @@ export default function App() {
               <div className="border-b pb-5">
                 <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700">{legalTab === 'privacy' ? <ShieldCheck className="h-4 w-4" /> : <FileText className="h-4 w-4" />} MR VACANCIES HUB • SINCE 2026</p>
                 <h3 className="mt-2 text-[26px] font-extrabold leading-tight">{legalTab === 'privacy' ? 'Privacy Policy' : 'Terms & Privacy'}</h3>
-                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — MR Vacancies Hub</p>
+                <p className="mt-1 text-sm text-slate-500">Effective from {LEGAL_POLICY_DATE} • Managed by M Divakar Reddy, App Founder — MR to NSM Vacancies Hub</p>
                 <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm leading-relaxed text-sky-900">
                   {legalTab === 'privacy'
-                    ? 'Your privacy matters. This policy explains what information MR Vacancies Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
+                    ? 'Your privacy matters. This policy explains what information MR to NSM Vacancies Hub collects, how it is used, when it is shared and how you can contact support for correction, privacy or account-deletion help.'
                     : 'Please read these terms carefully. They explain account rules, Job Seeker and Recruiter responsibilities, Admin approval, sponsored ads, AI Assistant use, support tickets, prohibited activity and account deletion.'}
                 </div>
               </div>
@@ -3370,7 +3407,7 @@ export default function App() {
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
-                  <p className="text-xs text-slate-500">App Founder — MR Vacancies Hub • Admin</p>
+                  <p className="text-xs text-slate-500">App Founder — MR to NSM Vacancies Hub • Admin</p>
                 </div>
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
@@ -3506,11 +3543,11 @@ export default function App() {
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Company Name *</label><input value={newJob.company} onChange={e => setNewJob({ ...newJob, company: e.target.value })} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Job Title</label><input value={newJob.title} onChange={e => setNewJob({ ...newJob, title: e.target.value })} placeholder="Medical Representative" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Division</label><input value={newJob.division} onChange={e => setNewJob({ ...newJob, division: e.target.value })} placeholder="e.g. Cardio Diabetic" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={newJob.type} onChange={e => setNewJob({ ...newJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Field MR">Field MR</option><option value="Trainee MR">Trainee MR</option><option value="ASM">ASM</option><option value="RSM">RSM</option></select></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Role</label><select value={newJob.type} onChange={e => setNewJob({ ...newJob, type: e.target.value as Job['type'] })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{JOB_ROLES.map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}</select></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">State</label><select value={newJob.state} onChange={e => setNewJob({ ...newJob, state: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{LOCATIONS.slice(1).map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">City</label><input value={newJob.city} onChange={e => setNewJob({ ...newJob, city: e.target.value })} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">HQ Area (optional)</label><input value={newJob.area} onChange={e => setNewJob({ ...newJob, area: e.target.value })} placeholder="e.g. Ameerpet → HQ becomes Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience</label><select value={newJob.exp} onChange={e => setNewJob({ ...newJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option>0-2 yrs (Freshers can apply)</option><option>0.5-2 yrs</option><option>1-3 yrs</option><option>1-4 yrs</option><option>2-5 yrs</option><option>4-7 yrs</option><option>6-10 yrs</option></select></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Experience</label><select value={newJob.exp} onChange={e => setNewJob({ ...newJob, exp: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500">{VACANCY_EXPERIENCE_OPTIONS.map(expOption => <option key={expOption} value={expOption}>{expOption}</option>)}</select></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">CTC / Salary *</label><input value={newJob.ctc} onChange={e => setNewJob({ ...newJob, ctc: e.target.value })} placeholder="e.g. ₹3.5 - 4.5 LPA + TA/DA" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">No. of Openings</label><input type="number" min="1" value={newJob.vacancies} onChange={e => setNewJob({ ...newJob, vacancies: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={newJob.qual} onChange={e => setNewJob({ ...newJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
@@ -3554,7 +3591,7 @@ export default function App() {
                           <span className="text-slate-500">{job.submittedAt}</span>
                           <span className="ml-auto flex gap-2">
                             <a href={`tel:${job.phone.replace(/\s/g, '')}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 font-bold text-white"><Phone className="h-3 w-3" /> Call to Verify</a>
-                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from MR Vacancies Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                            <a href={`https://wa.me/${job.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I am M Divakar Reddy from MR to NSM Vacancies Hub. Verifying your ' + job.company + ' vacancy at ' + job.hq)}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           </span>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -3598,7 +3635,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from MR Vacancies Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from MR to NSM Vacancies Hub. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
                           <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
                         </div>
@@ -3672,7 +3709,7 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${ticket.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
-                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from MR Vacancies Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
+                          <a href={`https://wa.me/91${ticket.mobile}?text=${encodeURIComponent('Hi ' + ticket.name + ', I am M Divakar Reddy from MR to NSM Vacancies Hub. I am reviewing your support ticket ' + ticket.ticketNo + '.')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
                           <a href={buildAdminReplyMailto(ticket)} className="flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"><Mail className="h-3 w-3" /> Email Reply</a>
                           <div className="ml-auto flex flex-wrap gap-1.5">
                             {[
@@ -3753,8 +3790,8 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR Vacancies Hub</p></div>
-              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'Post verified vacancies free after Admin approval and shortlist anonymous MR candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'India’s trusted job app for Medical Representatives — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.'}</p>
+              <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-white"><Briefcase className="h-5 w-5" /></div><p className="font-extrabold text-white">MR to NSM Vacancies Hub</p></div>
+              <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'Post verified MR to NSM vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'India’s trusted job app for pharma field-force roles from MR to NSM — since 2026. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy.'}</p>
             </div>
             <div>
               <p className="text-sm font-bold text-white">Explore</p>
@@ -3790,9 +3827,9 @@ export default function App() {
             <div className="rounded-2xl bg-white/10 p-4">
               <p className="text-sm font-bold text-white">Managed by</p>
               <p className="mt-1 font-extrabold text-white">M Divakar Reddy</p>
-              <p className="text-xs opacity-80">App Founder — MR Vacancies Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
+              <p className="text-xs opacity-80">App Founder — MR to NSM Vacancies Hub • 9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
               {isAdmin && <button onClick={() => openAdmin()} className="mt-3 w-full rounded-full bg-sky-600 py-2 text-xs font-bold text-white hover:bg-sky-500">Open Admin Dashboard</button>}
-              <p className="mt-3 text-xs opacity-80">© 2026 MR Vacancies Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
+              <p className="mt-3 text-xs opacity-80">© 2026 MR to NSM Vacancies Hub • Since 2026. All vacancies verified. No spam — masked contacts & ad-labeled.</p>
               <div className="mt-3 flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-emerald-500 px-2.5 py-1 font-bold text-white">Verified Jobs</span>
                 <span className="rounded-full bg-sky-600 px-2.5 py-1 font-bold text-white">Since 2026</span>
@@ -3822,7 +3859,7 @@ export default function App() {
               <div className="p-6">
                 <div className="flex flex-wrap gap-2">
                   {selected.verified && <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">Verified</span>}
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.type}</span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{getRoleLabel(selected.type)}</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.exp}</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{selected.ctc}</span>
                   {isExtraJob(selected) && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-extrabold text-amber-800">Extra Job • Separate Ads</span>}
@@ -3860,7 +3897,7 @@ export default function App() {
                   {isPhoneVisible(selected) && (
                     <div className="mt-3 flex gap-2">
                       <a href={`tel:${selected.phone.replace(/\s/g, '')}`} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-emerald-500 py-2.5 text-sm font-bold text-white"><Phone className="h-4 w-4" /> Call</a>
-                      <a href={`https://wa.me/${selected.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(selected) + ' MR vacancy at ' + selected.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp</a>
+                      <a href={`https://wa.me/${selected.phone.replace(/\D/g, '')}?text=Hi%20Sir%2C%20interested%20in%20${encodeURIComponent(getDisplayCompany(selected) + ' ' + selected.type + ' vacancy at ' + selected.hq)}`} target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-2.5 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp</a>
                     </div>
                   )}
                 </div>
@@ -3966,7 +4003,7 @@ export default function App() {
             <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[980px] overflow-auto rounded-2xl bg-white">
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
-                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — MR Vacancies Hub</p>
+                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — MR to NSM Vacancies Hub</p>
                   <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>

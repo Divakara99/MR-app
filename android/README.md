@@ -30,9 +30,9 @@ Replace test IDs in `src/App.tsx` & `AndroidManifest.xml`:
 ```
 
 ## 4. Play Console Steps
-- Create app: `MR Vacancies Hub - Pharma MR Jobs`, package `com.mrvacancieshub.app`
+- Create app: `MR to NSM Vacancies Hub - Pharma Jobs from MR to NSM`, package `com.mrvacancieshub.app`
 - Upload `app-release-bundle.aab`
-- Complete: Data Safety (contact, app activity, ads), Content Rating questionnaire (Everyone), Ads declaration (Yes), Privacy Policy URL (`https://yourdomain.com/privacy-policy.html`), In-app products (subscriptions: starter_monthly, pro_monthly, recruiter_monthly), Screenshots (1080x1920) + Feature graphic 1024x500 + Icon 512x512.
+- Complete: Data Safety (contact, app activity, ads), Content Rating questionnaire (Everyone), Ads declaration (Yes), Privacy Policy URL (`https://yourdomain.com/privacy-policy.html`), In-app products (subscriptions: starter_monthly, pro_monthly (Job Seeker plans only; no Recruiter plan)), Screenshots (1080x1920) + Feature graphic 1024x500 + Icon 512x512.
 - Digital Asset Links: copy SHA256 from Play Console → Signing → paste into `.well-known/assetlinks.json`, redeploy, verify at `https://digitalassetlinks.googleapis.com`.
 
 ## 5. PWA stays primary

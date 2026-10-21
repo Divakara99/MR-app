@@ -11,9 +11,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'MR Vacancies Hub',
-        short_name: 'MR Vacancies',
-        description: 'Verified pharma job vacancies for Medical Representatives. Managed by M Divakar Reddy.',
+        name: 'MR to NSM Vacancies Hub',
+        short_name: 'MR to NSM',
+        description: 'Verified pharma field-force vacancies from Trainee MR to ASM, RSM, ZSM and NSM. Managed by M Divakar Reddy.',
         theme_color: '#0284c7',
         background_color: '#f0f7ff',
         display: 'standalone',
