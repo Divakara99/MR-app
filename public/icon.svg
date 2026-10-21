@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="120" fill="#0284c7"/>
+  <rect x="96" y="120" width="320" height="272" rx="24" fill="white"/>
+  <circle cx="256" cy="200" r="44" fill="#0284c7"/>
+  <rect x="176" y="268" width="160" height="14" rx="7" fill="#e0f2fe"/>
+  <rect x="176" y="296" width="120" height="14" rx="7" fill="#bae6fd"/>
+  <rect x="176" y="324" width="140" height="14" rx="7" fill="#e0f2fe"/>
+  <g transform="translate(356 356)">
+    <circle r="36" fill="#f59e0b"/>
+    <text x="0" y="7" text-anchor="middle" font-family="Arial" font-size="20" font-weight="800" fill="white">MR</text>
+  </g>
+  <text x="256" y="460" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="white" letter-spacing="2">PHARMASALES JOBS</text>
+</svg>

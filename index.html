@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      (function () {
+        var origError = console.error;
+        console.error = function () {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function (a) {
+            return (a && a.message) ? a.message : String(a);
+          }).join(' ');
+          if (
+            msg.indexOf('WebSocket closed without opened') !== -1 ||
+            (msg.indexOf('WebSocket') !== -1 && (msg.indexOf('vite') !== -1 || msg.indexOf('closed') !== -1))
+          ) {
+            // Suppress benign Vite HMR WebSocket connection failure in proxy/iframe environment
+            return;
+          }
+          return origError.apply(console, arguments);
+        };
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>PharmaSales Jobs — The MR to NSM Jobs Network</title>
+    <meta name="description" content="PharmaSales Jobs — The MR to NSM Jobs Network. Verified pharma field-force vacancies from Trainee MR and Field MR to Senior MR, ASM, RSM, ZSM and NSM, with privacy-protected contacts and anonymous Job Seeker profiles for Recruiters. Managed by M Divakar Reddy since 2026." />
+    <meta property="og:title" content="PharmaSales Jobs — The MR to NSM Jobs Network" />
+    <meta property="og:description" content="PharmaSales Jobs — The MR to NSM Jobs Network. Verified pharma field-force vacancies from Trainee MR and Field MR to Senior MR, ASM, RSM, ZSM and NSM, with privacy-protected contacts and anonymous Job Seeker profiles for Recruiters. Managed by M Divakar Reddy since 2026." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/pharmasales-jobs-logo.png" />
+    <meta name="twitter:image" content="/pharmasales-jobs-logo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0284c7" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="PharmaSales Jobs" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <script>
+      // Gracefully handle benign Vite HMR WebSocket connection drops in iframe/sandbox preview
+      window.addEventListener('error', function (e) {
+        if (
+          e.message && (
+            e.message.indexOf('WebSocket') !== -1 ||
+            e.message.indexOf('@vite') !== -1
+          )
+        ) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var reason = (e && e.reason) ? (e.reason.message || String(e.reason)) : '';
+        if (reason && reason.indexOf('WebSocket') !== -1) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-[#f0f7ff] text-slate-900 antialiased selection:bg-sky-500 selection:text-white min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
