@@ -2023,7 +2023,8 @@ export default function App() {
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
-              <div className="mt-3 space-y-3">
+              {/* Two separate role choices, each on its own line with a clear gap. */}
+              <div className="mt-3 space-y-4">
                 <button onClick={() => enterAs('seeker')} className="flex w-full items-center gap-3 rounded-2xl bg-sky-600 p-4 text-left text-white shadow transition hover:bg-sky-700 active:scale-[0.99]">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20"><User className="h-5 w-5" /></span>
                   <span className="flex-1">
@@ -2041,7 +2042,15 @@ export default function App() {
                   <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                 </button>
               </div>
-              <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 px-3 py-2.5 text-left">
+
+              {/* Clear separator: the Founder card stands alone below the two role choices. */}
+              <div className="my-5 flex items-center gap-3" aria-hidden="true">
+                <span className="h-px flex-1 bg-slate-200" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-300" />
+                <span className="h-px flex-1 bg-slate-200" />
+              </div>
+
+              <div className="flex items-center gap-2.5 rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 to-indigo-50 px-3 py-2.5 text-left shadow-sm">
                 <button onClick={() => handleSecretTap()} aria-label="M Divakar Reddy — Founder" className="shrink-0 select-none transition active:scale-95">
                   <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Founder" className="h-11 w-11 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
                 </button>
@@ -2052,7 +2061,7 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
+              <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
               <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-extrabold text-sky-700">
                 <button type="button" onClick={() => openLegal('privacy')} className="hover:text-sky-900 hover:underline">Privacy Policy</button><span className="text-slate-300">•</span>
                 <button type="button" onClick={() => openLegal('terms')} className="hover:text-sky-900 hover:underline">Terms &amp; Privacy</button><span className="text-slate-300">•</span>
