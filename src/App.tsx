@@ -2101,16 +2101,9 @@ export default function App() {
                         <p className="text-[11px] font-bold text-sky-700">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
                         <p className="truncate text-[11px] text-slate-500">{currentUser.email}</p>
                       </div>
-                      <button onClick={handleUserLogout} className="flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
-                    {currentUser.role === 'recruiter' && (
-                      <button onClick={() => { setShowMobileMenu(false); setShowDeleteAccountConfirm(true) }} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 py-2 text-[11px] font-extrabold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Delete Recruiter Account</button>
-                    )}
                     {currentUser.role === 'seeker' && (
-                      <>
-                        <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
-                        <button onClick={openDeletionRequest} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 py-2 text-[11px] font-extrabold text-amber-700"><FileText className="h-3.5 w-3.5" /> {myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</button>
-                      </>
+                      <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
                     )}
                   </div>
                 )}
@@ -2122,7 +2115,7 @@ export default function App() {
                 <div className="grid gap-2">
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
-                    { label: 'Browse Vacancies', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
+                    { label: 'Browse Jobs', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
                     { label: 'Subscription Plans', sub: 'Free → Starter ₹99 → Pro ₹499', icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
@@ -2146,6 +2139,41 @@ export default function App() {
                   ))}
                 </div>
 
+                {currentUser && hasAuthenticated && (
+                  <>
+                    <p className="mb-2 mt-5 text-[11px] font-bold tracking-widest text-slate-400">ACCOUNT ACTIONS</p>
+                    <div className="grid gap-2">
+                      {currentUser.role === 'seeker' ? (
+                        <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-left transition hover:bg-amber-100/70 active:scale-[0.98]">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700 shadow-sm"><FileText className="h-5 w-5" /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-bold leading-tight text-amber-900">{myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : myDeletionRequest?.status === 'rejected' ? 'Request Account Deletion Again' : 'Request Account Deletion'}</span>
+                            <span className="block text-xs text-amber-700">Admin approval is required</span>
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-amber-500" />
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => { setShowMobileMenu(false); setShowDeleteAccountConfirm(true) }} className="flex w-full items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-left transition hover:bg-red-100/70 active:scale-[0.98]">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-red-600 shadow-sm"><Trash2 className="h-5 w-5" /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-bold leading-tight text-red-700">Delete Recruiter Account</span>
+                            <span className="block text-xs text-red-500">Permanently delete this account</span>
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-red-400" />
+                        </button>
+                      )}
+                      <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-red-50 active:scale-[0.98]">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><LogOut className="h-5 w-5" /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold leading-tight text-slate-700">Logout</span>
+                          <span className="block text-xs text-slate-500">Sign out from this account</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
+                    </div>
+                  </>
+                )}
+
                 {shouldHideJobSeekerExperience ? (
                   <>
                     <div className="mt-5 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-4">
@@ -2163,11 +2191,6 @@ export default function App() {
                     <div className="mt-5 rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 p-4">
                       <p className="flex items-center gap-2 text-sm font-extrabold"><Gift className="h-4 w-4 text-amber-600" /> Free unlock via Ad?</p>
                       <p className="mt-1 text-xs leading-relaxed text-slate-600">Free: 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Apply Now plays a sponsored ad on every plan.</p>
-                    </div>
-                    <div className="mt-4 grid gap-2">
-                      <button onClick={() => navigate('jobs')} className="flex items-center justify-center gap-2 rounded-xl border bg-white px-4 py-3 text-sm font-bold">
-                        <Search className="h-4 w-4" /> Browse Jobs
-                      </button>
                     </div>
                   </>
                 )}
