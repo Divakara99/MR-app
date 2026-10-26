@@ -2038,8 +2038,8 @@ export default function App() {
                 <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'seeker'} onClick={() => handleWelcomeRoleSelect('seeker')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'seeker' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
                   <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'bg-white/20 text-white' : 'bg-sky-100 text-sky-700'}`}><User className="h-5 w-5" /></span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[15px] font-extrabold leading-tight">I am a Job Seeker (MR to NSM)</span>
-                    <span className={`block text-xs transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'text-sky-50' : 'text-slate-500'}`}>Complete job profile • Find verified vacancies • Apply faster</span>
+                    <span className="block text-[15px] font-extrabold leading-tight">I am Job seeker</span>
+                    <span className={`mt-0.5 block text-[11px] font-extrabold uppercase tracking-wide transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'text-sky-50' : 'text-sky-700'}`}>MR, ASM, RSM, ZSM, NSM</span>
                   </span>
                   {welcomeSelectedRole === 'seeker' ? (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow" aria-label="Selected"><Check className="h-4 w-4" /></span>
