@@ -749,9 +749,9 @@ export default function App() {
     navigate('auth')
   }
   const handleWelcomeRoleSelect = (r: EntryRole) => {
-    // Welcome is a two-step flow: first select the role, then use the
-    // Login / Register button that appears below the two role cards.
-    setEntryRole(r)
+    // Welcome is a two-step flow: tap a role to select it and reveal its
+    // Login / Register button; tap the selected role again to unselect it.
+    setEntryRole(prev => (prev === r ? null : r))
     setAuthStep('mobile')
     setAuthError('')
   }
@@ -2032,10 +2032,10 @@ export default function App() {
               </div>
 
               <p className="mt-6 text-center text-sm font-extrabold">Continue as</p>
-              {/* Two separate role choices. Tapping one moves the blue fill/check
-                  mark to it and reveals the Login / Register button below. */}
-              <div className="mt-3 space-y-4" role="radiogroup" aria-label="Continue as">
-                <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'seeker'} onClick={() => handleWelcomeRoleSelect('seeker')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'seeker' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
+              {/* Two separate role choices. Tap to select and reveal Login /
+                  Register; tap the selected role again to unselect it. */}
+              <div className="mt-3 space-y-4" role="group" aria-label="Continue as">
+                <button type="button" aria-pressed={welcomeSelectedRole === 'seeker'} onClick={() => handleWelcomeRoleSelect('seeker')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'seeker' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
                   <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'seeker' ? 'bg-white/20 text-white' : 'bg-sky-100 text-sky-700'}`}><User className="h-5 w-5" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am Job seeker</span>
@@ -2047,11 +2047,11 @@ export default function App() {
                     <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
                   )}
                 </button>
-                <button type="button" role="radio" aria-checked={welcomeSelectedRole === 'recruiter'} onClick={() => handleWelcomeRoleSelect('recruiter')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'recruiter' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
+                <button type="button" aria-pressed={welcomeSelectedRole === 'recruiter'} onClick={() => handleWelcomeRoleSelect('recruiter')} className={`flex w-full items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all duration-300 active:scale-[0.99] ${welcomeSelectedRole === 'recruiter' ? 'border-sky-600 bg-sky-600 text-white shadow-lg' : 'border-slate-200 bg-white text-slate-900 hover:border-sky-300 hover:bg-sky-50'}`}>
                   <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-600'}`}><Building2 className="h-5 w-5" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
-                    <span className={`block text-xs transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'text-sky-50' : 'text-slate-500'}`}>Post MR to NSM vacancies • View anonymous candidate profiles • Admin approval</span>
+                    <span className={`mt-0.5 block text-[11px] font-extrabold tracking-wide transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'text-sky-50' : 'text-amber-700'}`}>Hire MR to NSM Talent Faster</span>
                   </span>
                   {welcomeSelectedRole === 'recruiter' ? (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow" aria-label="Selected"><Check className="h-4 w-4" /></span>
