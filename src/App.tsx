@@ -3,7 +3,7 @@ import {
   Search, MapPin, Briefcase, IndianRupee, Building2, BadgeCheck, Clock3,
   Eye, EyeOff, Bookmark, BookmarkCheck, Share2, Phone, Mail, Filter, X, Menu,
   Crown, ShieldCheck, Sparkles, Zap, Star, Users, TrendingUp, FileText, Send,
-  MessageCircle, Play, Smartphone, ChevronDown, ChevronUp, ChevronRight,
+  MessageCircle, Play, Smartphone, ChevronDown, ChevronUp, ChevronRight, ArrowLeft,
   GraduationCap, Layers, Siren, Megaphone, Quote,
   LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
   Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
@@ -447,6 +447,7 @@ export default function App() {
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [page, setPage] = useState<AppPage>(() => getInitialPage())
+  const [pageHistory, setPageHistory] = useState<AppPage[]>([])
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
@@ -589,32 +590,32 @@ export default function App() {
     }
   }, [aiMessages])
 
-  const navigate = (p: typeof page) => {
+  const navigate = (p: typeof page, options: { fromBack?: boolean; resetHistory?: boolean } = {}) => {
     const jobSeekerOnlyPages: AppPage[] = ['home', 'jobs', 'pricing', 'saved', 'profile']
+    let destination: AppPage = p
+    let blockedToast: string | null = null
+
     if (shouldHideJobSeekerExperience && jobSeekerOnlyPages.includes(p)) {
-      setPage('recruiters')
-      setShowMobileMenu(false)
-      setShowAccountMenu(false)
-      setSelectedCandidate(null)
+      destination = 'recruiters'
+      blockedToast = 'Recruiter view: job search, Apply Now and Job Seeker plans are hidden. Post a vacancy or open Candidates List.'
       setSelected(null)
       setShowPricing(false)
-      setToast('Recruiter view: job search, Apply Now and Job Seeker plans are hidden. Post a vacancy or open Candidates List.')
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-      return
+    } else if (p === 'candidates' && currentUser && currentUser.role === 'seeker' && !isAdmin) {
+      destination = getAccountDestination(currentUser)
+      blockedToast = 'Candidates List is only for Recruiters and Admin. Job Seeker accounts stay in the Job Seeker view.'
     }
-    if (p === 'candidates' && currentUser && currentUser.role === 'seeker' && !isAdmin) {
-      setPage(getAccountDestination(currentUser))
-      setShowMobileMenu(false)
-      setShowAccountMenu(false)
-      setSelectedCandidate(null)
-      setToast('Candidates List is only for Recruiters and Admin. Job Seeker accounts stay in the Job Seeker view.')
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-      return
+
+    if (options.resetHistory) {
+      setPageHistory([])
+    } else if (!options.fromBack && destination !== page) {
+      setPageHistory(prev => (prev[prev.length - 1] === page ? prev.slice(-30) : [...prev.slice(-30), page]))
     }
-    setPage(p)
+
+    setPage(destination)
     setShowMobileMenu(false)
     setShowAccountMenu(false)
     setSelectedCandidate(null)
+    if (blockedToast) setToast(blockedToast)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -668,11 +669,93 @@ export default function App() {
     if (isAdmin) { openAdmin('overview'); return }
     navigate(getSafeHomeDestination())
   }
+  const isBackDestinationAllowed = (destination: AppPage): boolean => {
+    if (destination === page) return false
+    if (destination === 'welcome' || destination === 'auth') return !hasAuthenticated && !isAdmin
+    if (destination === 'admin') return isAdmin || !hasAuthenticated
+    if (shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved', 'profile'].includes(destination)) return false
+    if (destination === 'candidates') return isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
+    if (destination === 'profile') return isAdmin || currentUser?.role === 'seeker'
+    return true
+  }
+  const getFallbackBackDestination = (): AppPage | null => {
+    if (page === 'welcome' || page === 'admin') return null
+    if (page === 'auth') return 'welcome'
+    if (page === 'candidates' || page === 'postjob') return 'recruiters'
+    if (page === 'saved' || page === 'pricing') return 'jobs'
+    if (page === 'jobs') return 'home'
+    if (page === 'profile') return currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'home' : 'jobs'
+    if (page === 'legal') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
+      return entryRole ? 'auth' : 'welcome'
+    }
+    if (page === 'ai') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
+      return 'welcome'
+    }
+    if (page === 'recruiters') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser?.role === 'recruiter') return null
+      if (hasAuthenticated && currentUser?.role === 'seeker') return 'home'
+      return 'welcome'
+    }
+    if (page === 'home') {
+      if (isAdmin) return 'admin'
+      return hasAuthenticated ? null : 'welcome'
+    }
+    return null
+  }
+  const getBackDestination = (): AppPage | null => {
+    for (let i = pageHistory.length - 1; i >= 0; i -= 1) {
+      const destination = pageHistory[i]
+      if (isBackDestinationAllowed(destination)) return destination
+    }
+    const fallback = getFallbackBackDestination()
+    return fallback && isBackDestinationAllowed(fallback) ? fallback : null
+  }
+  const backDestination = getBackDestination()
+  const canGoBack = Boolean(backDestination || (page === 'auth' && authStep === 'register') || (page === 'admin' && isAdmin && adminTab !== 'overview'))
+  const handlePageBack = () => {
+    if (showMobileMenu) { setShowMobileMenu(false); return }
+    if (showAccountMenu) { setShowAccountMenu(false); return }
+    if (selectedCandidate) { setSelectedCandidate(null); return }
+    if (selected) { setSelected(null); return }
+    if (page === 'auth' && authStep === 'register') {
+      setAuthStep('mobile')
+      setAuthError('')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    if (page === 'admin' && isAdmin && adminTab !== 'overview') {
+      setAdminTab('overview')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+
+    const remainingHistory = [...pageHistory]
+    let destination: AppPage | null = null
+    while (remainingHistory.length > 0) {
+      const candidate = remainingHistory.pop()
+      if (candidate && isBackDestinationAllowed(candidate)) {
+        destination = candidate
+        break
+      }
+    }
+    if (!destination) {
+      const fallback = getFallbackBackDestination()
+      destination = fallback && isBackDestinationAllowed(fallback) ? fallback : null
+    }
+    setPageHistory(remainingHistory)
+    if (destination) navigate(destination, { fromBack: true })
+  }
+  const showGlobalPageBack = canGoBack && page !== 'welcome' && page !== 'auth' && page !== 'candidates' && !isAdminLoginPage
   const handleExitAdminLogin = () => {
     setAdminError('')
     setAdminPass('')
     setShowAdminPass(false)
-    navigate(hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome')
+    navigate(hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome', { resetHistory: true })
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
   const writeAccounts = (nextAccounts: Account[]) => {
@@ -728,11 +811,11 @@ export default function App() {
       setSeekerProfileForm(account.profile ?? EMPTY_SEEKER_PROFILE)
       setSeekerProfileError('')
       setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
-      navigate('profile')
+      navigate('profile', { resetHistory: true })
       return
     }
     setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
-    navigate(destinationForRole(account.role))
+    navigate(destinationForRole(account.role), { resetHistory: true })
   }
   const enterAs = (r: EntryRole) => {
     setEntryRole(r)
@@ -1048,7 +1131,7 @@ export default function App() {
     setAuthError('')
     setShowMobileMenu(false)
     setToast('Logged out successfully')
-    navigate('welcome')
+    navigate('welcome', { resetHistory: true })
   }
   const handleDeleteRecruiterAccount = async () => {
     if (!currentUser || currentUser.role !== 'recruiter') return
@@ -1074,7 +1157,7 @@ export default function App() {
     setShowDeleteAccountConfirm(false)
     setShowMobileMenu(false)
     setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
-    navigate('welcome')
+    navigate('welcome', { resetHistory: true })
   }
   const openDeletionRequest = () => {
     if (!currentUser || currentUser.role !== 'seeker') return
@@ -1164,6 +1247,7 @@ export default function App() {
     const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
     if (idOk && adminPass === storedAdminPassword()) {
       setIsAdmin(true)
+      setPageHistory([])
       try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
       setAdminError(''); setAdminPass('')
       setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
@@ -1191,7 +1275,7 @@ export default function App() {
     setShowAccountMenu(false)
     setShowMobileMenu(false)
     setToast('Admin logged out. See you soon, Divakar Reddy!')
-    navigate(destination)
+    navigate(destination, { resetHistory: true })
   }
   const handlePostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
@@ -1315,13 +1399,13 @@ export default function App() {
           setCurrentUser(null)
           setHasAuthenticated(false)
           setEntryRole(storedSession.role)
-          navigate('welcome')
+          navigate('welcome', { resetHistory: true })
           return
         }
         setCurrentUser(account)
         setHasAuthenticated(true)
         setEntryRole(account.role)
-        if (page === 'welcome') navigate(getAccountDestination(account))
+        if (page === 'welcome') navigate(getAccountDestination(account), { resetHistory: true })
       } catch {
         // Keep the locally saved login when the device is offline.
       }
@@ -1999,6 +2083,16 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Global top-left back arrow: Auth, Candidates and Admin Login place
+          the same icon-only control at the top-left of their own screens. */}
+      {showGlobalPageBack && (
+        <div className="mx-auto max-w-[1280px] px-4 pt-3">
+          <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95">
+            <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
+          </button>
+        </div>
+      )}
+
       {page === 'jobs' && currentUser?.role === 'seeker' && hasAuthenticated && !isSeekerProfileComplete(currentUser.profile) && (
         <div className="mx-auto max-w-[1280px] px-4 pt-4">
           <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center">
@@ -2117,7 +2211,7 @@ export default function App() {
         <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
           <div className="w-full max-w-md">
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
-              <button onClick={() => navigate('welcome')} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
+              <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95"><ArrowLeft className="h-5 w-5" strokeWidth={2.5} /></button>
               <div className="mt-3">
                 <div className="flex items-center gap-2.5 rounded-[20px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3">
                   <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
@@ -3097,7 +3191,7 @@ export default function App() {
       {page === 'candidates' && (
         <section className="mx-auto max-w-[1100px] px-4 py-8">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <button onClick={() => navigate('recruiters')} className="flex items-center gap-1.5 rounded-full border bg-white px-4 py-2 text-xs font-extrabold text-slate-700 shadow-sm hover:bg-slate-50"><ChevronRight className="h-4 w-4 rotate-180" /> Back to Recruiters</button>
+            <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95"><ArrowLeft className="h-5 w-5" strokeWidth={2.5} /></button>
             <button onClick={() => navigate('postjob')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-xs font-extrabold text-white shadow hover:bg-sky-700"><Plus className="h-4 w-4" /> Post Vacancy</button>
           </div>
           <div className="rounded-3xl border border-sky-100 bg-[#f8fbff] p-5 shadow-sm sm:p-6">
@@ -3379,7 +3473,7 @@ export default function App() {
                     <p className="text-xs text-sky-100">App Founder — PharmaSales Jobs</p>
                   </div>
                 </div>
-                <button onClick={() => { if (isAdmin) openAdmin('support'); else navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome') }} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{isAdmin ? 'Back to Admin Dashboard' : currentUser ? 'Back to My App' : entryRole ? 'Back to Login' : 'Back to Welcome'}</button>
+                <button onClick={() => { if (isAdmin) openAdmin('support'); else navigate(currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome') }} className="mt-4 w-full rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white shadow hover:bg-slate-800">{isAdmin ? 'Open Admin Support' : currentUser ? 'Open My App' : entryRole ? 'Open Login' : 'Open Welcome'}</button>
               </div>
             </div>
           </div>
@@ -3522,7 +3616,8 @@ export default function App() {
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           {!isAdmin ? (
             <div className="mx-auto max-w-md">
-              <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="mb-4 flex items-center gap-3">
+                <button type="button" onClick={handleExitAdminLogin} aria-label="Go back" title="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95"><ArrowLeft className="h-5 w-5" strokeWidth={2.5} /></button>
                 <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-sky-100 bg-white px-2.5 py-2 shadow-sm min-[420px]:gap-3 min-[420px]:px-3" aria-label="PharmaSales Jobs — The MR to NSM Jobs Network">
                   <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
                   <div className="min-w-0">
@@ -3530,7 +3625,6 @@ export default function App() {
                     <p className="mt-1 truncate text-[8px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[9px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
-                <button onClick={handleExitAdminLogin} className="flex shrink-0 items-center gap-1 rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-slate-600 shadow-sm hover:text-slate-900"><ChevronRight className="h-4 w-4 rotate-180" /> Back</button>
               </div>
               <div className="rounded-3xl border bg-white p-6 shadow-xl">
                 <div className="text-center">
@@ -4346,6 +4440,7 @@ export default function App() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} onClick={() => setSelectedCandidate(null)} className="fixed inset-0 z-[65] bg-black/55 backdrop-blur-[1px]" />
             <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 260 }} className="fixed right-0 top-0 z-[70] flex h-[100dvh] w-[94%] max-w-[470px] flex-col bg-[#f0f7ff] shadow-2xl">
               <div className="flex items-start gap-3 border-b bg-slate-900 px-4 py-4 text-white">
+                <button type="button" onClick={() => setSelectedCandidate(null)} aria-label="Back to Candidates List" title="Back to Candidates List" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 active:scale-95"><ArrowLeft className="h-5 w-5" strokeWidth={2.5} /></button>
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-900"><User className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-extrabold tracking-widest text-sky-300">CANDIDATE DETAILS • ANONYMOUS</p>
@@ -4360,7 +4455,6 @@ export default function App() {
                   <span>Contact details are shared only through Admin after the candidate gives consent.</span>
                 </div>
                 {renderAnonymousCandidateCard(selectedCandidate)}
-                <button type="button" onClick={() => setSelectedCandidate(null)} className="mt-3 w-full rounded-full border bg-white py-3 text-sm font-extrabold text-slate-700 shadow-sm">Back to Candidates List</button>
               </div>
             </motion.aside>
           </>
