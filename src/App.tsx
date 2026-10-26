@@ -296,7 +296,70 @@ const normalizeMobile = (value: string) => {
   return digits
 }
 const isValidMobile = (value: string) => /^[6-9]\d{9}$/.test(normalizeMobile(value))
-const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim())
+type EmailValidationResult = { error: string | null; suggestion?: string }
+const GMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com'])
+const GMAIL_TYPO_DOMAINS = new Set([
+  'gamil.com', 'gmial.com', 'gmaill.com', 'gmai.com', 'gmal.com', 'gmali.com',
+  'gamil.co', 'gmial.co', 'gmaill.co', 'googlemai.com', 'googlemial.com',
+])
+const isValidGmailUsername = (localPart: string) => {
+  const [username, tag, ...extraParts] = localPart.split('+')
+  if (extraParts.length > 0) return false
+  if (tag !== undefined && !/^[a-z0-9.]+$/.test(tag)) return false
+  return /^[a-z0-9.]{6,30}$/.test(username)
+    && !username.startsWith('.')
+    && !username.endsWith('.')
+    && !username.includes('..')
+}
+const validateEmailAddress = (value: string): EmailValidationResult => {
+  const email = value.trim().toLowerCase()
+  if (!email) return { error: 'Enter your correct email ID.' }
+  if (/\s/.test(email)) return { error: 'Email ID must not contain spaces.' }
+  if (email.length > 254) return { error: 'Email ID is too long. Please check and enter it again.' }
+
+  const parts = email.split('@')
+  if (parts.length !== 2) return { error: 'Enter a correct email ID with one @ sign, e.g. yourname@gmail.com.' }
+  const [localPart, domain] = parts
+  if (!localPart || !domain) return { error: 'Enter a complete email ID, e.g. yourname@gmail.com.' }
+  if (localPart.length > 64) return { error: 'The part before @ is too long. Please check your email ID.' }
+  if (domain.length > 253 || domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) {
+    return { error: 'The email domain is not correct. Please check the part after @.' }
+  }
+
+  const domainLabels = domain.split('.')
+  if (domainLabels.length < 2) return { error: 'Enter the complete email domain, e.g. @gmail.com.' }
+  if (domainLabels.some(label => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
+    return { error: 'The email domain is not correct. Please check the spelling after @.' }
+  }
+  const topLevelDomain = domainLabels[domainLabels.length - 1]
+  if (!/^[a-z]{2,}$/.test(topLevelDomain) && !/^xn--[a-z0-9-]+$/.test(topLevelDomain)) {
+    return { error: 'The ending of the email domain is not correct. Please check it carefully.' }
+  }
+
+  const looksLikeGmailTypo = !GMAIL_DOMAINS.has(domain)
+    && (domain.startsWith('gmail.') || domain.startsWith('googlemail.') || GMAIL_TYPO_DOMAINS.has(domain))
+  if (looksLikeGmailTypo) {
+    const suggestion = isValidGmailUsername(localPart) ? `${localPart}@gmail.com` : undefined
+    return { error: 'Gmail IDs must end with @gmail.com. Please correct the domain spelling.', suggestion }
+  }
+
+  if (GMAIL_DOMAINS.has(domain)) {
+    if (!isValidGmailUsername(localPart)) {
+      return { error: 'Enter a correct Gmail ID. A Gmail username has 6–30 letters, numbers or dots; it cannot start/end with a dot or contain double dots, underscores or hyphens.' }
+    }
+    return { error: null }
+  }
+
+  const validLocalPart = /^[a-z0-9!#$%&'*+\-/=?^_`{|}~]+(?:\.[a-z0-9!#$%&'*+\-/=?^_`{|}~]+)*$/.test(localPart)
+  if (!validLocalPart) return { error: 'The part before @ is not correct. Please check your email ID.' }
+  return { error: null }
+}
+const getEmailValidationError = (value: string) => {
+  const result = validateEmailAddress(value)
+  if (!result.error) return null
+  return result.suggestion ? `${result.error} Did you mean ${result.suggestion}?` : result.error
+}
+const isValidEmail = (value: string) => validateEmailAddress(value).error === null
 const loadAccounts = (): Account[] => {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
@@ -320,7 +383,7 @@ const loadSessionAccount = (): Account | null => {
   if (!session) return null
   const allAccounts = loadAccounts()
   const account = allAccounts.find(a => a.role === session.role && a.mobile === session.mobile) || null
-  if (!account) return null
+  if (!account || !isValidEmail(account.email)) return null
   // Standing rule: a Recruiter account on this mobile blocks the Job Seeker session.
   if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
   return account
@@ -480,6 +543,7 @@ export default function App() {
   const [authStep, setAuthStep] = useState<'mobile' | 'register'>('mobile')
   const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
   const [authError, setAuthError] = useState('')
+  const [authEmailTouched, setAuthEmailTouched] = useState(false)
   const [authLoading, setAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
@@ -824,6 +888,7 @@ export default function App() {
     if (hasAuthenticated && existingForRole && !blockedByRecruiter) { completeUserAuth(existingForRole, false); return }
     setAuthStep('mobile')
     setAuthError('')
+    setAuthEmailTouched(false)
     if (existingForRole) {
       setAuthForm(prev => ({ name: prev.name || existingForRole.name, mobile: existingForRole.mobile, email: prev.email || existingForRole.email }))
     } else if (currentUser && currentUser.role !== r) {
@@ -837,6 +902,7 @@ export default function App() {
     setEntryRole(prev => (prev === r ? null : r))
     setAuthStep('mobile')
     setAuthError('')
+    setAuthEmailTouched(false)
   }
   const handleMobileContinue = async () => {
     if (authLoading) return
@@ -857,9 +923,19 @@ export default function App() {
         if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`); return }
       }
       const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
-      if (existing) { completeUserAuth(existing, false); return }
+      if (existing) {
+        const existingEmailValidation = validateEmailAddress(existing.email)
+        if (!existingEmailValidation.error) { completeUserAuth(existing, false); return }
+        setAuthForm({ name: existing.name, mobile, email: existingEmailValidation.suggestion ?? existing.email })
+        setAuthEmailTouched(true)
+        setAuthStep('register')
+        setAuthError(`Your saved email ID (${existing.email}) is not correct. ${existingEmailValidation.error} Please correct it to continue.`)
+        setToast('Please correct your email ID to continue.')
+        return
+      }
       const otherRoleAccount = availableAccounts.find(a => a.mobile === mobile)
       setAuthForm(prev => ({ name: prev.name || otherRoleAccount?.name || '', mobile, email: prev.email || otherRoleAccount?.email || '' }))
+      setAuthEmailTouched(false)
       setAuthStep('register')
       setToast(otherRoleAccount ? 'Mobile found — create your account for this role to continue.' : 'New account — please enter your name and correct email ID.')
     } catch {
@@ -876,7 +952,8 @@ export default function App() {
     const email = authForm.email.trim().toLowerCase()
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
     if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
-    if (!isValidEmail(email)) { setAuthError('Enter a correct email ID, e.g. yourname@gmail.com'); return }
+    const emailError = getEmailValidationError(email)
+    if (emailError) { setAuthEmailTouched(true); setAuthError(emailError); return }
     setAuthLoading(true)
     setAuthError('')
     try {
@@ -891,7 +968,26 @@ export default function App() {
         if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
       }
       const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
-      if (existing) { completeUserAuth(existing, false); return }
+      if (existing) {
+        if (isValidEmail(existing.email)) { completeUserAuth(existing, false); return }
+        let correctedAccount: Account = { ...existing, name, email }
+        if (supabase) {
+          const { data, error } = await supabase.rpc('update_app_account_email', {
+            p_role: selectedRole,
+            p_name: name,
+            p_mobile: mobile,
+            p_email: email,
+          })
+          if (error) throw error
+          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
+          if (!updated) throw new Error('Corrected account was not returned')
+          correctedAccount = updated
+        }
+        const correctedAccounts = availableAccounts.map(a => a.role === selectedRole && a.mobile === mobile ? correctedAccount : a)
+        writeAccounts(correctedAccounts)
+        completeUserAuth(correctedAccount, false)
+        return
+      }
 
       let account: Account
       if (supabase) {
@@ -1078,7 +1174,8 @@ export default function App() {
     const details = supportTicketForm.details.trim().replace(/\s+/g, ' ')
     if (name.length < 3) { setSupportTicketError('Please enter your full name.'); return }
     if (!isValidMobile(mobile)) { setSupportTicketError('Please enter a correct 10-digit mobile number.'); return }
-    if (!isValidEmail(email)) { setSupportTicketError('Please enter a correct email ID.'); return }
+    const emailError = getEmailValidationError(email)
+    if (emailError) { setSupportTicketError(emailError); return }
     if (!category) { setSupportTicketError('Please select a proper reason for raising this support ticket.'); return }
     if (subject.length < 5) { setSupportTicketError('Please write a clear subject with at least 5 characters.'); return }
     if (details.length < 20) { setSupportTicketError('Please explain your issue with a proper reason in at least 20 characters so Admin can understand it clearly.'); return }
@@ -1129,6 +1226,7 @@ export default function App() {
     setAuthForm({ name: '', mobile: '', email: '' })
     setAuthStep('mobile')
     setAuthError('')
+    setAuthEmailTouched(false)
     setShowMobileMenu(false)
     setToast('Logged out successfully')
     navigate('welcome', { resetHistory: true })
@@ -1154,6 +1252,7 @@ export default function App() {
     setAuthForm({ name: deletedAccount.name, mobile: deletedAccount.mobile, email: deletedAccount.email })
     setAuthStep('mobile')
     setAuthError('')
+    setAuthEmailTouched(false)
     setShowDeleteAccountConfirm(false)
     setShowMobileMenu(false)
     setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
@@ -1279,6 +1378,8 @@ export default function App() {
   }
   const handlePostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
+    const contactEmailError = newJob.email.trim() ? getEmailValidationError(newJob.email) : null
+    if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = newJob.city.trim() || 'Hyderabad'
     const job: Job = {
       id: 'admin-' + Date.now(),
@@ -1330,6 +1431,8 @@ export default function App() {
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
     if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Your Name and Mobile Number'); return }
+    const contactEmailError = recruiterJob.email.trim() ? getEmailValidationError(recruiterJob.email) : null
+    if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = recruiterJob.city.trim() || 'Hyderabad'
     const pending: PendingJob = {
       id: 'pending-' + Date.now(),
@@ -1394,7 +1497,7 @@ export default function App() {
         mergeAccountsForMobileState(storedSession.mobile, remoteAccounts)
         const account = remoteAccounts.find(a => a.role === storedSession.role)
         const blockedByRecruiter = storedSession.role === 'seeker' && remoteAccounts.some(a => a.role === 'recruiter' && a.mobile === storedSession.mobile)
-        if (!account || blockedByRecruiter) {
+        if (!account || blockedByRecruiter || !isValidEmail(account.email)) {
           try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
           setCurrentUser(null)
           setHasAuthenticated(false)
@@ -1660,6 +1763,11 @@ export default function App() {
   const authRecruiterBlockAccount = entryRole === 'seeker' ? accounts.find(a => a.role === 'recruiter' && a.mobile === normalizedAuthMobile) : undefined
   const authOtherRoleAccount = entryRole ? accounts.find(a => a.role !== entryRole && a.mobile === normalizedAuthMobile) : undefined
   const authExistingAccount = entryRole && !authRecruiterBlockAccount ? accounts.find(a => a.role === entryRole && a.mobile === normalizedAuthMobile) : undefined
+  const authExistingEmailValidation = authExistingAccount ? validateEmailAddress(authExistingAccount.email) : null
+  const authExistingEmailError = authExistingEmailValidation?.error ?? null
+  const authEmailValidation = validateEmailAddress(authForm.email)
+  const showAuthEmailError = authEmailTouched && Boolean(authEmailValidation.error)
+  const showAuthEmailSuccess = authEmailTouched && Boolean(authForm.email.trim()) && !authEmailValidation.error
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
@@ -2231,8 +2339,8 @@ export default function App() {
 
               <div className="relative mt-5 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
                 <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-300 ease-out ${entryRole === 'recruiter' ? 'translate-x-full' : 'translate-x-0'}`} />
-                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError('') }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
-                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
               </div>
 
               {authStep === 'mobile' ? (
@@ -2253,6 +2361,16 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  ) : authExistingAccount && authExistingEmailError ? (
+                    <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-3 text-left">
+                      <div className="flex gap-2.5">
+                        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-extrabold text-red-900">Email correction needed</p>
+                          <p className="mt-0.5 break-all text-[11px] leading-relaxed text-red-800">The saved email ID <b>{authExistingAccount.email}</b> is not correct. {authExistingEmailError}{authExistingEmailValidation?.suggestion ? <> Did you mean <b>{authExistingEmailValidation.suggestion}</b>?</> : null}</p>
+                        </div>
+                      </div>
+                    </div>
                   ) : authExistingAccount ? (
                     <div className="mt-3 flex items-center gap-3 rounded-2xl bg-emerald-50 p-3 text-left">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
@@ -2266,13 +2384,13 @@ export default function App() {
                     <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? After entering your mobile, we will ask only your <b>name</b> and <b>correct email ID</b> to create your account.</p>
                   )}
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingEmailError ? 'Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
-                    <p className="text-sm font-extrabold text-sky-900">New {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account</p>
-                    <p className="text-[11px] font-medium text-sky-700">Register once — no password. Stay logged in until you logout.</p>
+                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
+                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : 'Register once — no password. Stay logged in until you logout.'}</p>
                   </div>
                   {authRecruiterBlockAccount && (
                     <div className="mt-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
@@ -2299,12 +2417,19 @@ export default function App() {
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *</label>
-                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} type="email" autoComplete="email" placeholder="yourname@gmail.com" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      {showAuthEmailError ? (
+                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailValidation.error}{authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { setAuthForm(prev => ({ ...prev, email: authEmailValidation.suggestion ?? prev.email })); setAuthError(''); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
+                      ) : showAuthEmailSuccess ? (
+                        <p id="auth-email-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Email format is correct.</p>
+                      ) : (
+                        <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Gmail IDs must end with @gmail.com.</p>
+                      )}
                     </div>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? 'Creating Account...' : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : 'Register & Continue'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError('') }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError ? 'Correct Email & Continue' : 'Register & Continue'}</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
                 </form>
               )}
 

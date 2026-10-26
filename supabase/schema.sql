@@ -9,12 +9,89 @@
 
 create extension if not exists pgcrypto;
 
+create or replace function public.is_valid_app_email(p_email text)
+returns boolean
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_local text;
+  v_domain text;
+  v_gmail_username text;
+  v_gmail_tag text;
+begin
+  if char_length(v_email) = 0 or char_length(v_email) > 254 or v_email ~ '[[:space:]]' then
+    return false;
+  end if;
+
+  if (char_length(v_email) - char_length(replace(v_email, '@', ''))) <> 1 then
+    return false;
+  end if;
+
+  v_local := split_part(v_email, '@', 1);
+  v_domain := split_part(v_email, '@', 2);
+
+  if char_length(v_local) = 0 or char_length(v_local) > 64
+     or char_length(v_domain) = 0 or char_length(v_domain) > 253
+     or v_domain not like '%.%'
+     or v_domain like '.%'
+     or v_domain like '%.'
+     or v_domain like '%..%' then
+    return false;
+  end if;
+
+  if exists (
+    select 1
+    from unnest(string_to_array(v_domain, '.')) as labels(domain_label)
+    where char_length(labels.domain_label) = 0
+       or char_length(labels.domain_label) > 63
+       or labels.domain_label !~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+  ) then
+    return false;
+  end if;
+
+  if split_part(v_domain, '.', array_length(string_to_array(v_domain, '.'), 1))
+       !~ '^([a-z]{2,}|xn--[a-z0-9-]+)$' then
+    return false;
+  end if;
+
+  -- Gmail/Googlemail domains must be complete and correctly spelled.
+  if (v_domain like 'gmail.%' or v_domain like 'googlemail.%'
+      or v_domain in ('gamil.com', 'gmial.com', 'gmaill.com', 'gmai.com', 'gmal.com', 'gmali.com', 'gamil.co', 'gmial.co', 'gmaill.co', 'googlemai.com', 'googlemial.com'))
+     and v_domain not in ('gmail.com', 'googlemail.com') then
+    return false;
+  end if;
+
+  if v_domain in ('gmail.com', 'googlemail.com') then
+    if (char_length(v_local) - char_length(replace(v_local, '+', ''))) > 1 or v_local like '%+' then
+      return false;
+    end if;
+
+    v_gmail_username := split_part(v_local, '+', 1);
+    v_gmail_tag := nullif(split_part(v_local, '+', 2), '');
+
+    if v_gmail_tag is not null and v_gmail_tag !~ '^[a-z0-9.]+$' then
+      return false;
+    end if;
+
+    return v_gmail_username ~ '^[a-z0-9.]{6,30}$'
+       and v_gmail_username not like '.%'
+       and v_gmail_username not like '%.'
+       and v_gmail_username not like '%..%';
+  end if;
+
+  return v_local ~ '^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+(\.[a-z0-9.!#$%&''*+/=?^_`{|}~-]+)*$';
+end;
+$$;
+
 create table if not exists public.app_accounts (
   id uuid primary key default gen_random_uuid(),
   role text not null check (role in ('seeker', 'recruiter')),
   name text not null check (char_length(trim(name)) >= 3),
   mobile text not null check (mobile ~ '^[6-9][0-9]{9}$'),
-  email text not null check (position('@' in email) > 1),
+  email text not null check (public.is_valid_app_email(email)),
   profile jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -24,6 +101,14 @@ create table if not exists public.app_accounts (
 create index if not exists app_accounts_mobile_idx on public.app_accounts (mobile);
 create index if not exists app_accounts_candidate_idx
   on public.app_accounts (role, updated_at desc);
+
+-- Strengthen installations created by an older version of this schema.
+-- NOT VALID protects every new/updated row without blocking setup because of
+-- a legacy row that still needs its saved email corrected through the app.
+alter table public.app_accounts drop constraint if exists app_accounts_email_check;
+alter table public.app_accounts
+  add constraint app_accounts_email_check
+  check (public.is_valid_app_email(email)) not valid;
 
 alter table public.app_accounts enable row level security;
 
@@ -69,6 +154,11 @@ security definer
 set search_path = public
 as $$
 begin
+  if not public.is_valid_app_email(p_email) then
+    raise exception 'Please enter a correct email ID. Gmail IDs must end with @gmail.com.'
+      using errcode = '23514';
+  end if;
+
   insert into public.app_accounts (role, name, mobile, email)
   values (p_role, trim(p_name), p_mobile, lower(trim(p_email)))
   on conflict (role, mobile) do nothing;
@@ -78,6 +168,34 @@ begin
   from public.app_accounts a
   where a.role = p_role and a.mobile = p_mobile;
 end;
+$$;
+
+create or replace function public.update_app_account_email(
+  p_role text,
+  p_name text,
+  p_mobile text,
+  p_email text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  update public.app_accounts a
+  set name = trim(p_name),
+      email = lower(trim(p_email)),
+      updated_at = now()
+  where a.role = p_role
+    and a.mobile = p_mobile
+    and public.is_valid_app_email(p_email)
+  returning a.role, a.name, a.mobile, a.email, a.profile, a.created_at;
 $$;
 
 create or replace function public.update_seeker_profile(
@@ -170,12 +288,14 @@ $$;
 
 revoke all on function public.find_app_accounts_by_mobile(text) from public;
 revoke all on function public.register_app_account(text, text, text, text) from public;
+revoke all on function public.update_app_account_email(text, text, text, text) from public;
 revoke all on function public.update_seeker_profile(text, jsonb) from public;
 revoke all on function public.delete_app_account(text, text) from public;
 revoke all on function public.list_anonymous_candidate_profiles() from public;
 
 grant execute on function public.find_app_accounts_by_mobile(text) to anon, authenticated;
 grant execute on function public.register_app_account(text, text, text, text) to anon, authenticated;
+grant execute on function public.update_app_account_email(text, text, text, text) to anon, authenticated;
 grant execute on function public.update_seeker_profile(text, jsonb) to anon, authenticated;
 grant execute on function public.delete_app_account(text, text) to anon, authenticated;
 grant execute on function public.list_anonymous_candidate_profiles() to anon, authenticated;
