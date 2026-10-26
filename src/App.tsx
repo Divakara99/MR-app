@@ -77,7 +77,26 @@ type CandidateProfileView = {
   source: 'registered' | 'sample'
   profile: SeekerProfile
 }
-type Account = { role: EntryRole; name: string; mobile: string; email: string; createdAt: string; profile?: SeekerProfile }
+type Account = {
+  role: EntryRole
+  name: string
+  mobile: string
+  email: string
+  createdAt: string
+  passwordHash?: string
+  hasPassword?: boolean
+  profile?: SeekerProfile
+}
+type AuthStep = 'mobile' | 'register' | 'forgot'
+type AuthFormState = {
+  name: string
+  mobile: string
+  email: string
+  identifier: string
+  password: string
+  confirmPassword: string
+}
+const EMPTY_AUTH_FORM: AuthFormState = { name: '', mobile: '', email: '', identifier: '', password: '', confirmPassword: '' }
 type AccountDeletionRequest = {
   id: string
   name: string
@@ -360,6 +379,82 @@ const getEmailValidationError = (value: string) => {
   return result.suggestion ? `${result.error} Did you mean ${result.suggestion}?` : result.error
 }
 const isValidEmail = (value: string) => validateEmailAddress(value).error === null
+const MIN_PASSWORD_LENGTH = 6
+const PASSWORD_HASH_ITERATIONS = 120000
+const getPasswordValidationError = (password: string, label = 'Password') => {
+  if (!password) return `Enter your ${label.toLowerCase()}.`
+  if (password.length < MIN_PASSWORD_LENGTH) return `${label} must be at least ${MIN_PASSWORD_LENGTH} characters.`
+  return null
+}
+const hasAccountPassword = (account?: Account | null) => Boolean(account?.passwordHash || account?.hasPassword)
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let binary = ''
+  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+  return btoa(binary)
+}
+const base64ToBytes = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
+const createLocalPasswordHash = async (password: string) => {
+  if (!globalThis.crypto?.subtle || !globalThis.crypto?.getRandomValues) throw new Error('Secure password storage is not available in this browser')
+  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16))
+  const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await globalThis.crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: PASSWORD_HASH_ITERATIONS, hash: 'SHA-256' },
+    key,
+    256,
+  )
+  return `pbkdf2_sha256$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(new Uint8Array(bits))}`
+}
+const verifyLocalPasswordHash = async (password: string, storedHash?: string) => {
+  if (!storedHash || !globalThis.crypto?.subtle) return false
+  const [scheme, iterationsText, saltText, expectedText] = storedHash.split('$')
+  const iterations = Number(iterationsText)
+  if (scheme !== 'pbkdf2_sha256' || !Number.isInteger(iterations) || iterations < 10000 || !saltText || !expectedText) return false
+  try {
+    const salt = base64ToBytes(saltText)
+    const expected = base64ToBytes(expectedText)
+    const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+    const bits = await globalThis.crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+      key,
+      expected.length * 8,
+    )
+    const actual = new Uint8Array(bits)
+    if (actual.length !== expected.length) return false
+    let difference = 0
+    actual.forEach((byte, index) => { difference |= byte ^ expected[index] })
+    return difference === 0
+  } catch {
+    return false
+  }
+}
+type ParsedAuthIdentifier = { kind: 'mobile' | 'email'; value: string; error: string | null }
+const parseAuthIdentifier = (value: string): ParsedAuthIdentifier => {
+  const raw = value.trim()
+  if (!raw) return { kind: 'mobile', value: '', error: 'Enter your registered mobile number or email ID.' }
+  if (raw.includes('@')) {
+    const email = raw.toLowerCase()
+    return { kind: 'email', value: email, error: getEmailValidationError(email) }
+  }
+  if (/[^+\d\s-]/.test(raw)) return { kind: 'mobile', value: normalizeMobile(raw), error: 'Enter a correct 10-digit mobile number or a complete email ID.' }
+  const mobile = normalizeMobile(raw)
+  return { kind: 'mobile', value: mobile, error: isValidMobile(mobile) ? null : 'Enter a correct 10-digit Indian mobile number or your registered email ID.' }
+}
+const accountMatchesIdentifier = (account: Account, identifier: ParsedAuthIdentifier) => (
+  identifier.kind === 'email'
+    ? account.email.trim().toLowerCase() === identifier.value
+    : normalizeMobile(account.mobile) === identifier.value
+)
+const mergeAccountLists = (current: Account[], incoming: Account[]) => {
+  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, account]))
+  incoming.forEach(account => {
+    const key = `${account.role}:${normalizeMobile(account.mobile)}`
+    const previous = merged.get(key)
+    merged.set(key, previous?.passwordHash && !account.passwordHash
+      ? { ...account, passwordHash: previous.passwordHash, hasPassword: true }
+      : account)
+  })
+  return Array.from(merged.values())
+}
 const loadAccounts = (): Account[] => {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
@@ -383,7 +478,7 @@ const loadSessionAccount = (): Account | null => {
   if (!session) return null
   const allAccounts = loadAccounts()
   const account = allAccounts.find(a => a.role === session.role && a.mobile === session.mobile) || null
-  if (!account || !isValidEmail(account.email)) return null
+  if (!account || !isValidEmail(account.email) || !hasAccountPassword(account)) return null
   // Standing rule: a Recruiter account on this mobile blocks the Job Seeker session.
   if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
   return account
@@ -407,6 +502,7 @@ const accountFromRemoteRow = (row: RemoteAccountRow): Account => {
     name: row.name,
     mobile: normalizeMobile(row.mobile),
     email: row.email,
+    hasPassword: row.has_password === true,
     createdAt: row.created_at || new Date().toISOString(),
     profile,
   }
@@ -536,14 +632,20 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(pendingJobs)) } catch { /* ignore */ } }, [pendingJobs])
   const [recruiterJob, setRecruiterJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
   const [recruiterSubmitted, setRecruiterSubmitted] = useState(false)
-  // User accounts (Job Seeker / Recruiter) — register once, then mobile-only login (no password)
+  // User accounts (Job Seeker / Recruiter) — register with mobile, email and
+  // a minimum-6-character password; then login with mobile OR email + password.
+  // Admin keeps its separate existing login and is not part of this user flow.
   const [accounts, setAccounts] = useState<Account[]>(() => loadAccounts())
   const [currentUser, setCurrentUser] = useState<Account | null>(() => loadSessionAccount())
   const [hasAuthenticated, setHasAuthenticated] = useState(() => Boolean(loadSessionAccount()))
-  const [authStep, setAuthStep] = useState<'mobile' | 'register'>('mobile')
-  const [authForm, setAuthForm] = useState({ name: '', mobile: '', email: '' })
+  const [authStep, setAuthStep] = useState<AuthStep>('mobile')
+  const [authForm, setAuthForm] = useState<AuthFormState>(EMPTY_AUTH_FORM)
   const [authError, setAuthError] = useState('')
   const [authEmailTouched, setAuthEmailTouched] = useState(false)
+  const [authPasswordTouched, setAuthPasswordTouched] = useState(false)
+  const [authConfirmPasswordTouched, setAuthConfirmPasswordTouched] = useState(false)
+  const [showAuthPassword, setShowAuthPassword] = useState(false)
+  const [showAuthConfirmPassword, setShowAuthConfirmPassword] = useState(false)
   const [authLoading, setAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
@@ -589,8 +691,14 @@ export default function App() {
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   const remoteSessionRefreshRef = useRef(false)
-  const authLookupMobileRef = useRef('')
+  const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resetAuthPasswordState = () => {
+    setAuthPasswordTouched(false)
+    setAuthConfirmPasswordTouched(false)
+    setShowAuthPassword(false)
+    setShowAuthConfirmPassword(false)
+  }
 
   const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
   const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
@@ -780,15 +888,16 @@ export default function App() {
     return fallback && isBackDestinationAllowed(fallback) ? fallback : null
   }
   const backDestination = getBackDestination()
-  const canGoBack = Boolean(backDestination || (page === 'auth' && authStep === 'register') || (page === 'admin' && isAdmin && adminTab !== 'overview'))
+  const canGoBack = Boolean(backDestination || (page === 'auth' && authStep !== 'mobile') || (page === 'admin' && isAdmin && adminTab !== 'overview'))
   const handlePageBack = () => {
     if (showMobileMenu) { setShowMobileMenu(false); return }
     if (showAccountMenu) { setShowAccountMenu(false); return }
     if (selectedCandidate) { setSelectedCandidate(null); return }
     if (selected) { setSelected(null); return }
-    if (page === 'auth' && authStep === 'register') {
+    if (page === 'auth' && authStep !== 'mobile') {
       setAuthStep('mobile')
       setAuthError('')
+      resetAuthPasswordState()
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
@@ -829,7 +938,20 @@ export default function App() {
   }
   const mergeAccountsForMobileState = (mobile: string, incoming: Account[]) => {
     setAccounts(prev => {
-      const next = [...prev.filter(a => a.mobile !== mobile), ...incoming]
+      const preservedIncoming = incoming.map(account => {
+        const local = prev.find(a => a.role === account.role && normalizeMobile(a.mobile) === normalizeMobile(account.mobile))
+        return local?.passwordHash && !account.passwordHash
+          ? { ...account, passwordHash: local.passwordHash, hasPassword: true }
+          : account
+      })
+      const next = [...prev.filter(a => normalizeMobile(a.mobile) !== normalizeMobile(mobile)), ...preservedIncoming]
+      try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+  const mergeIncomingAccountsState = (incoming: Account[]) => {
+    setAccounts(prev => {
+      const next = mergeAccountLists(prev, incoming)
       try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
       return next
     })
@@ -839,6 +961,55 @@ export default function App() {
     const { data, error } = await supabase.rpc('find_app_accounts_by_mobile', { p_mobile: mobile })
     if (error) throw error
     return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+  }
+  const fetchRemoteAccountsByIdentifier = async (identifier: string): Promise<Account[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('find_app_accounts_by_identifier', { p_identifier: identifier })
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+  }
+  const loginRemoteAccount = async (role: EntryRole, identifier: string, password: string): Promise<Account | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('login_app_account', {
+      p_role: role,
+      p_identifier: identifier,
+      p_password: password,
+    })
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role) ?? null
+  }
+  const setRemoteAccountPassword = async (role: EntryRole, mobile: string, password: string): Promise<Account | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('set_app_password', {
+      p_role: role,
+      p_mobile: mobile,
+      p_password: password,
+    })
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
+  }
+  const resetRemoteAccountPassword = async (role: EntryRole, mobile: string, email: string, password: string): Promise<Account | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('reset_app_password_with_registered_details', {
+      p_role: role,
+      p_mobile: mobile,
+      p_email: email,
+      p_password: password,
+    })
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
+  }
+  const authenticateExistingAccount = async (account: Account, identifier: string, password: string): Promise<Account | null> => {
+    if (supabase) {
+      const remoteAccount = await loginRemoteAccount(account.role, identifier, password)
+      if (remoteAccount) {
+        return account.passwordHash && !remoteAccount.passwordHash
+          ? { ...remoteAccount, passwordHash: account.passwordHash, hasPassword: true }
+          : remoteAccount
+      }
+    }
+    if (account.passwordHash && await verifyLocalPasswordHash(password, account.passwordHash)) return account
+    return null
   }
   const fetchRemoteCandidateProfiles = async () => {
     if (!supabase) return
@@ -871,6 +1042,8 @@ export default function App() {
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role: account.role, mobile: account.mobile })) } catch { /* ignore */ }
     setAuthError('')
     setAuthStep('mobile')
+    setAuthForm(prev => ({ ...prev, identifier: account.mobile, password: '', confirmPassword: '' }))
+    resetAuthPasswordState()
     if (account.role === 'seeker' && !isSeekerProfileComplete(account.profile)) {
       setSeekerProfileForm(account.profile ?? EMPTY_SEEKER_PROFILE)
       setSeekerProfileError('')
@@ -885,14 +1058,17 @@ export default function App() {
     setEntryRole(r)
     const existingForRole = currentUser?.role === r ? currentUser : (currentUser ? accounts.find(a => a.role === r && a.mobile === currentUser.mobile) : undefined)
     const blockedByRecruiter = r === 'seeker' && existingForRole ? accounts.some(a => a.role === 'recruiter' && a.mobile === existingForRole.mobile) : false
-    if (hasAuthenticated && existingForRole && !blockedByRecruiter) { completeUserAuth(existingForRole, false); return }
+    if (hasAuthenticated && currentUser?.role === r && existingForRole && !blockedByRecruiter) { completeUserAuth(existingForRole, false); return }
     setAuthStep('mobile')
     setAuthError('')
     setAuthEmailTouched(false)
+    resetAuthPasswordState()
     if (existingForRole) {
-      setAuthForm(prev => ({ name: prev.name || existingForRole.name, mobile: existingForRole.mobile, email: prev.email || existingForRole.email }))
+      setAuthForm(prev => ({ ...prev, name: prev.name || existingForRole.name, mobile: existingForRole.mobile, email: prev.email || existingForRole.email, identifier: existingForRole.mobile, password: '', confirmPassword: '' }))
     } else if (currentUser && currentUser.role !== r) {
-      setAuthForm(prev => ({ name: prev.name || currentUser.name, mobile: currentUser.mobile, email: prev.email || currentUser.email }))
+      setAuthForm(prev => ({ ...prev, name: prev.name || currentUser.name, mobile: currentUser.mobile, email: prev.email || currentUser.email, identifier: currentUser.mobile, password: '', confirmPassword: '' }))
+    } else {
+      setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' }))
     }
     navigate('auth')
   }
@@ -903,43 +1079,123 @@ export default function App() {
     setAuthStep('mobile')
     setAuthError('')
     setAuthEmailTouched(false)
+    resetAuthPasswordState()
+    setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' }))
   }
-  const handleMobileContinue = async () => {
+  const handleLoginContinue = async () => {
     if (authLoading) return
     const selectedRole = entryRole ?? 'seeker'
-    const mobile = normalizeMobile(authForm.mobile)
-    if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number (starting with 6, 7, 8 or 9).'); return }
+    const parsedIdentifier = parseAuthIdentifier(authForm.identifier)
+    if (parsedIdentifier.error) { setAuthError(parsedIdentifier.error); return }
+    const password = authForm.password
+    const passwordError = getPasswordValidationError(password)
+    if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
+
     setAuthLoading(true)
     setAuthError('')
     try {
       let availableAccounts = accounts
-      const remoteAccounts = await fetchRemoteAccountsByMobile(mobile)
-      if (remoteAccounts) {
-        availableAccounts = [...accounts.filter(a => a.mobile !== mobile), ...remoteAccounts]
-        writeAccounts(availableAccounts)
+      if (supabase) {
+        const remoteAccounts = parsedIdentifier.kind === 'mobile'
+          ? await fetchRemoteAccountsByMobile(parsedIdentifier.value)
+          : await fetchRemoteAccountsByIdentifier(parsedIdentifier.value)
+        if (remoteAccounts) {
+          availableAccounts = parsedIdentifier.kind === 'mobile'
+            ? mergeAccountLists(
+                accounts.filter(a => normalizeMobile(a.mobile) !== parsedIdentifier.value),
+                mergeAccountLists(accounts, remoteAccounts).filter(a => normalizeMobile(a.mobile) === parsedIdentifier.value),
+              )
+            : mergeAccountLists(accounts, remoteAccounts)
+          writeAccounts(availableAccounts)
+        }
       }
+
+      const existingCandidates = availableAccounts.filter(a => a.role === selectedRole && accountMatchesIdentifier(a, parsedIdentifier))
+      const existing = existingCandidates[0]
+
       if (selectedRole === 'seeker') {
-        const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
-        if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`); return }
+        const blockedMobile = parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : existing?.mobile
+        const recruiterAccount = blockedMobile
+          ? availableAccounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(blockedMobile))
+          : undefined
+        if (recruiterAccount && (parsedIdentifier.kind === 'mobile' || existing)) {
+          setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`)
+          return
+        }
       }
-      const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
+
       if (existing) {
-        const existingEmailValidation = validateEmailAddress(existing.email)
-        if (!existingEmailValidation.error) { completeUserAuth(existing, false); return }
-        setAuthForm({ name: existing.name, mobile, email: existingEmailValidation.suggestion ?? existing.email })
-        setAuthEmailTouched(true)
-        setAuthStep('register')
-        setAuthError(`Your saved email ID (${existing.email}) is not correct. ${existingEmailValidation.error} Please correct it to continue.`)
-        setToast('Please correct your email ID to continue.')
+        let authenticatedAccount: Account | null = null
+        const passwordCandidates = existingCandidates.filter(hasAccountPassword)
+        for (const candidate of passwordCandidates) {
+          authenticatedAccount = await authenticateExistingAccount(candidate, parsedIdentifier.value, password)
+          if (authenticatedAccount) break
+        }
+        if (passwordCandidates.length > 0 && !authenticatedAccount) {
+          setAuthPasswordTouched(true)
+          setAuthError('Wrong password. Please check your password or use Forgot Password below.')
+          return
+        }
+
+        const accountForNextStep = authenticatedAccount ?? existing
+        const existingEmailValidation = validateEmailAddress(accountForNextStep.email)
+        if (existingEmailValidation.error) {
+          setAuthForm({
+            name: accountForNextStep.name,
+            mobile: accountForNextStep.mobile,
+            email: existingEmailValidation.suggestion ?? accountForNextStep.email,
+            identifier: parsedIdentifier.value,
+            password,
+            confirmPassword: hasAccountPassword(accountForNextStep) ? password : '',
+          })
+          setAuthEmailTouched(true)
+          setAuthPasswordTouched(true)
+          setAuthStep('register')
+          setAuthError(`Your saved email ID (${accountForNextStep.email}) is not correct. ${existingEmailValidation.error} Please correct it to continue.`)
+          setToast('Please correct your email ID to continue.')
+          return
+        }
+
+        if (!hasAccountPassword(accountForNextStep)) {
+          setAuthForm({
+            name: accountForNextStep.name,
+            mobile: accountForNextStep.mobile,
+            email: accountForNextStep.email,
+            identifier: parsedIdentifier.value,
+            password,
+            confirmPassword: '',
+          })
+          setAuthEmailTouched(true)
+          setAuthPasswordTouched(true)
+          setAuthConfirmPasswordTouched(false)
+          setAuthStep('register')
+          setAuthError('This existing account was created before password login. Please set and confirm a password of at least 6 characters.')
+          setToast('Please set a password for your existing account.')
+          return
+        }
+
+        completeUserAuth(accountForNextStep, false)
         return
       }
-      const otherRoleAccount = availableAccounts.find(a => a.mobile === mobile)
-      setAuthForm(prev => ({ name: prev.name || otherRoleAccount?.name || '', mobile, email: prev.email || otherRoleAccount?.email || '' }))
+
+      const otherRoleAccount = availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier))
+      setAuthForm(prev => ({
+        name: prev.name || otherRoleAccount?.name || '',
+        mobile: parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : (otherRoleAccount?.mobile || prev.mobile || ''),
+        email: parsedIdentifier.kind === 'email' ? parsedIdentifier.value : (prev.email || otherRoleAccount?.email || ''),
+        identifier: parsedIdentifier.value,
+        password,
+        confirmPassword: '',
+      }))
       setAuthEmailTouched(false)
+      setAuthPasswordTouched(true)
+      setAuthConfirmPasswordTouched(false)
       setAuthStep('register')
-      setToast(otherRoleAccount ? 'Mobile found — create your account for this role to continue.' : 'New account — please enter your name and correct email ID.')
+      setToast(otherRoleAccount
+        ? 'Account found for the other role — complete this role registration to continue.'
+        : 'New account — complete your name, mobile, email and confirm your password.')
     } catch {
-      setAuthError('Unable to check your account right now. Please check your internet connection and try again.')
+      setAuthError('Unable to login or check your account right now. Please check your internet connection and try again.')
     } finally {
       setAuthLoading(false)
     }
@@ -950,27 +1206,69 @@ export default function App() {
     const mobile = normalizeMobile(authForm.mobile)
     const name = authForm.name.trim().replace(/\s+/g, ' ')
     const email = authForm.email.trim().toLowerCase()
+    const password = authForm.password
+    const confirmPassword = authForm.confirmPassword
     if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
     if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
     const emailError = getEmailValidationError(email)
     if (emailError) { setAuthEmailTouched(true); setAuthError(emailError); return }
+
     setAuthLoading(true)
     setAuthError('')
     try {
       let availableAccounts = accounts
-      const remoteAccounts = await fetchRemoteAccountsByMobile(mobile)
-      if (remoteAccounts) {
-        availableAccounts = [...accounts.filter(a => a.mobile !== mobile), ...remoteAccounts]
+      if (supabase) {
+        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+          fetchRemoteAccountsByMobile(mobile),
+          fetchRemoteAccountsByIdentifier(email),
+        ])
+        if (remoteMobileAccounts) {
+          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+            .filter(a => normalizeMobile(a.mobile) === mobile)
+          availableAccounts = mergeAccountLists(
+            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+            preservedMobileAccounts,
+          )
+        }
+        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
         writeAccounts(availableAccounts)
       }
+
       if (selectedRole === 'seeker') {
-        const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && a.mobile === mobile)
+        const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)
         if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
       }
-      const existing = availableAccounts.find(a => a.role === selectedRole && a.mobile === mobile)
-      if (existing) {
-        if (isValidEmail(existing.email)) { completeUserAuth(existing, false); return }
-        let correctedAccount: Account = { ...existing, name, email }
+
+      const existing = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile)
+      const emailOwner = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) !== mobile && a.email.trim().toLowerCase() === email)
+      if (emailOwner) {
+        setAuthError('This email ID is already registered with another mobile number for this account type. Login with that email ID and password, or use the correct registered mobile number.')
+        return
+      }
+
+      const needsPasswordSetup = !existing || !hasAccountPassword(existing)
+      const passwordError = getPasswordValidationError(password, needsPasswordSetup ? 'Password' : 'Current password')
+      if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
+      if (needsPasswordSetup && password !== confirmPassword) {
+        setAuthConfirmPasswordTouched(true)
+        setAuthError('Password and Confirm Password do not match.')
+        return
+      }
+
+      if (existing && hasAccountPassword(existing)) {
+        const authenticatedAccount = await authenticateExistingAccount(existing, mobile, password)
+        if (!authenticatedAccount) {
+          setAuthPasswordTouched(true)
+          setAuthError('Wrong current password. Please check your password or use Forgot Password from the login screen.')
+          return
+        }
+
+        if (isValidEmail(authenticatedAccount.email)) {
+          completeUserAuth(authenticatedAccount, false)
+          return
+        }
+
+        let correctedAccount: Account = { ...authenticatedAccount, name, email }
         if (supabase) {
           const { data, error } = await supabase.rpc('update_app_account_email', {
             p_role: selectedRole,
@@ -981,11 +1279,41 @@ export default function App() {
           if (error) throw error
           const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
           if (!updated) throw new Error('Corrected account was not returned')
-          correctedAccount = updated
+          correctedAccount = authenticatedAccount.passwordHash && !updated.passwordHash
+            ? { ...updated, passwordHash: authenticatedAccount.passwordHash, hasPassword: true }
+            : updated
         }
-        const correctedAccounts = availableAccounts.map(a => a.role === selectedRole && a.mobile === mobile ? correctedAccount : a)
-        writeAccounts(correctedAccounts)
+        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? correctedAccount : a))
         completeUserAuth(correctedAccount, false)
+        return
+      }
+
+      if (existing) {
+        let updatedAccount: Account = { ...existing, name, email }
+        if (supabase && !isValidEmail(existing.email)) {
+          const { data, error } = await supabase.rpc('update_app_account_email', {
+            p_role: selectedRole,
+            p_name: name,
+            p_mobile: mobile,
+            p_email: email,
+          })
+          if (error) throw error
+          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
+          if (!updated) throw new Error('Corrected account was not returned')
+          updatedAccount = updated
+        }
+        if (supabase) {
+          const remotePasswordAccount = await setRemoteAccountPassword(selectedRole, mobile, password)
+          if (remotePasswordAccount) updatedAccount = { ...remotePasswordAccount, name, email }
+        }
+        updatedAccount = {
+          ...updatedAccount,
+          passwordHash: updatedAccount.passwordHash || await createLocalPasswordHash(password),
+          hasPassword: true,
+        }
+        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
+        completeUserAuth(updatedAccount, false)
+        setToast('Password set successfully ✅ You can now login with your mobile or email and password.')
         return
       }
 
@@ -996,19 +1324,111 @@ export default function App() {
           p_name: name,
           p_mobile: mobile,
           p_email: email,
+          p_password: password,
         })
         if (error) throw error
         const created = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
         if (!created) throw new Error('Account was not returned')
         account = created
       } else {
-        account = { role: selectedRole, name, mobile, email, createdAt: new Date().toISOString() }
+        account = {
+          role: selectedRole,
+          name,
+          mobile,
+          email,
+          passwordHash: await createLocalPasswordHash(password),
+          hasPassword: true,
+          createdAt: new Date().toISOString(),
+        }
       }
-      const updatedAccounts = [...availableAccounts.filter(a => !(a.role === selectedRole && a.mobile === mobile)), account]
+      const updatedAccounts = [...availableAccounts.filter(a => !(a.role === selectedRole && normalizeMobile(a.mobile) === mobile)), account]
       writeAccounts(updatedAccounts)
       completeUserAuth(account, true)
     } catch {
-      setAuthError('Unable to create your account right now. Please check your internet connection and try again.')
+      setAuthError('Unable to create or update your account right now. Please check your internet connection and try again.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+  const openForgotPassword = () => {
+    const parsedIdentifier = parseAuthIdentifier(authForm.identifier)
+    setAuthForm(prev => ({
+      ...prev,
+      mobile: parsedIdentifier.kind === 'mobile' && !parsedIdentifier.error ? parsedIdentifier.value : prev.mobile,
+      email: parsedIdentifier.kind === 'email' && !parsedIdentifier.error ? parsedIdentifier.value : prev.email,
+      password: '',
+      confirmPassword: '',
+    }))
+    setAuthError('')
+    setAuthEmailTouched(false)
+    resetAuthPasswordState()
+    setAuthStep('forgot')
+  }
+  const handleForgotPasswordReset = async () => {
+    if (authLoading) return
+    const selectedRole = entryRole ?? 'seeker'
+    const mobile = normalizeMobile(authForm.mobile)
+    const email = authForm.email.trim().toLowerCase()
+    const password = authForm.password
+    if (!isValidMobile(mobile)) { setAuthError('Enter your registered 10-digit mobile number.'); return }
+    const emailError = getEmailValidationError(email)
+    if (emailError) { setAuthEmailTouched(true); setAuthError(emailError); return }
+    const passwordError = getPasswordValidationError(password, 'New password')
+    if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
+    if (password !== authForm.confirmPassword) {
+      setAuthConfirmPasswordTouched(true)
+      setAuthError('New password and Confirm Password do not match.')
+      return
+    }
+
+    setAuthLoading(true)
+    setAuthError('')
+    try {
+      const localPasswordHash = await createLocalPasswordHash(password)
+      let availableAccounts = accounts
+      if (supabase) {
+        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+          fetchRemoteAccountsByMobile(mobile),
+          fetchRemoteAccountsByIdentifier(email),
+        ])
+        if (remoteMobileAccounts) {
+          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+            .filter(a => normalizeMobile(a.mobile) === mobile)
+          availableAccounts = mergeAccountLists(
+            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+            preservedMobileAccounts,
+          )
+        }
+        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
+        writeAccounts(availableAccounts)
+      }
+
+      if (selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)) {
+        setAuthError('This mobile is registered as a Recruiter account. Select Recruiter above to reset that account password.')
+        return
+      }
+
+      const existing = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile && a.email.trim().toLowerCase() === email)
+      if (!existing) {
+        setAuthError('The registered mobile number and email ID do not match an account for the selected account type. Please check both details.')
+        return
+      }
+
+      let updatedAccount: Account = existing
+      if (supabase) {
+        const remoteAccount = await resetRemoteAccountPassword(selectedRole, mobile, email, password)
+        if (!remoteAccount) {
+          setAuthError('The registered mobile number and email ID do not match an account for the selected account type. Please check both details.')
+          return
+        }
+        updatedAccount = remoteAccount
+      }
+      updatedAccount = { ...updatedAccount, passwordHash: localPasswordHash, hasPassword: true }
+      writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
+      completeUserAuth(updatedAccount, false)
+      setToast('Password reset successful ✅ You are now logged in.')
+    } catch {
+      setAuthError('Unable to reset your password right now. Please check your internet connection and try again.')
     } finally {
       setAuthLoading(false)
     }
@@ -1107,7 +1527,9 @@ export default function App() {
         if (error) throw error
         const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === 'seeker' && a.mobile === currentUser.mobile)
         if (!remoteAccount) throw new Error('Profile was not returned')
-        updatedAccount = remoteAccount
+        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
+          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
+          : remoteAccount
       }
       const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
       writeAccounts(updatedAccounts)
@@ -1223,10 +1645,11 @@ export default function App() {
     setHasAuthenticated(false)
     setEntryRole(null)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-    setAuthForm({ name: '', mobile: '', email: '' })
+    setAuthForm(EMPTY_AUTH_FORM)
     setAuthStep('mobile')
     setAuthError('')
     setAuthEmailTouched(false)
+    resetAuthPasswordState()
     setShowMobileMenu(false)
     setToast('Logged out successfully')
     navigate('welcome', { resetHistory: true })
@@ -1249,10 +1672,11 @@ export default function App() {
     setHasAuthenticated(false)
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
     setEntryRole(null)
-    setAuthForm({ name: deletedAccount.name, mobile: deletedAccount.mobile, email: deletedAccount.email })
+    setAuthForm({ ...EMPTY_AUTH_FORM, name: deletedAccount.name, mobile: deletedAccount.mobile, email: deletedAccount.email, identifier: deletedAccount.mobile })
     setAuthStep('mobile')
     setAuthError('')
     setAuthEmailTouched(false)
+    resetAuthPasswordState()
     setShowDeleteAccountConfirm(false)
     setShowMobileMenu(false)
     setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
@@ -1495,9 +1919,13 @@ export default function App() {
         const remoteAccounts = await fetchRemoteAccountsByMobile(storedSession.mobile)
         if (cancelled || !remoteAccounts) return
         mergeAccountsForMobileState(storedSession.mobile, remoteAccounts)
-        const account = remoteAccounts.find(a => a.role === storedSession.role)
+        const remoteAccount = remoteAccounts.find(a => a.role === storedSession.role)
+        const localAccount = accounts.find(a => a.role === storedSession.role && normalizeMobile(a.mobile) === storedSession.mobile)
+        const account = remoteAccount && localAccount?.passwordHash && !remoteAccount.passwordHash
+          ? { ...remoteAccount, passwordHash: localAccount.passwordHash, hasPassword: true }
+          : remoteAccount
         const blockedByRecruiter = storedSession.role === 'seeker' && remoteAccounts.some(a => a.role === 'recruiter' && a.mobile === storedSession.mobile)
-        if (!account || blockedByRecruiter || !isValidEmail(account.email)) {
+        if (!account || blockedByRecruiter || !isValidEmail(account.email) || !hasAccountPassword(account)) {
           try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
           setCurrentUser(null)
           setHasAuthenticated(false)
@@ -1760,14 +2188,38 @@ export default function App() {
   }
 
   const normalizedAuthMobile = normalizeMobile(authForm.mobile)
-  const authRecruiterBlockAccount = entryRole === 'seeker' ? accounts.find(a => a.role === 'recruiter' && a.mobile === normalizedAuthMobile) : undefined
-  const authOtherRoleAccount = entryRole ? accounts.find(a => a.role !== entryRole && a.mobile === normalizedAuthMobile) : undefined
-  const authExistingAccount = entryRole && !authRecruiterBlockAccount ? accounts.find(a => a.role === entryRole && a.mobile === normalizedAuthMobile) : undefined
+  const parsedAuthIdentifier = parseAuthIdentifier(authForm.identifier)
+  const authLoginExistingAccount = entryRole && !parsedAuthIdentifier.error
+    ? accounts.find(a => a.role === entryRole && accountMatchesIdentifier(a, parsedAuthIdentifier))
+    : undefined
+  const authEffectiveMobile = authStep === 'mobile'
+    ? (parsedAuthIdentifier.kind === 'mobile' ? parsedAuthIdentifier.value : authLoginExistingAccount?.mobile ?? '')
+    : normalizedAuthMobile
+  const authRecruiterBlockAccount = entryRole === 'seeker' && authEffectiveMobile
+    ? accounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(authEffectiveMobile))
+    : undefined
+  const authOtherRoleAccount = entryRole ? accounts.find(a => a.role !== entryRole && normalizeMobile(a.mobile) === normalizedAuthMobile) : undefined
+  const authRegisterExistingAccount = entryRole && !authRecruiterBlockAccount
+    ? accounts.find(a => a.role === entryRole && normalizeMobile(a.mobile) === normalizedAuthMobile)
+    : undefined
+  const authExistingAccount = authStep === 'mobile'
+    ? (authRecruiterBlockAccount ? undefined : authLoginExistingAccount)
+    : authRegisterExistingAccount
   const authExistingEmailValidation = authExistingAccount ? validateEmailAddress(authExistingAccount.email) : null
   const authExistingEmailError = authExistingEmailValidation?.error ?? null
+  const authExistingNeedsPasswordSetup = Boolean(authExistingAccount && !hasAccountPassword(authExistingAccount))
+  const authRegisterNeedsPasswordSetup = !authRegisterExistingAccount || !hasAccountPassword(authRegisterExistingAccount)
   const authEmailValidation = validateEmailAddress(authForm.email)
   const showAuthEmailError = authEmailTouched && Boolean(authEmailValidation.error)
   const showAuthEmailSuccess = authEmailTouched && Boolean(authForm.email.trim()) && !authEmailValidation.error
+  const authPasswordError = getPasswordValidationError(authForm.password, authStep === 'forgot' ? 'New password' : 'Password')
+  const showAuthPasswordError = authPasswordTouched && Boolean(authPasswordError)
+  const showAuthPasswordSuccess = authPasswordTouched && Boolean(authForm.password) && !authPasswordError
+  const authConfirmPasswordError = authForm.confirmPassword !== authForm.password ? 'Confirm Password does not match.' : null
+  const showAuthConfirmPasswordError = authConfirmPasswordTouched && Boolean(authConfirmPasswordError)
+  const authLookupIdentifier = authStep === 'mobile'
+    ? (parsedAuthIdentifier.error ? '' : parsedAuthIdentifier.value)
+    : (isValidMobile(normalizedAuthMobile) ? normalizedAuthMobile : '')
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
@@ -1795,23 +2247,30 @@ export default function App() {
   })
   const canViewCandidateProfiles = isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
 
-  // When a full mobile is typed on the login screen, refresh that mobile's
-  // account state from Supabase so existing-account/blocker messages are current.
+  // When a complete mobile/email identifier is typed on the login screen,
+  // refresh its account state from Supabase so account/blocker messages are current.
   useEffect(() => {
-    if (!supabase || page !== 'auth' || !isValidMobile(normalizedAuthMobile)) return
-    if (authLookupMobileRef.current === normalizedAuthMobile) return
-    authLookupMobileRef.current = normalizedAuthMobile
+    if (!supabase || page !== 'auth' || !authLookupIdentifier) return
+    const lookupKey = `${authStep}:${authLookupIdentifier}`
+    if (authLookupIdentifierRef.current === lookupKey) return
+    authLookupIdentifierRef.current = lookupKey
     let cancelled = false
     ;(async () => {
       try {
-        const remoteAccounts = await fetchRemoteAccountsByMobile(normalizedAuthMobile)
-        if (!cancelled && remoteAccounts) mergeAccountsForMobileState(normalizedAuthMobile, remoteAccounts)
+        const shouldLookupByMobile = authStep !== 'mobile' || parsedAuthIdentifier.kind === 'mobile'
+        const remoteAccounts = shouldLookupByMobile
+          ? await fetchRemoteAccountsByMobile(authLookupIdentifier)
+          : await fetchRemoteAccountsByIdentifier(authLookupIdentifier)
+        if (!cancelled && remoteAccounts) {
+          if (shouldLookupByMobile) mergeAccountsForMobileState(authLookupIdentifier, remoteAccounts)
+          else mergeIncomingAccountsState(remoteAccounts)
+        }
       } catch {
         // The submit action will show a connection message if lookup still fails.
       }
     })()
     return () => { cancelled = true }
-  }, [normalizedAuthMobile, page])
+  }, [authLookupIdentifier, authStep, page])
 
   // scroll to jobs
   const scrollToJobs = () => navigate('jobs')
@@ -2326,7 +2785,7 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="mt-10 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • After logout, login with mobile only • No password</p>
+              <p className="mt-10 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • Login with mobile or email + password</p>
               <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-extrabold text-sky-700">
                 <button type="button" onClick={() => openLegal('privacy')} className="hover:text-sky-900 hover:underline">Privacy Policy</button><span className="text-slate-300">•</span>
                 <button type="button" onClick={() => openLegal('terms')} className="hover:text-sky-900 hover:underline">Terms &amp; Privacy</button><span className="text-slate-300">•</span>
@@ -2337,7 +2796,9 @@ export default function App() {
           </div>
         </section>
       )}
-      {/* USER LOGIN / REGISTER — first time: name + mobile + email; after that: mobile only (no password) */}
+      {/* USER LOGIN / REGISTER — Job Seeker/Recruiter only. First time: name +
+          mobile + email + password; after that: mobile OR email + password.
+          Admin intentionally keeps its separate existing login flow. */}
       {page === 'auth' && (
         <section className="flex min-h-[100dvh] items-center justify-center bg-gradient-to-b from-sky-700 via-sky-600 to-indigo-800 px-4 py-10">
           <div className="w-full max-w-md">
@@ -2355,24 +2816,25 @@ export default function App() {
                 </div>
                 <div className="text-center">
                   <h1 className="mt-5 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Enter your mobile number. Existing users open directly. Name and email are asked only for a new account.' : 'Create your account once. You will stay logged in until you logout; after logout, login with mobile only.'}</p>
-                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" /> No password needed</span>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Login with your registered mobile number or email ID and your password. New users continue to registration.' : authStep === 'forgot' ? 'Reset your password by matching your registered mobile number and email ID.' : 'Register once with your mobile number, correct email ID and a password of at least 6 characters.'}</p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><LockKeyhole className="h-3.5 w-3.5" /> Password • Minimum 6 characters</span>
                 </div>
               </div>
 
               <div className="relative mt-5 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
                 <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-300 ease-out ${entryRole === 'recruiter' ? 'translate-x-full' : 'translate-x-0'}`} />
-                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
-                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
               </div>
 
               {authStep === 'mobile' ? (
-                <form className="mt-5" onSubmit={e => { e.preventDefault(); handleMobileContinue() }}>
-                  <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label>
+                <form className="mt-5" onSubmit={e => { e.preventDefault(); handleLoginContinue() }}>
+                  <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number or Email ID *</label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
-                    <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="Enter 10-digit mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><User className="h-4 w-4" /></span>
+                    <input value={authForm.identifier} onChange={e => { setAuthForm(prev => ({ ...prev, identifier: e.target.value })); setAuthError('') }} type="text" inputMode="email" autoComplete="username" placeholder="10-digit mobile or yourname@gmail.com" className="w-full rounded-xl border bg-white py-3 pl-10 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
                   </div>
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">Use either your registered mobile number or registered email ID.</p>
                   {authRecruiterBlockAccount ? (
                     <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
                       <div className="flex gap-2.5">
@@ -2380,7 +2842,7 @@ export default function App() {
                         <div>
                           <p className="text-sm font-extrabold text-amber-900">This mobile is registered as Recruiter</p>
                           <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800"><b>{authRecruiterBlockAccount.name}</b> uses this mobile for a Recruiter account. Job Seeker login is blocked until that Recruiter account is deleted.</p>
-                          <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError('') }} className="mt-2 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white">Login as Recruiter to delete account</button>
+                          <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white">Login as Recruiter to delete account</button>
                         </div>
                       </div>
                     </div>
@@ -2399,21 +2861,99 @@ export default function App() {
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-extrabold">Welcome back, {authExistingAccount.name}!</p>
-                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingAccount.email}</p>
+                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingNeedsPasswordSetup ? 'Password setup needed' : authExistingAccount.email}</p>
                       </div>
                       <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? After entering your mobile, we will ask only your <b>name</b> and <b>correct email ID</b> to create your account.</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? Enter your mobile or email and create a password. Next, we will ask your <b>name</b>, <b>mobile number</b> and <b>correct email ID</b>.</p>
                   )}
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Password *</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
+                      <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="current-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide password' : 'Show password'} title={showAuthPassword ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                    </div>
+                    {showAuthPasswordError ? (
+                      <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                    ) : showAuthPasswordSuccess ? (
+                      <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
+                    ) : (
+                      <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters.</p>
+                    )}
+                  </div>
+                  <div className="mt-2 text-right">
+                    <button type="button" onClick={openForgotPassword} className="text-xs font-extrabold text-sky-700 hover:text-sky-900 hover:underline">Forgot Password?</button>
+                  </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingEmailError ? 'Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue with Mobile'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Set Password & Continue' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
+                </form>
+              ) : authStep === 'forgot' ? (
+                <form className="mt-5" onSubmit={e => { e.preventDefault(); handleForgotPasswordReset() }}>
+                  <div className="rounded-2xl bg-sky-50 p-3 text-center">
+                    <p className="text-sm font-extrabold text-sky-900">Forgot Password</p>
+                    <p className="text-[11px] font-medium leading-relaxed text-sky-700">Enter the same registered mobile number and email ID used for this {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account, then create a new password.</p>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Registered Mobile Number *</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
+                        <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit registered mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Registered Email ID *</label>
+                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      {showAuthEmailError ? (
+                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailValidation.error}{authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { setAuthForm(prev => ({ ...prev, email: authEmailValidation.suggestion ?? prev.email })); setAuthError(''); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
+                      ) : showAuthEmailSuccess ? (
+                        <p id="auth-email-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Email format is correct.</p>
+                      ) : (
+                        <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Both registered mobile and email must match the same account.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">New Password *</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
+                        <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide new password' : 'Show new password'} title={showAuthPassword ? 'Hide new password' : 'Show new password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                      </div>
+                      {showAuthPasswordError ? (
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                      ) : showAuthPasswordSuccess ? (
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
+                      ) : (
+                        <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password *</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><KeyRound className="h-4 w-4" /></span>
+                        <input value={authForm.confirmPassword} onChange={e => { setAuthForm(prev => ({ ...prev, confirmPassword: e.target.value })); setAuthError('') }} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter new password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <button type="button" onClick={() => setShowAuthConfirmPassword(prev => !prev)} aria-label={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} title={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                      </div>
+                      {showAuthConfirmPasswordError ? (
+                        <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordError}</p>
+                      ) : authConfirmPasswordTouched && authForm.confirmPassword ? (
+                        <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Passwords match.</p>
+                      ) : (
+                        <p id="auth-confirm-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Enter the same new password again.</p>
+                      )}
+                    </div>
+                  </div>
+                  {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
+                  <button type="submit" disabled={authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><KeyRound className="h-4 w-4" /> {authLoading ? 'Resetting Password...' : 'Reset Password & Login'}</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })); resetAuthPasswordState() }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Return to Login</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
-                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
-                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : 'Register once — no password. Stay logged in until you logout.'}</p>
+                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Your Password' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
+                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'This account was created before password login. Set a minimum-6-character password to secure it.' : authExistingAccount ? 'Enter your current password to login to this existing account.' : 'Register with your name, mobile number, correct email ID and a minimum-6-character password.'}</p>
                   </div>
                   {authRecruiterBlockAccount && (
                     <div className="mt-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
@@ -2449,15 +2989,47 @@ export default function App() {
                         <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Gmail IDs must end with @gmail.com.</p>
                       )}
                     </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">{authRegisterNeedsPasswordSetup ? 'Create Password *' : 'Current Password *'}</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
+                        <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete={authRegisterNeedsPasswordSetup ? 'new-password' : 'current-password'} placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide password' : 'Show password'} title={showAuthPassword ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                      </div>
+                      {showAuthPasswordError ? (
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                      ) : showAuthPasswordSuccess ? (
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
+                      ) : (
+                        <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters. Keep your password private.</p>
+                      )}
+                    </div>
+                    {authRegisterNeedsPasswordSetup && (
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-slate-600">Confirm Password *</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><KeyRound className="h-4 w-4" /></span>
+                          <input value={authForm.confirmPassword} onChange={e => { setAuthForm(prev => ({ ...prev, confirmPassword: e.target.value })); setAuthError('') }} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                          <button type="button" onClick={() => setShowAuthConfirmPassword(prev => !prev)} aria-label={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} title={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                        </div>
+                        {showAuthConfirmPasswordError ? (
+                          <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordError}</p>
+                        ) : authConfirmPasswordTouched && authForm.confirmPassword ? (
+                          <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Passwords match.</p>
+                        ) : (
+                          <p id="auth-confirm-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Enter the same password again.</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError ? 'Correct Email & Continue' : 'Register & Continue'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authRegisterNeedsPasswordSetup && authExistingAccount ? 'Setting Password...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError && authRegisterNeedsPasswordSetup ? 'Correct Email & Set Password' : authExistingEmailError ? 'Correct Email & Continue' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Password & Continue' : authExistingAccount ? 'Login & Continue' : 'Register & Continue'}</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
                 </form>
               )}
 
               <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
-                <span>Step 1: Mobile</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
+                <span>Step 1: Login</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
               </div>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
             </div>

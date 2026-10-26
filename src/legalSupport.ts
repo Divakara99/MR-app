@@ -33,7 +33,7 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
   {
     title: '2. Information We Collect',
     bullets: [
-      'Account information: your full name, 10-digit mobile number, email ID, selected role (Job Seeker or Recruiter) and account creation details.',
+      'Account information: your full name, 10-digit mobile number, email ID, selected role (Job Seeker or Recruiter), account creation details and your password in protected hashed form. Your plain password is not displayed in the app.',
       'Job Seeker profile information: Fresher or Experienced status, desired role, qualification, passing year for Freshers, total experience, current company, current role, current package, expected package, State, City, current HQ, preferred HQ, notice period or joining availability, two-wheeler availability and skills.',
       'Recruiter and vacancy information: company name, job title, division, role, State, City, HQ, experience required, CTC, openings, qualification, job description, contact-person name, contact number, email ID and urgency.',
       'App activity: saved jobs, applications started or submitted through the app, contact reveals, daily unlock counts, selected plan, profile completion status, account-deletion requests and candidate contact requests.',
@@ -103,7 +103,7 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
     title: '9. Cookies, Local Storage & Persistent Login',
     bullets: [
       'The app uses local storage and similar browser storage to remember your session, plan, saved jobs, applications, contact reveals, daily unlocks, preferences and account-related requests on your device.',
-      'If you remain logged in, the app can reopen your account without asking for your mobile number each time. Use Logout when using a shared or public device.',
+      'If you remain logged in, the app can reopen your account without asking for your password each time. After Logout, login again with either your registered mobile number or email ID and your password. Use Logout when using a shared or public device.',
       'Clearing browser/app storage may sign you out and may remove locally stored preferences, saved activity or ticket history shown on that device.',
     ],
   },
@@ -113,7 +113,7 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
       'Account and profile information is retained while your account is active and for a reasonable period needed for support, safety, dispute handling and legal or operational records.',
       'Support tickets and important account-request records may be retained after resolution so Admin can review the history of a request.',
       'We use reasonable technical and organisational safeguards, access controls and privacy masking to protect personal information, but no internet system can be guaranteed completely secure.',
-      'You are responsible for protecting access to your mobile number, email account and logged-in device.',
+      'You are responsible for protecting access to your mobile number, email account, password and logged-in device.',
     ],
   },
   {
@@ -154,10 +154,11 @@ export const TERMS_SECTIONS: LegalSection[] = [
     ],
   },
   {
-    title: '2. Accounts & Mobile Login',
+    title: '2. Accounts, Password & Login',
     bullets: [
-      'First-time registration requires your full name, correct 10-digit mobile number and correct email ID. After registration, returning login is by mobile number only; no password is used for Job Seeker or Recruiter accounts.',
-      'Once logged in, your session may remain active on your device until you choose Logout. You are responsible for activity performed through your logged-in device and registered mobile number.',
+      'First-time Job Seeker or Recruiter registration requires your full name, correct 10-digit mobile number, correct email ID and a password of at least 6 characters. After registration, you may login with either your registered mobile number or registered email ID together with your password.',
+      'Forgot Password reset requires the registered mobile number and registered email ID to match the same account, followed by creation of a new minimum-6-character password. Keep your password private and do not share it with any person.',
+      'Once logged in, your session may remain active on your device until you choose Logout. You are responsible for activity performed through your logged-in device, registered mobile number, email ID and password.',
       'A mobile number used for an active Recruiter account cannot be used for Job Seeker login or registration until that Recruiter account is deleted.',
       'Do not create an account for another person, use a mobile number or email ID you do not control, or create duplicate or misleading accounts.',
     ],

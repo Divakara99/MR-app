@@ -1,13 +1,18 @@
 -- PharmaSales Jobs — Supabase account backend
 -- Run this once in Supabase Dashboard → SQL Editor.
 --
--- Account flow used by the app:
--- 1) Enter mobile number.
--- 2) If an account exists for that mobile/role, open the account directly.
--- 3) If it does not exist, collect name + email and create it.
+-- Account flow used by the app for Job Seekers and Recruiters:
+-- 1) Registration collects full name, mobile number, correct email ID and a
+--    password of at least 6 characters. Passwords are stored only as hashes.
+-- 2) Login accepts either the registered mobile number OR registered email ID
+--    together with the password.
+-- 3) Forgot Password requires the registered mobile number and email ID to
+--    match the same selected-role account before a new password is set.
 -- The app keeps only role + mobile in its local session until the user logs out.
+-- Admin does not use this user-account flow; it keeps its separate Admin login.
 
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create or replace function public.is_valid_app_email(p_email text)
 returns boolean
@@ -92,6 +97,7 @@ create table if not exists public.app_accounts (
   name text not null check (char_length(trim(name)) >= 3),
   mobile text not null check (mobile ~ '^[6-9][0-9]{9}$'),
   email text not null check (public.is_valid_app_email(email)),
+  password_hash text,
   profile jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -101,6 +107,14 @@ create table if not exists public.app_accounts (
 create index if not exists app_accounts_mobile_idx on public.app_accounts (mobile);
 create index if not exists app_accounts_candidate_idx
   on public.app_accounts (role, updated_at desc);
+
+-- Existing installations created before password login get the nullable hash
+-- column. Those legacy rows set their first password in the app.
+alter table public.app_accounts add column if not exists password_hash text;
+
+-- Login by email must identify one account within the selected role.
+create unique index if not exists app_accounts_role_email_uidx
+  on public.app_accounts (role, lower(email));
 
 -- Strengthen installations created by an older version of this schema.
 -- NOT VALID protects every new/updated row without blocking setup because of
@@ -115,43 +129,101 @@ alter table public.app_accounts enable row level security;
 -- Do not expose the private account table directly to browser clients.
 revoke all on table public.app_accounts from anon, authenticated;
 
+-- Account RPC return shapes now include has_password (never the password hash),
+-- so drop older definitions before recreating them.
+drop function if exists public.find_app_accounts_by_mobile(text);
+drop function if exists public.find_app_accounts_by_identifier(text);
+drop function if exists public.register_app_account(text, text, text, text);
+drop function if exists public.register_app_account(text, text, text, text, text);
+drop function if exists public.login_app_account(text, text, text);
+drop function if exists public.set_app_password(text, text, text);
+drop function if exists public.reset_app_password_with_registered_details(text, text, text, text);
+drop function if exists public.update_app_account_email(text, text, text, text);
+drop function if exists public.update_seeker_profile(text, jsonb);
+
 create or replace function public.find_app_accounts_by_mobile(p_mobile text)
 returns table (
   role text,
   name text,
   mobile text,
   email text,
+  has_password boolean,
   profile jsonb,
   created_at timestamptz
 )
 language sql
 stable
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
-  select a.role, a.name, a.mobile, a.email, a.profile, a.created_at
+  select a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at
   from public.app_accounts a
   where a.mobile = p_mobile
   order by a.created_at asc;
+$$;
+
+create or replace function public.find_app_accounts_by_identifier(p_identifier text)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_identifier text := trim(coalesce(p_identifier, ''));
+  v_digits text := regexp_replace(trim(coalesce(p_identifier, '')), '[^0-9]', '', 'g');
+  v_mobile text;
+begin
+  if position('@' in v_identifier) > 0 then
+    return query
+    select a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at
+    from public.app_accounts a
+    where lower(a.email) = lower(v_identifier)
+    order by a.created_at asc;
+    return;
+  end if;
+
+  v_mobile := case
+    when char_length(v_digits) = 12 and left(v_digits, 2) = '91' then substring(v_digits from 3)
+    when char_length(v_digits) = 11 and left(v_digits, 1) = '0' then substring(v_digits from 2)
+    else v_digits
+  end;
+
+  return query
+  select a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at
+  from public.app_accounts a
+  where a.mobile = v_mobile
+  order by a.created_at asc;
+end;
 $$;
 
 create or replace function public.register_app_account(
   p_role text,
   p_name text,
   p_mobile text,
-  p_email text
+  p_email text,
+  p_password text
 )
 returns table (
   role text,
   name text,
   mobile text,
   email text,
+  has_password boolean,
   profile jsonb,
   created_at timestamptz
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   if not public.is_valid_app_email(p_email) then
@@ -159,15 +231,152 @@ begin
       using errcode = '23514';
   end if;
 
-  insert into public.app_accounts (role, name, mobile, email)
-  values (p_role, trim(p_name), p_mobile, lower(trim(p_email)))
+  if char_length(coalesce(p_password, '')) < 6 then
+    raise exception 'Password must be at least 6 characters.'
+      using errcode = '23514';
+  end if;
+
+  if exists (
+    select 1
+    from public.app_accounts a
+    where a.role = p_role
+      and lower(a.email) = lower(trim(p_email))
+      and a.mobile <> p_mobile
+  ) then
+    raise exception 'This email ID is already registered with another mobile number for this account type.'
+      using errcode = '23505';
+  end if;
+
+  insert into public.app_accounts (role, name, mobile, email, password_hash)
+  values (
+    p_role,
+    trim(p_name),
+    p_mobile,
+    lower(trim(p_email)),
+    crypt(p_password, gen_salt('bf', 12))
+  )
   on conflict (role, mobile) do nothing;
 
   return query
-  select a.role, a.name, a.mobile, a.email, a.profile, a.created_at
+  select a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at
   from public.app_accounts a
   where a.role = p_role and a.mobile = p_mobile;
 end;
+$$;
+
+create or replace function public.login_app_account(
+  p_role text,
+  p_identifier text,
+  p_password text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_identifier text := trim(coalesce(p_identifier, ''));
+  v_digits text := regexp_replace(trim(coalesce(p_identifier, '')), '[^0-9]', '', 'g');
+  v_mobile text;
+begin
+  if char_length(coalesce(p_password, '')) < 6 then
+    return;
+  end if;
+
+  if position('@' in v_identifier) > 0 then
+    return query
+    select a.role, a.name, a.mobile, a.email, true as has_password, a.profile, a.created_at
+    from public.app_accounts a
+    where a.role = p_role
+      and lower(a.email) = lower(v_identifier)
+      and a.password_hash is not null
+      and a.password_hash = crypt(p_password, a.password_hash)
+    order by a.created_at asc
+    limit 1;
+    return;
+  end if;
+
+  v_mobile := case
+    when char_length(v_digits) = 12 and left(v_digits, 2) = '91' then substring(v_digits from 3)
+    when char_length(v_digits) = 11 and left(v_digits, 1) = '0' then substring(v_digits from 2)
+    else v_digits
+  end;
+
+  return query
+  select a.role, a.name, a.mobile, a.email, true as has_password, a.profile, a.created_at
+  from public.app_accounts a
+  where a.role = p_role
+    and a.mobile = v_mobile
+    and a.password_hash is not null
+    and a.password_hash = crypt(p_password, a.password_hash)
+  limit 1;
+end;
+$$;
+
+create or replace function public.set_app_password(
+  p_role text,
+  p_mobile text,
+  p_password text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  update public.app_accounts a
+  set password_hash = crypt(p_password, gen_salt('bf', 12)),
+      updated_at = now()
+  where a.role = p_role
+    and a.mobile = p_mobile
+    and a.password_hash is null
+    and char_length(coalesce(p_password, '')) >= 6
+  returning a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at;
+$$;
+
+create or replace function public.reset_app_password_with_registered_details(
+  p_role text,
+  p_mobile text,
+  p_email text,
+  p_password text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  update public.app_accounts a
+  set password_hash = crypt(p_password, gen_salt('bf', 12)),
+      updated_at = now()
+  where a.role = p_role
+    and a.mobile = p_mobile
+    and lower(a.email) = lower(trim(p_email))
+    and char_length(coalesce(p_password, '')) >= 6
+  returning a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at;
 $$;
 
 create or replace function public.update_app_account_email(
@@ -181,12 +390,13 @@ returns table (
   name text,
   mobile text,
   email text,
+  has_password boolean,
   profile jsonb,
   created_at timestamptz
 )
 language sql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
   update public.app_accounts a
   set name = trim(p_name),
@@ -195,7 +405,14 @@ as $$
   where a.role = p_role
     and a.mobile = p_mobile
     and public.is_valid_app_email(p_email)
-  returning a.role, a.name, a.mobile, a.email, a.profile, a.created_at;
+    and not exists (
+      select 1
+      from public.app_accounts other_account
+      where other_account.role = p_role
+        and other_account.mobile <> p_mobile
+        and lower(other_account.email) = lower(trim(p_email))
+    )
+  returning a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at;
 $$;
 
 create or replace function public.update_seeker_profile(
@@ -207,18 +424,19 @@ returns table (
   name text,
   mobile text,
   email text,
+  has_password boolean,
   profile jsonb,
   created_at timestamptz
 )
 language sql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
   update public.app_accounts a
   set profile = p_profile,
       updated_at = now()
   where a.role = 'seeker' and a.mobile = p_mobile
-  returning a.role, a.name, a.mobile, a.email, a.profile, a.created_at;
+  returning a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at;
 $$;
 
 create or replace function public.delete_app_account(
@@ -287,20 +505,31 @@ as $$
 $$;
 
 revoke all on function public.find_app_accounts_by_mobile(text) from public;
-revoke all on function public.register_app_account(text, text, text, text) from public;
+revoke all on function public.find_app_accounts_by_identifier(text) from public;
+revoke all on function public.register_app_account(text, text, text, text, text) from public;
+revoke all on function public.login_app_account(text, text, text) from public;
+revoke all on function public.set_app_password(text, text, text) from public;
+revoke all on function public.reset_app_password_with_registered_details(text, text, text, text) from public;
 revoke all on function public.update_app_account_email(text, text, text, text) from public;
 revoke all on function public.update_seeker_profile(text, jsonb) from public;
 revoke all on function public.delete_app_account(text, text) from public;
 revoke all on function public.list_anonymous_candidate_profiles() from public;
 
 grant execute on function public.find_app_accounts_by_mobile(text) to anon, authenticated;
-grant execute on function public.register_app_account(text, text, text, text) to anon, authenticated;
+grant execute on function public.find_app_accounts_by_identifier(text) to anon, authenticated;
+grant execute on function public.register_app_account(text, text, text, text, text) to anon, authenticated;
+grant execute on function public.login_app_account(text, text, text) to anon, authenticated;
+grant execute on function public.set_app_password(text, text, text) to anon, authenticated;
+grant execute on function public.reset_app_password_with_registered_details(text, text, text, text) to anon, authenticated;
 grant execute on function public.update_app_account_email(text, text, text, text) to anon, authenticated;
 grant execute on function public.update_seeker_profile(text, jsonb) to anon, authenticated;
 grant execute on function public.delete_app_account(text, text) to anon, authenticated;
 grant execute on function public.list_anonymous_candidate_profiles() to anon, authenticated;
 
 -- IMPORTANT SECURITY NOTE:
--- The requested mobile-only login has no password/OTP. Before a large public
--- launch, protect account lookup with Supabase Phone OTP or another verified
--- login step so a person cannot access an account only by knowing its number.
+-- This schema implements the requested custom mobile/email + password flow and
+-- stores passwords only as bcrypt hashes. Forgot Password currently requires
+-- both registered identifiers to match because no email/OTP delivery service is
+-- connected yet. Before a large public launch, migrate login/recovery to
+-- Supabase Auth (or another verified OTP/email-link flow), add rate limiting,
+-- and restrict account-lookup responses further.
