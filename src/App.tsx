@@ -1738,7 +1738,7 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
             <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
-              <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-xl object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
+              <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="whitespace-nowrap text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[380px]:text-[17px] sm:text-[20px]">PharmaSales Jobs</p>
@@ -1867,7 +1867,7 @@ export default function App() {
               {/* Header */}
               <div className="flex items-center justify-between gap-3 border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
                 <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur min-[380px]:gap-3 min-[380px]:px-3">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-xl object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
                   <div className="min-w-0">
                     <p className="truncate text-[16px] font-extrabold leading-none min-[380px]:text-[17px]">PharmaSales Jobs</p>
                     <p className="mt-1 truncate text-[8.5px] font-semibold leading-none tracking-wide text-sky-50 min-[380px]:text-[9px]">The MR to NSM Jobs Network</p>
@@ -2019,7 +2019,7 @@ export default function App() {
             <div className="rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
               <div className="flex w-full items-center gap-2.5 rounded-[22px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3 sm:gap-4 sm:p-4">
                 <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs — The MR to NSM Jobs Network" className="h-14 w-14 rounded-[20px] object-cover shadow-lg min-[420px]:h-16 min-[420px]:w-16 sm:h-[72px] sm:w-[72px]" />
+                  <img src="/icon-192.png" alt="PharmaSales Jobs — The MR to NSM Jobs Network" className="h-14 w-14 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow-lg min-[420px]:h-16 min-[420px]:w-16 sm:h-[72px] sm:w-[72px]" />
                 </button>
                 <div className="min-w-0 flex-1">
                   <h1 className="whitespace-nowrap text-[19px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[23px] sm:text-[28px]">PharmaSales Jobs</h1>
@@ -2118,7 +2118,7 @@ export default function App() {
               <div className="mt-3">
                 <div className="flex items-center gap-2.5 rounded-[20px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3">
                   <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
-                    <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-12 w-12 rounded-2xl object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
+                    <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-12 w-12 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
                   </button>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-nowrap text-[18px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[20px]">PharmaSales Jobs</p>
@@ -3521,7 +3521,7 @@ export default function App() {
             <div className="mx-auto max-w-md">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-sky-100 bg-white px-2.5 py-2 shadow-sm min-[420px]:gap-3 min-[420px]:px-3" aria-label="PharmaSales Jobs — The MR to NSM Jobs Network">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-2xl object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow min-[420px]:h-11 min-[420px]:w-11" />
                   <div className="min-w-0">
                     <p className="truncate text-[16px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[18px]">PharmaSales Jobs</p>
                     <p className="mt-1 truncate text-[8px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[9px]">The MR to NSM Jobs Network</p>
@@ -3574,7 +3574,7 @@ export default function App() {
             <div>
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="flex min-w-0 items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-2 text-left shadow-sm">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-11 w-11 shrink-0 rounded-2xl object-cover shadow" />
+                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-11 w-11 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover shadow" />
                   <span className="min-w-0">
                     <span className="block truncate text-[18px] font-extrabold leading-none tracking-tight text-slate-900">PharmaSales Jobs</span>
                     <span className="mt-1 block truncate text-[9px] font-semibold leading-none tracking-wide text-sky-700">The MR to NSM Jobs Network</span>
@@ -3928,7 +3928,7 @@ export default function App() {
         <div className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
-              <div className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-3 py-2"><img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-xl object-cover" /><div className="min-w-0"><p className="truncate text-[17px] font-extrabold leading-none text-white">PharmaSales Jobs</p><p className="mt-1 truncate text-[9px] font-semibold leading-none tracking-wide text-sky-300">The MR to NSM Jobs Network</p></div></div>
+              <div className="inline-flex max-w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-3 py-2"><img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-full bg-white ring-1 ring-sky-100 object-cover" /><div className="min-w-0"><p className="truncate text-[17px] font-extrabold leading-none text-white">PharmaSales Jobs</p><p className="mt-1 truncate text-[9px] font-semibold leading-none tracking-wide text-sky-300">The MR to NSM Jobs Network</p></div></div>
               <p className="mt-3 text-xs leading-relaxed opacity-80">{shouldHideJobSeekerExperience ? 'PharmaSales Jobs — The MR to NSM Jobs Network. Post verified vacancies free after Admin approval and shortlist anonymous pharma candidates. No Recruiter plan needed. Managed by M Divakar Reddy since 2026.' : 'PharmaSales Jobs — The MR to NSM Jobs Network. Verified vacancies, masked contacts, subscription unlocks. Managed by M Divakar Reddy since 2026.'}</p>
             </div>
             <div>
