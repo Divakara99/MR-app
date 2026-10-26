@@ -2061,24 +2061,27 @@ export default function App() {
                 </button>
               </div>
 
-              <AnimatePresence initial={false}>
-                {welcomeSelectedRole && (
-                  <motion.button
-                    key="welcome-login-register"
-                    type="button"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 8 }}
-                    transition={{ duration: 0.22, ease: 'easeOut' }}
-                    onClick={() => enterAs(welcomeSelectedRole)}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg transition hover:bg-slate-800 active:scale-[0.99]"
-                  >
-                    <LogIn className="h-4 w-4 shrink-0" />
-                    <span>{welcomeSelectedRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</span>
-                    <ChevronRight className="h-4 w-4 shrink-0" />
-                  </motion.button>
-                )}
-              </AnimatePresence>
+              {/* Fixed-height slot: hiding Login/Register must not move the content below. */}
+              <div className="mt-4 h-12 shrink-0">
+                <AnimatePresence initial={false}>
+                  {welcomeSelectedRole && (
+                    <motion.button
+                      key="welcome-login-register"
+                      type="button"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.22, ease: 'easeOut' }}
+                      onClick={() => enterAs(welcomeSelectedRole)}
+                      className="flex h-full w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg transition hover:bg-slate-800 active:scale-[0.99]"
+                    >
+                      <LogIn className="h-4 w-4 shrink-0" />
+                      <span>{welcomeSelectedRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</span>
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Clear separator and double gap: the Founder card stands alone. */}
               <div className="my-10 flex items-center gap-3" aria-hidden="true">
