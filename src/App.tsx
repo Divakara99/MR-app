@@ -7,7 +7,7 @@ import {
   GraduationCap, Layers, Siren, Megaphone, Quote,
   LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
   Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
-  Package
+  Package, Upload, Camera, Download
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow } from './supabase'
@@ -70,6 +70,12 @@ type SeekerProfile = {
   twoWheeler: string
   skills: string
   updatedAt?: string
+  // Optional private uploads — never shown to Recruiters (candidates stay anonymous).
+  profilePhoto?: string
+  resumeName?: string
+  resumeSize?: number
+  resumeType?: string
+  resumeUploadedAt?: string
 }
 type CandidateProfileView = {
   id: string
@@ -295,6 +301,67 @@ const anonymousCandidateCode = (mobile: string) => {
   for (let i = 0; i < mobile.length; i++) hash = ((hash << 5) - hash + mobile.charCodeAt(i)) | 0
   return `MR-2026-${1000 + (Math.abs(hash) % 9000)}`
 }
+// ---- Job Seeker uploads (profile photo + resume) ----
+// The photo is downscaled and kept with the account profile. The resume file
+// itself is stored privately on this device (IndexedDB); only its name/size
+// metadata travels with the profile. Recruiters never see either upload.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+const formatFileSize = (bytes?: number) => {
+  if (!bytes || bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+const fileToCompressedPhotoDataUrl = (file: File, maxDimension = 384): Promise<string> => new Promise((resolve, reject) => {
+  const url = URL.createObjectURL(file)
+  const img = new Image()
+  img.onload = () => {
+    try {
+      const scale = Math.min(1, maxDimension / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Canvas unavailable')
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/jpeg', 0.85))
+    } catch (err) {
+      URL.revokeObjectURL(url)
+      reject(err)
+    }
+  }
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Unable to read image')) }
+  img.src = url
+})
+const RESUME_DB_NAME = 'pharmasales-resume-store-v1'
+const resumeStorageKey = (account: { role: EntryRole; mobile: string }) => `${account.role}:${account.mobile}`
+const openResumeDb = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+  if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB unavailable')); return }
+  const request = indexedDB.open(RESUME_DB_NAME, 1)
+  request.onupgradeneeded = () => { request.result.createObjectStore('resumes') }
+  request.onsuccess = () => resolve(request.result)
+  request.onerror = () => reject(request.error ?? new Error('Unable to open resume storage'))
+})
+const resumeDbRequest = async <T,>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+  const db = await openResumeDb()
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction('resumes', mode)
+    const request = run(tx.objectStore('resumes'))
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('Resume storage failed'))
+    tx.oncomplete = () => db.close()
+    tx.onerror = () => { db.close(); reject(tx.error ?? new Error('Resume storage failed')) }
+  })
+}
+const saveResumeBlob = (key: string, file: File) => resumeDbRequest('readwrite', store => store.put(file, key))
+const loadResumeBlob = (key: string) => resumeDbRequest<Blob | undefined>('readonly', store => store.get(key) as IDBRequest<Blob | undefined>)
+const deleteResumeBlob = (key: string) => resumeDbRequest('readwrite', store => store.delete(key))
+const AccountAvatar = ({ name, photo, imgClassName, fallbackClassName }: { name: string; photo?: string; imgClassName: string; fallbackClassName: string }) => (
+  photo
+    ? <img src={photo} alt={name} className={`${imgClassName} shrink-0 select-none rounded-full object-cover object-center`} />
+    : <span className={`${fallbackClassName} shrink-0 select-none items-center justify-center rounded-full font-extrabold`} style={{ display: 'inline-flex' }}>{name.trim().charAt(0).toUpperCase()}</span>
+)
 const SAMPLE_CANDIDATE_PROFILES: CandidateProfileView[] = [
   { id: 'sample-mr-2026-1011', code: 'MR-2026-1011', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Trainee MR', qualification: 'B.Pharm', passingYear: '2026', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹3.0 - 3.6 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Ameerpet', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Communication, Product Knowledge, MS Excel' } },
   { id: 'sample-mr-2026-1042', code: 'MR-2026-1042', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Senior MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '2-4 years', currentCompany: 'Sun Pharma', currentRole: 'Field MR', currentPackage: '₹4.8 LPA', expectedPackage: '₹5.5 - 6.0 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Jayanagar', preferredHq: 'Bengaluru', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'RCPA, Doctor Calling, Stockist Handling' } },
@@ -660,6 +727,9 @@ export default function App() {
   const [supportTicketError, setSupportTicketError] = useState('')
   const [createdSupportTicket, setCreatedSupportTicket] = useState<SupportTicket | null>(null)
   const [seekerProfileForm, setSeekerProfileForm] = useState<SeekerProfile>(() => loadSessionAccount()?.profile ?? EMPTY_SEEKER_PROFILE)
+  const [uploadBusy, setUploadBusy] = useState<'' | 'photo' | 'resume' | 'download'>('')
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null)
+  const resumeInputRef = useRef<HTMLInputElement>(null)
   const [seekerProfileError, setSeekerProfileError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
@@ -809,8 +879,11 @@ export default function App() {
     setShowMobileMenu(false)
     navigate('admin')
   }
-  // SECRET: Admin Login opens only after tapping the logo or Divakar Reddy's photo 5 times quickly
+  // FULLY SECRET: Admin Login opens only after 5 quick taps on the Welcome
+  // page logo/photo. No tap count or hint is ever shown, and the gesture is
+  // disabled on every other page (Job Seeker, Recruiter, Auth, Admin, etc.).
   const handleSecretTap = (): boolean => {
+    if (page !== 'welcome') return false
     const s = secretTapRef.current
     s.count += 1
     if (s.timer) clearTimeout(s.timer)
@@ -819,11 +892,8 @@ export default function App() {
       s.count = 0
       if (s.timer) clearTimeout(s.timer)
       openAdmin()
-      setToast(isAdmin ? '👑 Admin Dashboard — M Divakar Reddy' : '🔐 Admin Login — only for M Divakar Reddy')
       return true
     }
-    if (s.count === 3) setToast('2 more taps…')
-    if (s.count === 4) setToast('1 more tap…')
     return false
   }
   const getSafeHomeDestination = (): typeof page => {
@@ -833,11 +903,10 @@ export default function App() {
   }
   const handleBrandLogoClick = () => {
     if (page === 'admin') {
+      // On Admin Login, the brand must never redirect to Jobs/Home.
       if (isAdmin) openAdmin('overview')
-      else handleSecretTap()
       return
     }
-    if (handleSecretTap()) return
     if (isAdmin) { openAdmin('overview'); return }
     navigate(getSafeHomeDestination())
   }
@@ -1015,12 +1084,20 @@ export default function App() {
     if (!supabase) return
     const { data, error } = await supabase.rpc('list_anonymous_candidate_profiles')
     if (error) throw error
-    const mapped = ((data ?? []) as RemoteCandidateRow[]).map(row => ({
-      id: `supabase-${row.candidate_id}`,
-      code: row.candidate_code,
-      source: 'registered' as const,
-      profile: normalizeSeekerProfile(row.profile) ?? EMPTY_SEEKER_PROFILE,
-    }))
+    const mapped = ((data ?? []) as RemoteCandidateRow[]).map(row => {
+      const publicProfile: SeekerProfile = { ...(normalizeSeekerProfile(row.profile) ?? EMPTY_SEEKER_PROFILE) }
+      delete publicProfile.profilePhoto
+      delete publicProfile.resumeName
+      delete publicProfile.resumeSize
+      delete publicProfile.resumeType
+      delete publicProfile.resumeUploadedAt
+      return {
+        id: `supabase-${row.candidate_id}`,
+        code: row.candidate_code,
+        source: 'registered' as const,
+        profile: publicProfile,
+      }
+    })
     setRemoteCandidateProfiles(mapped)
   }
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
@@ -1448,6 +1525,87 @@ export default function App() {
       return next
     })
     setSeekerProfileError('')
+  }
+  // Uploads save to the Job Seeker account immediately (with the current form
+  // draft) so the photo/resume stay in the account even before "Save Profile".
+  const persistSeekerProfilePatch = (patch: Partial<SeekerProfile>) => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    const nextProfile: SeekerProfile = { ...seekerProfileForm, ...patch }
+    const updatedAccount: Account = { ...currentUser, profile: nextProfile }
+    writeAccounts(accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a))
+    setCurrentUser(updatedAccount)
+    setSeekerProfileForm(nextProfile)
+  }
+  const handleProfilePhotoFile = async (file: File | undefined) => {
+    if (!file || uploadBusy) return
+    if (!file.type.startsWith('image/')) { setSeekerProfileError('Please choose a JPG or PNG profile photo.'); return }
+    if (file.size > MAX_UPLOAD_BYTES) { setSeekerProfileError('Profile photo is too large. Please choose a photo up to 5 MB.'); return }
+    setUploadBusy('photo')
+    try {
+      const dataUrl = await fileToCompressedPhotoDataUrl(file)
+      persistSeekerProfilePatch({ profilePhoto: dataUrl })
+      setSeekerProfileError('')
+      setToast('Profile photo uploaded to your account ✅')
+    } catch {
+      setSeekerProfileError('Unable to upload this photo. Please try another JPG or PNG image.')
+    } finally {
+      setUploadBusy('')
+    }
+  }
+  const handleResumeFile = async (file: File | undefined) => {
+    if (!file || uploadBusy || !currentUser || currentUser.role !== 'seeker') return
+    const lowerName = file.name.toLowerCase()
+    const allowedType = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.type)
+    if (!allowedType && !/\.(pdf|doc|docx)$/.test(lowerName)) { setSeekerProfileError('Please upload your resume as a PDF, DOC or DOCX file.'); return }
+    if (file.size > MAX_UPLOAD_BYTES) { setSeekerProfileError('Resume file is too large. Please upload a resume up to 5 MB.'); return }
+    setUploadBusy('resume')
+    try {
+      await saveResumeBlob(resumeStorageKey(currentUser), file)
+      persistSeekerProfilePatch({
+        resumeName: file.name,
+        resumeSize: file.size,
+        resumeType: file.type || 'application/octet-stream',
+        resumeUploadedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      })
+      setSeekerProfileError('')
+      setToast('Resume uploaded to your account ✅')
+    } catch {
+      setSeekerProfileError('Unable to save this resume on this device. Please try again.')
+    } finally {
+      setUploadBusy('')
+    }
+  }
+  const handleDownloadResume = async () => {
+    if (!currentUser || currentUser.role !== 'seeker' || uploadBusy) return
+    setUploadBusy('download')
+    try {
+      const blob = await loadResumeBlob(resumeStorageKey(currentUser))
+      if (!blob) {
+        setToast('Your resume file is saved on the device where you uploaded it. Please upload it again on this device.')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = seekerProfileForm.resumeName || currentUser.profile?.resumeName || 'resume'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    } catch {
+      setToast('Unable to open your resume right now. Please try again.')
+    } finally {
+      setUploadBusy('')
+    }
+  }
+  const handleRemoveProfilePhoto = () => {
+    persistSeekerProfilePatch({ profilePhoto: undefined })
+    setToast('Profile photo removed')
+  }
+  const handleRemoveResume = () => {
+    if (currentUser?.role === 'seeker') void deleteResumeBlob(resumeStorageKey(currentUser)).catch(() => undefined)
+    persistSeekerProfilePatch({ resumeName: undefined, resumeSize: undefined, resumeType: undefined, resumeUploadedAt: undefined })
+    setToast('Resume removed from your account')
   }
   const requireCompletedSeekerProfile = () => {
     if (isAdmin) return true
@@ -2227,7 +2385,16 @@ export default function App() {
   const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest')
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
-    .map((a, index) => ({ id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: a.profile as SeekerProfile }))
+    .map((a, index) => {
+      // Candidates stay fully anonymous: private uploads never enter Recruiter views.
+      const publicProfile: SeekerProfile = { ...(a.profile as SeekerProfile) }
+      delete publicProfile.profilePhoto
+      delete publicProfile.resumeName
+      delete publicProfile.resumeSize
+      delete publicProfile.resumeType
+      delete publicProfile.resumeUploadedAt
+      return { id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: publicProfile }
+    })
   const registeredCandidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? remoteCandidateProfiles : localRegisteredCandidateProfiles
   // Sample profiles help preview the directory before a backend is connected.
   // Once Supabase is configured, only real registered Job Seeker profiles are shown.
@@ -2436,7 +2603,7 @@ export default function App() {
               {currentUser && hasAuthenticated && (
                 <div className="relative hidden lg:block">
                   <button type="button" onClick={() => setShowAccountMenu(prev => !prev)} aria-expanded={showAccountMenu} title="My Account" className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-2 shadow-sm transition hover:bg-sky-100">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                    <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-8 w-8 border border-white shadow-sm" fallbackClassName="flex h-8 w-8 bg-sky-600 text-xs text-white" />
                     <span className="hidden min-w-0 max-w-[135px] text-left 2xl:block">
                       <span className="block truncate text-[11px] font-extrabold leading-tight">{currentUser.name}</span>
                       <span className="block truncate text-[10px] leading-tight text-slate-500">{currentUser.role === 'recruiter' ? 'Recruiter Account' : 'Job Seeker Account'}</span>
@@ -2451,7 +2618,7 @@ export default function App() {
                         <div className="bg-gradient-to-r from-sky-600 to-indigo-600 p-4 text-white">
                           <p className="text-[10px] font-extrabold tracking-widest text-sky-100">MY ACCOUNT</p>
                           <div className="mt-2 flex items-center gap-3">
-                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-sm font-extrabold text-sky-700 shadow">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                            <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-11 w-11 border-2 border-white shadow" fallbackClassName="flex h-11 w-11 bg-white text-sm text-sky-700 shadow" />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-extrabold">{currentUser.name}</p>
                               <p className="text-xs font-semibold text-sky-100">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
@@ -2475,6 +2642,13 @@ export default function App() {
                           )}
                           <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
                         </div>
+                        <div className="flex items-center gap-2.5 border-t bg-sky-50/70 px-4 py-3">
+                          <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy — Founder" className="h-9 w-9 shrink-0 select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+                          <div className="min-w-0 flex-1">
+                            <p className="flex items-center gap-1 text-xs font-extrabold leading-none"><span className="truncate">M Divakar Reddy</span><BadgeCheck className="h-3.5 w-3.5 shrink-0 text-sky-600" /></p>
+                            <p className="mt-1 truncate text-[10px] font-bold leading-none text-sky-700">App Founder — PharmaSales Jobs</p>
+                          </div>
+                        </div>
                         <div className="border-t bg-slate-50 p-2">
                           <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
                         </div>
@@ -2483,10 +2657,6 @@ export default function App() {
                   )}
                 </div>
               )}
-              <button onClick={() => handleSecretTap()} title="M Divakar Reddy — Founder" className="relative shrink-0 select-none">
-                <img src="/divakar-reddy-circle-100.jpg" alt="Admin — M Divakar Reddy" className="h-10 w-10 aspect-square rounded-full object-cover object-center border-2 border-sky-600 shadow" />
-                {isAdmin && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
-              </button>
               <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
             </div>
           </div>
@@ -2554,7 +2724,7 @@ export default function App() {
                 {currentUser && hasAuthenticated && (
                   <div className="mt-2 rounded-xl border border-sky-100 bg-white px-3 py-2.5">
                     <div className="flex items-center gap-2.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-extrabold text-white">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                      <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-9 w-9 border border-sky-100" fallbackClassName="flex h-9 w-9 bg-sky-600 text-sm text-white" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-extrabold leading-tight">{currentUser.name}</p>
                         <p className="text-[11px] font-bold text-sky-700">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
@@ -2658,6 +2828,16 @@ export default function App() {
                   <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Verified</span>
                   <span>•</span>
                   <span className="flex items-center gap-1"><BadgeCheck className="h-3.5 w-3.5 text-sky-600" /> M Divakar Reddy</span>
+                </div>
+
+                {/* Founder — shifted from the header into the menu */}
+                <div className="mt-4 flex items-center gap-3 rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-indigo-50 p-3">
+                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Founder" className="h-12 w-12 shrink-0 select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1 text-[13px] font-extrabold leading-none"><span className="truncate">M Divakar Reddy</span><BadgeCheck className="h-3.5 w-3.5 shrink-0 text-sky-600" /></p>
+                    <p className="mt-1 truncate text-[10px] font-bold leading-none text-sky-700">App Founder — PharmaSales Jobs</p>
+                    <p className="mt-1 line-clamp-2 text-[10px] leading-[1.25] text-slate-600">9+ Years Pharma Experience • Ex-Employee (Business Development Manager), Wallace Pharmaceuticals Pvt. Ltd.</p>
+                  </div>
                 </div>
               </div>
 
@@ -2806,9 +2986,9 @@ export default function App() {
               <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95"><ArrowLeft className="h-5 w-5" strokeWidth={2.5} /></button>
               <div className="mt-3">
                 <div className="flex items-center gap-2.5 rounded-[20px] border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-2.5 text-left shadow-sm min-[420px]:gap-3 min-[420px]:p-3">
-                  <button onClick={() => handleSecretTap()} aria-label="PharmaSales Jobs" className="block shrink-0 select-none transition active:scale-95">
+                  <span className="block shrink-0 select-none">
                     <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-12 w-12 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow-lg min-[420px]:h-14 min-[420px]:w-14" />
-                  </button>
+                  </span>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-nowrap text-[18px] font-extrabold leading-none tracking-tight text-slate-900 min-[420px]:text-[20px]">PharmaSales Jobs</p>
                     <p className="mt-1 whitespace-nowrap text-[9px] font-semibold leading-none tracking-wide text-sky-700 min-[420px]:text-[10px]">The MR to NSM Jobs Network</p>
@@ -3082,6 +3262,51 @@ export default function App() {
                       <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p></div>
                       <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">EMAIL</p><p className="truncate font-extrabold">{currentUser.email}</p></div>
                     </div>
+                  </div>
+
+                  {/* Optional uploads — saved to this Job Seeker account only */}
+                  <input ref={profilePhotoInputRef} type="file" accept="image/*" className="hidden" onChange={e => { void handleProfilePhotoFile(e.target.files?.[0]); e.target.value = '' }} />
+                  <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={e => { void handleResumeFile(e.target.files?.[0]); e.target.value = '' }} />
+                  <div className="mt-5 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-sky-50 p-4">
+                    <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-indigo-700"><Upload className="h-4 w-4" /> PROFILE PHOTO &amp; RESUME <span className="font-bold normal-case tracking-normal text-slate-400">(Optional)</span></p>
+                    <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex items-center gap-3">
+                        {seekerProfileForm.profilePhoto ? (
+                          <img src={seekerProfileForm.profilePhoto} alt={currentUser.name} className="h-16 w-16 shrink-0 select-none rounded-full border-2 border-white object-cover object-center shadow" />
+                        ) : (
+                          <span className="flex h-16 w-16 shrink-0 select-none items-center justify-center rounded-full bg-sky-600 text-xl font-extrabold text-white shadow">{currentUser.name.trim().charAt(0).toUpperCase()}</span>
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-extrabold">{currentUser.name}</p>
+                          <p className="text-[11px] font-semibold text-slate-500">{seekerProfileForm.profilePhoto ? 'Profile photo added' : 'Add your profile photo'}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <button type="button" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
+                            {seekerProfileForm.profilePhoto && (
+                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="min-w-0 flex-1 rounded-xl border bg-white px-3 py-2.5 sm:ml-auto sm:max-w-[320px]">
+                        <div className="flex items-start gap-2.5">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><FileText className="h-5 w-5" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[13px] font-extrabold leading-tight">{seekerProfileForm.resumeName || 'No resume uploaded'}</p>
+                            <p className="mt-0.5 text-[11px] font-semibold text-slate-500">{seekerProfileForm.resumeName ? `${formatFileSize(seekerProfileForm.resumeSize)}${seekerProfileForm.resumeUploadedAt ? ` • ${seekerProfileForm.resumeUploadedAt}` : ''}` : 'PDF, DOC or DOCX • up to 5 MB'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button type="button" disabled={!!uploadBusy} onClick={() => resumeInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-3.5 w-3.5" /> {uploadBusy === 'resume' ? 'Uploading…' : seekerProfileForm.resumeName ? 'Change Resume' : 'Upload Resume'}</button>
+                          {seekerProfileForm.resumeName && (
+                            <>
+                              <button type="button" disabled={!!uploadBusy} onClick={() => void handleDownloadResume()} className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-3.5 w-3.5" /> {uploadBusy === 'download' ? 'Opening…' : 'View / Download'}</button>
+                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveResume} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="mt-3 flex items-start gap-1.5 text-[11px] font-medium leading-relaxed text-slate-500"><LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Private to your account. Recruiters cannot see your name, photo, resume, mobile number or email ID.</p>
                   </div>
 
                   <p className="mt-6 text-sm font-extrabold">1. Are you a Fresher or Experienced? *</p>
@@ -4023,7 +4248,7 @@ export default function App() {
             <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-indigo-50 p-6">
               <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MANAGED BY</span>
               <div className="mt-4 flex gap-4">
-                <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
+                <img src="/divakar-reddy-circle-400.jpg" className="h-20 w-20 shrink-0 select-none aspect-square rounded-full object-cover object-center bg-[#e8e8e8] border-2 border-white shadow" alt="M Divakar Reddy" />
                 <div>
                   <h3 className="text-xl font-extrabold">M Divakar Reddy</h3>
                   <p className="text-sm font-semibold text-sky-700">App Founder — PharmaSales Jobs</p>
@@ -4162,7 +4387,7 @@ export default function App() {
             )}
 
             <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-white p-4">
-              <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
+              <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy" className="h-11 w-11 shrink-0 select-none aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
               <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Every vacancy is personally verified by M Divakar Reddy</b> (App Founder • 9+ Years Pharma Experience) before it goes live — that is why 50K+ pharma professionals trust PharmaSales Jobs.</p>
               <BadgeCheck className="ml-auto h-6 w-6 shrink-0 text-sky-600" />
             </div>
@@ -4348,7 +4573,7 @@ export default function App() {
               </div>
               <div className="rounded-3xl border bg-white p-6 shadow-xl">
                 <div className="text-center">
-                  <img onClick={() => handleSecretTap()} src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="mx-auto h-24 w-24 cursor-pointer select-none aspect-square rounded-full object-cover object-center border-4 border-sky-100 shadow" />
+                  <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="mx-auto h-24 w-24 select-none aspect-square rounded-full object-cover object-center border-4 border-sky-100 shadow" />
                   <span className="mt-3 inline-block rounded-full bg-amber-400 px-3 py-1 text-[11px] font-extrabold tracking-wide text-slate-900">👑 ADMIN ONLY</span>
                   <h2 className="mt-2 text-2xl font-extrabold">Admin Login</h2>
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
