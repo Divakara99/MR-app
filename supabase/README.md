@@ -7,15 +7,30 @@ is already coded to use Supabase for all three account roles:
 - **Recruiter** accounts in `public.app_accounts`
 - **Admin** accounts in `public.app_admins`
 - **Starter/Pro purchases and payments** in `public.app_purchases`
+- **Live vacancies, pending approvals, support tickets, and deletion
+  requests** in `public.app_sync_records`
+- **Saved/applied jobs, candidate interests, and daily reveal state** in
+  `public.app_user_states`
+- **Admin-set Job Seeker plan prices/validity/benefits and the payment
+  receiving source** in `public.app_settings` (`commerce`)
 
-**Status: LIVE (30 Oct 2026).** Dedicated project **“Pharma sales jobs”**
+**Status: LIVE (updated 31 Oct 2026).** Dedicated project **“Pharma sales jobs”**
 (`https://zrkkjgxgykpnzeginbpq.supabase.co`, eu-west-3). This schema was
 executed there via migrations `pharmasales_jobs_initial_schema`,
-`fix_register_variable_conflict`, and `admin_forgot_password_rpc`, then
-verified end-to-end: Job Seeker and Recruiter registration/login
-(mobile + email), Admin login by ID and registered email, Admin Forgot
-Password reset with registered details, purchase recording, Admin
-Users/Purchase/Payment lists through the public API, and test-data cleanup.
+`fix_register_variable_conflict`, `admin_forgot_password_rpc`,
+`cross_device_app_sync_and_candidate_privacy_v2`,
+`per_account_user_job_state_sync`, and
+`admin_plans_payments_and_auto_plan_sync`, then verified end-to-end: Job
+Seeker and Recruiter registration/login (mobile + email), Admin login by ID
+and registered email, Admin Forgot Password reset with registered details,
+purchase recording, Admin Users/Purchase/Payment lists through the public
+API, cross-device record create/list/delete, per-account saved/applied state
+create/read, cascade cleanup when the temporary test account was deleted,
+and test-data cleanup. The commerce-settings RPC rejects a wrong Admin
+password, a Job Seeker's purchases can be listed by mobile for automatic
+plan restoration/expiry, and duplicate payment references are rejected. The
+anonymous candidate RPC now strips profile-photo and resume-upload fields
+in the database response as well as in the UI.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -74,8 +89,12 @@ The script creates:
 - `public.app_accounts` — Job Seeker and Recruiter accounts/profiles
 - `public.app_purchases` — purchase and payment records
 - `public.app_admins` — Admin accounts with bcrypt password hashes
+- `public.app_sync_records` — ordered cross-device vacancy/support records
+- `public.app_user_states` — per-account saved/applied/reveal state
+- `public.app_settings` — Admin-managed `commerce` plan/payment settings
 - Account registration, login, password, profile, deletion, candidate,
-  purchase, and Admin-list RPC functions
+  purchase, Admin-list, collection-sync, user-state, and commerce-settings
+  RPC functions
 - Row Level Security and restricted direct table access
 - The initial Admin account for **M Divakar Reddy** (`divakar`)
 
@@ -129,7 +148,7 @@ into chat, GitHub, or a `VITE_` variable.**
    the final production domain later, before launch):
 
    ```text
-   https://3000-iyg9rmxugh7mseljbsodv.e2b.app
+   https://3000-ilquizxjtw6bibxj3yiux.e2b.app
    http://localhost:3000
    ```
 
@@ -150,14 +169,27 @@ After rebuilding:
 1. Open the Admin Dashboard and use the sliding **Admin Menu**.
 2. Open **Users List**, **Purchase List**, and **Payment List**. Their status
    should change from **This Device** to **Supabase Live** after data loads.
-3. Register one test Job Seeker and one test Recruiter.
-4. Confirm both test accounts appear in **Users List** from another browser
-   or after clearing the first browser's local data.
-5. Complete the test Job Seeker profile and confirm the anonymous profile
+3. Open **Plans & Payments**. Set each paid plan's name, price, validity days,
+   daily direct-contact limit, benefits and purchase on/off state. Add the
+   receiver name and enable the real receiving source Admin wants shown at
+   checkout (UPI ID/QR, payment link and/or bank details), then save with the
+   current Admin password.
+4. Register one test Job Seeker and one test Recruiter.
+5. Confirm both test accounts appear in **Users List** from another browser
+   or after clearing the first browser's local data. Use **View Account** to
+   review each account/profile and current plan; passwords are not displayed.
+6. Complete the test Job Seeker profile and confirm the anonymous profile
    can appear to a Recruiter without the candidate's name, mobile, or email.
-6. Select a Starter or Pro plan with the test Job Seeker and confirm the
-   record appears in both **Purchase List** and **Payment List**.
-7. Confirm Admin login still works, then change the seeded Admin password.
+7. Select a Starter or Pro plan with the test Job Seeker. Confirm checkout
+   shows the Admin-set amount/validity/receiving source, completion records
+   the method and transaction/UTR reference in both **Purchase List** and
+   **Payment List**, and the account becomes paid immediately. Confirm the
+   same active plan restores on another device and returns to Free when its
+   `expires_at` time passes.
+8. Post/approve a test vacancy, raise a test support ticket, and save/apply
+   to a test job; confirm the same records/state appear after signing in on
+   another browser or device.
+9. Confirm Admin login still works, then change the seeded Admin password.
 
 Use clearly named test accounts and delete test data before production use.
 
@@ -174,6 +206,13 @@ Supabase for:
 - Anonymous Recruiter candidate profiles
 - Supported remote account-deletion calls
 - Starter/Pro purchase/payment recording
+- Admin-managed Starter/Pro prices, validity, daily limits, benefits and
+  payment receiving source, with per-Job-Seeker purchase lookup for automatic
+  paid-plan activation/expiry across devices
+- Live vacancies and pending-vacancy Admin approvals
+- Support tickets and Job Seeker account-deletion requests
+- Saved jobs, applied jobs, Recruiter candidate interests, and same-day
+  free/sponsored reveal usage for the signed-in account
 - Admin Users, Purchases, and Payments lists
 - Admin login and Admin password changes, with the existing local fallback
   if the remote Admin RPC is unavailable
@@ -186,14 +225,18 @@ existing **This Device** local-storage fallback.
 The following remain outside this schema and require a later migration if
 full cross-device backend coverage is required:
 
-- Vacancies and pending-vacancy approvals
-- Support tickets and account-deletion requests
-- Applications and saved jobs
-- Resume file binary storage (currently IndexedDB on the device)
+- Resume file binary storage (currently IndexedDB on the device; do not move
+  private resume files to an anonymous bucket/table without authenticated,
+  owner-only access controls)
 - Production Google Play Billing receipt verification
 
-Current purchase records are generated by the preview's demo in-app
-checkout. They are not proof of a real gateway or Google Play payment.
+Current checkout can display Admin-configured manual UPI, payment-link, or
+bank receiving details and records the Job Seeker-entered transaction/UTR
+reference; Demo Checkout can also be enabled for testing. Manual-reference
+activation is **not** independent bank/gateway verification and is not proof
+of a real gateway or Google Play payment. Admin should cross-check manual
+references, and production digital subscriptions should move to verified
+payment-gateway/Google Play Billing receipt validation.
 
 ## Production security review required
 
@@ -201,14 +244,18 @@ This setup is ready for controlled testing, but it should receive a security
 hardening pass before a large public launch:
 
 - The current RPC design follows the app's custom account flow and grants
-  function execution to `anon`/`authenticated`; Admin list RPCs must
-  eventually move behind Supabase Auth with an authenticated Admin
-  claim/role or a protected server-side API.
+  function execution to `anon`/`authenticated`; Admin list, collection-sync,
+  and user-state RPCs must eventually move behind Supabase Auth with
+  authenticated user/Admin claims or a protected server-side API. Direct
+  table access remains revoked and RLS remains enabled.
 - Forgot Password currently verifies registered mobile + email because no
   verified email-link or OTP delivery service is connected.
 - Add rate limiting and abuse monitoring for account lookup/login flows.
-- Replace demo payment recording with verified gateway/Google Play Billing
-  receipts.
+  Commerce-setting writes require the verified Admin password, but they
+  should still move behind an authenticated Admin claim/session before a
+  large launch.
+- Replace manual-reference/demo payment activation with verified
+  gateway/Google Play Billing receipts.
 - Never expose the `service_role` key in the browser application.
 
 ## Quick troubleshooting

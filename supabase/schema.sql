@@ -479,7 +479,14 @@ as $$
   select
     a.id::text as candidate_id,
     'MR-2026-' || (1000 + abs(hashtext(a.id::text) % 9000))::text as candidate_code,
-    a.profile
+    -- Private upload metadata/photo data must never leave the candidate RPC.
+    (a.profile
+      - 'profilePhoto'
+      - 'resumeName'
+      - 'resumeSize'
+      - 'resumeType'
+      - 'resumeUploadedAt'
+      - 'resumeStoragePath') as profile
   from public.app_accounts a
   where a.role = 'seeker'
     and coalesce(a.profile->>'experienceType', '') in ('fresher', 'experienced')
@@ -595,21 +602,51 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_role text := lower(trim(coalesce(p_role, 'seeker')));
+  v_mobile text := regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+  v_transaction_id text := trim(coalesce(p_transaction_id, ''));
+  v_status text := lower(trim(coalesce(nullif(p_status, ''), 'paid')));
 begin
+  if length(v_mobile) = 12 and left(v_mobile, 2) = '91' then
+    v_mobile := right(v_mobile, 10);
+  end if;
+
+  if v_role not in ('seeker', 'recruiter')
+     or trim(coalesce(p_name, '')) = ''
+     or p_plan not in ('starter', 'pro')
+     or p_amount is null
+     or p_amount < 0
+     or v_status not in ('paid', 'pending', 'failed')
+     or v_transaction_id = ''
+     or char_length(v_transaction_id) > 160
+     or p_expires_at is null then
+    return false;
+  end if;
+
+  -- A UPI/UTR/payment reference can activate only one purchase.
+  if exists (
+    select 1
+    from public.app_purchases existing_purchase
+    where lower(existing_purchase.transaction_id) = lower(v_transaction_id)
+  ) then
+    return false;
+  end if;
+
   insert into public.app_purchases (role, name, mobile, email, plan, amount_inr, method, status, transaction_id, expires_at)
   values (
-    coalesce(nullif(trim(p_role), ''), 'seeker'),
+    v_role,
     trim(p_name),
-    coalesce(p_mobile, ''),
+    v_mobile,
     coalesce(lower(trim(p_email)), ''),
     p_plan,
     p_amount,
     coalesce(nullif(trim(p_method), ''), 'In-App'),
-    coalesce(nullif(trim(p_status), ''), 'paid'),
-    p_transaction_id,
+    v_status,
+    v_transaction_id,
     p_expires_at
-  )
-  on conflict (transaction_id) do nothing;
+  );
+
   return true;
 end;
 $$;
@@ -637,6 +674,44 @@ set search_path = public
 as $$
   select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
   from public.app_purchases p
+  order by p.purchased_at desc;
+$$;
+
+-- One Job Seeker's synced Starter/Pro purchases, used to restore the active
+-- paid plan automatically on every signed-in device and remove it at expiry.
+create or replace function public.list_app_purchases_for_mobile(p_mobile text)
+returns table (
+  id text,
+  role text,
+  name text,
+  mobile text,
+  email text,
+  plan text,
+  amount_inr numeric,
+  method text,
+  status text,
+  transaction_id text,
+  purchased_at timestamptz,
+  expires_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with normalized as (
+    select case
+      when length(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')) = 12
+        and left(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+      then right(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 10)
+      else regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')
+    end as mobile
+  )
+  select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
+  from public.app_purchases p
+  cross join normalized n
+  where p.role = 'seeker'
+    and p.mobile = n.mobile
   order by p.purchased_at desc;
 $$;
 
@@ -762,6 +837,7 @@ $$;
 revoke all on function public.admin_list_accounts() from public;
 revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public;
 revoke all on function public.admin_list_purchases() from public;
+revoke all on function public.list_app_purchases_for_mobile(text) from public;
 revoke all on function public.admin_login(text, text) from public;
 revoke all on function public.admin_change_password(text, text, text) from public;
 revoke all on function public.admin_reset_password_with_registered_details(text, text, text) from public;
@@ -769,6 +845,7 @@ revoke all on function public.admin_reset_password_with_registered_details(text,
 grant execute on function public.admin_list_accounts() to anon, authenticated;
 grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to anon, authenticated;
 grant execute on function public.admin_list_purchases() to anon, authenticated;
+grant execute on function public.list_app_purchases_for_mobile(text) to anon, authenticated;
 grant execute on function public.admin_login(text, text) to anon, authenticated;
 grant execute on function public.admin_change_password(text, text, text) to anon, authenticated;
 grant execute on function public.admin_reset_password_with_registered_details(text, text, text) to anon, authenticated;
@@ -795,6 +872,275 @@ grant execute on function public.update_seeker_profile(text, jsonb) to anon, aut
 grant execute on function public.delete_app_account(text, text) to anon, authenticated;
 grant execute on function public.list_anonymous_candidate_profiles() to anon, authenticated;
 
+-- ---------------------------------------------------------------------------
+-- Cross-device app collections: live vacancies, pending approvals, support
+-- tickets, and Job Seeker account-deletion requests. Records keep the app's
+-- JSON payload plus a stable position so list order is preserved across
+-- devices. Direct table access stays revoked; the app uses these RPCs.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.app_sync_records (
+  collection_key text not null check (collection_key in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')),
+  record_id text not null check (char_length(record_id) between 1 and 160),
+  record_position integer not null default 0 check (record_position >= 0),
+  payload jsonb not null check (jsonb_typeof(payload) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (collection_key, record_id)
+);
+
+create index if not exists app_sync_records_collection_position_idx
+  on public.app_sync_records (collection_key, record_position, updated_at desc);
+
+alter table public.app_sync_records enable row level security;
+revoke all on table public.app_sync_records from public, anon, authenticated;
+
+create or replace function public.list_app_sync_records(p_collection_key text)
+returns table (
+  record_id text,
+  record_position integer,
+  payload jsonb,
+  updated_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select r.record_id, r.record_position, r.payload, r.updated_at
+  from public.app_sync_records r
+  where r.collection_key = p_collection_key
+  order by r.record_position asc, r.updated_at desc;
+$$;
+
+create or replace function public.upsert_app_sync_record(
+  p_collection_key text,
+  p_record_id text,
+  p_position integer,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_collection_key not in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')
+     or p_record_id is null
+     or char_length(trim(p_record_id)) not between 1 and 160
+     or p_position is null
+     or p_position < 0
+     or p_payload is null
+     or jsonb_typeof(p_payload) <> 'object'
+     or coalesce(p_payload->>'id', '') <> trim(p_record_id)
+     or pg_column_size(p_payload) > 262144 then
+    return false;
+  end if;
+
+  insert into public.app_sync_records (collection_key, record_id, record_position, payload)
+  values (p_collection_key, trim(p_record_id), p_position, p_payload)
+  on conflict (collection_key, record_id)
+  do update set
+    record_position = excluded.record_position,
+    payload = excluded.payload,
+    updated_at = now();
+
+  return true;
+end;
+$$;
+
+create or replace function public.delete_app_sync_record(
+  p_collection_key text,
+  p_record_id text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  if p_collection_key not in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')
+     or p_record_id is null
+     or char_length(trim(p_record_id)) not between 1 and 160 then
+    return false;
+  end if;
+
+  delete from public.app_sync_records
+  where collection_key = p_collection_key
+    and record_id = trim(p_record_id);
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count > 0;
+end;
+$$;
+
+revoke all on function public.list_app_sync_records(text) from public;
+revoke all on function public.upsert_app_sync_record(text, text, integer, jsonb) from public;
+revoke all on function public.delete_app_sync_record(text, text) from public;
+
+grant execute on function public.list_app_sync_records(text) to anon, authenticated;
+grant execute on function public.upsert_app_sync_record(text, text, integer, jsonb) to anon, authenticated;
+grant execute on function public.delete_app_sync_record(text, text) to anon, authenticated;
+
+-- Per-account Job Seeker/Recruiter activity state: saved jobs, applied jobs,
+-- candidate interests, and same-day sponsored/free reveal usage. The composite
+-- foreign key removes this state automatically when the account is deleted.
+create table if not exists public.app_user_states (
+  role text not null check (role in ('seeker', 'recruiter')),
+  mobile text not null check (mobile ~ '^[6-9][0-9]{9}$'),
+  payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (role, mobile),
+  foreign key (role, mobile) references public.app_accounts (role, mobile) on delete cascade
+);
+
+alter table public.app_user_states enable row level security;
+revoke all on table public.app_user_states from public, anon, authenticated;
+
+create or replace function public.get_app_user_state(
+  p_role text,
+  p_mobile text
+)
+returns table (
+  payload jsonb,
+  updated_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.payload, s.updated_at
+  from public.app_user_states s
+  where s.role = p_role
+    and s.mobile = regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+$$;
+
+create or replace function public.set_app_user_state(
+  p_role text,
+  p_mobile text,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_mobile text := regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+begin
+  if length(v_mobile) = 12 and left(v_mobile, 2) = '91' then
+    v_mobile := right(v_mobile, 10);
+  end if;
+
+  if p_role not in ('seeker', 'recruiter')
+     or v_mobile !~ '^[6-9][0-9]{9}$'
+     or p_payload is null
+     or jsonb_typeof(p_payload) <> 'object'
+     or pg_column_size(p_payload) > 262144
+     or not exists (
+       select 1
+       from public.app_accounts a
+       where a.role = p_role
+         and a.mobile = v_mobile
+     ) then
+    return false;
+  end if;
+
+  insert into public.app_user_states (role, mobile, payload)
+  values (p_role, v_mobile, p_payload)
+  on conflict (role, mobile)
+  do update set
+    payload = excluded.payload,
+    updated_at = now();
+
+  return true;
+end;
+$$;
+
+revoke all on function public.get_app_user_state(text, text) from public;
+revoke all on function public.set_app_user_state(text, text, jsonb) from public;
+
+grant execute on function public.get_app_user_state(text, text) to anon, authenticated;
+grant execute on function public.set_app_user_state(text, text, jsonb) to anon, authenticated;
+
+-- Admin-managed app settings. The only current key is `commerce`: Job Seeker
+-- Starter/Pro names, prices, validity days, daily limits, benefits and the
+-- payment receiving source (receiver, UPI ID/QR, payment link, bank details
+-- and checkout instructions). Reads are public because these values are shown
+-- at checkout; writes require the current verified Admin password.
+create table if not exists public.app_settings (
+  setting_key text primary key check (setting_key in ('commerce')),
+  payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.app_settings enable row level security;
+revoke all on table public.app_settings from public, anon, authenticated;
+
+create or replace function public.get_app_setting(p_setting_key text)
+returns table (
+  payload jsonb,
+  updated_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.payload, s.updated_at
+  from public.app_settings s
+  where s.setting_key = lower(trim(coalesce(p_setting_key, '')))
+    and s.setting_key in ('commerce');
+$$;
+
+create or replace function public.set_app_setting_admin(
+  p_admin_id text,
+  p_admin_password text,
+  p_setting_key text,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_setting_key text := lower(trim(coalesce(p_setting_key, '')));
+  v_admin_id text := coalesce(nullif(lower(trim(coalesce(p_admin_id, ''))), ''), 'divakar');
+begin
+  if v_setting_key not in ('commerce')
+     or p_payload is null
+     or jsonb_typeof(p_payload) <> 'object'
+     or octet_length(p_payload::text) > 1048576 then
+    return false;
+  end if;
+
+  if not public.admin_login(v_admin_id, coalesce(p_admin_password, '')) then
+    return false;
+  end if;
+
+  insert into public.app_settings (setting_key, payload)
+  values (v_setting_key, p_payload)
+  on conflict (setting_key)
+  do update set
+    payload = excluded.payload,
+    updated_at = now();
+
+  return true;
+end;
+$$;
+
+revoke all on function public.get_app_setting(text) from public;
+revoke all on function public.set_app_setting_admin(text, text, text, jsonb) from public;
+
+grant execute on function public.get_app_setting(text) to anon, authenticated;
+grant execute on function public.set_app_setting_admin(text, text, text, jsonb) to anon, authenticated;
+
 -- IMPORTANT SECURITY NOTE:
 -- This schema implements the requested custom mobile/email + password flow and
 -- stores passwords only as bcrypt hashes. Forgot Password currently requires
@@ -805,3 +1151,6 @@ grant execute on function public.list_anonymous_candidate_profiles() to anon, au
 -- every account/purchase to anon callers who know the function names (same
 -- front-end Admin-lock model as the app today) — before a large public launch,
 -- move Admin data behind an authenticated admin role or a service-role API.
+-- Commerce-setting writes additionally require the current Admin password,
+-- but should also move to that authenticated Admin session model. Manual
+-- UPI/bank transaction references are not independently bank-verified.

@@ -7,10 +7,10 @@ import {
   GraduationCap, Layers, Siren, Megaphone, Quote,
   LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
   Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
-  Package, Upload, Camera, Download
+  Package, Upload, Camera, Download, Pencil, Copy, CreditCard, Landmark, QrCode, Wallet
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow } from './supabase'
+import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteAppSettingRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
@@ -22,8 +22,15 @@ type ExtraJobReveals = Partial<Record<ExtraRevealField, boolean>>
 type StoredDailyJobAccess = {
   date: string
   revealed: string[]
+  paidRevealed: string[]
   dailyUnlocks: number
   extraReveals: Record<string, ExtraJobReveals>
+}
+type UserJobState = {
+  saved: string[]
+  applied: string[]
+  requestedCandidates: string[]
+  dailyAccess: StoredDailyJobAccess
 }
 type Job = {
   id: string
@@ -55,7 +62,7 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string; submittedByRole?: 'recruiter' | 'seeker' }
 type EntryRole = 'seeker' | 'recruiter'
-type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'legal'
+type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'account' | 'legal'
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -112,6 +119,35 @@ type PurchaseRecord = {
   purchasedAt: string
   expiresAt: string
 }
+type PaidPlanId = 'starter' | 'pro'
+type PaidPlanConfig = {
+  name: string
+  price: number
+  validityDays: number
+  dailyLimit: number
+  unlimited: boolean
+  enabled: boolean
+  popular: boolean
+  features: string[]
+}
+type PaymentReceivingSettings = {
+  receiverName: string
+  upiId: string
+  upiEnabled: boolean
+  qrImageUrl: string
+  paymentLink: string
+  paymentLinkEnabled: boolean
+  bankDetails: string
+  bankEnabled: boolean
+  instructions: string
+  demoCheckoutEnabled: boolean
+}
+type CommerceSettings = {
+  plans: Record<PaidPlanId, PaidPlanConfig>
+  payment: PaymentReceivingSettings
+  updatedAt?: string
+}
+type CheckoutMethod = 'upi' | 'payment-link' | 'bank' | 'demo'
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
   name: string
@@ -154,6 +190,8 @@ type SupportTicket = {
   createdAt: string
   updatedAt: string
 }
+type RemoteSyncCollectionKey = 'jobs' | 'pending_jobs' | 'support_tickets' | 'deletion_requests'
+type SyncRecord = { id: string }
 
 // Vacancies are real only: no seeded/demo jobs are bundled with the app.
 const JOBS: Job[] = []
@@ -189,6 +227,145 @@ const TIERS = [
   { id: 'pro' as Tier, name: 'Pro', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
+const COMMERCE_SETTINGS_KEY = 'mr-commerce-settings-v1'
+const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
+  plans: {
+    starter: {
+      name: 'Starter',
+      price: 99,
+      validityDays: 30,
+      dailyLimit: 15,
+      unlimited: false,
+      enabled: true,
+      popular: true,
+      features: ['No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'],
+    },
+    pro: {
+      name: 'Pro',
+      price: 499,
+      validityDays: 30,
+      dailyLimit: 9999,
+      unlimited: true,
+      enabled: true,
+      popular: false,
+      features: ['No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile during plan validity', 'Salary insights & negotiation tips'],
+    },
+  },
+  payment: {
+    receiverName: 'M Divakar Reddy',
+    upiId: '',
+    upiEnabled: false,
+    qrImageUrl: '',
+    paymentLink: '',
+    paymentLinkEnabled: false,
+    bankDetails: '',
+    bankEnabled: false,
+    instructions: 'Pay the exact plan amount using the Admin payment source shown here. After payment, enter the UPI/UTR/transaction reference and tap Payment Done — Activate Plan.',
+    demoCheckoutEnabled: true,
+  },
+}
+const asSettingsRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+)
+const settingsString = (value: unknown, fallback: string, maxLength: number) => (
+  typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+)
+const settingsBoolean = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback
+const settingsNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback
+}
+const normalizePaidPlanConfig = (value: unknown, fallback: PaidPlanConfig): PaidPlanConfig => {
+  const source = asSettingsRecord(value)
+  const unlimited = settingsBoolean(source.unlimited, fallback.unlimited)
+  const features = Array.isArray(source.features)
+    ? source.features.map(item => String(item).trim()).filter(Boolean).slice(0, 12).map(item => item.slice(0, 160))
+    : fallback.features
+  return {
+    name: settingsString(source.name, fallback.name, 40) || fallback.name,
+    price: settingsNumber(source.price, fallback.price, 1, 100000),
+    validityDays: settingsNumber(source.validityDays, fallback.validityDays, 1, 3650),
+    dailyLimit: unlimited ? 9999 : settingsNumber(source.dailyLimit, fallback.dailyLimit, 1, 10000),
+    unlimited,
+    enabled: settingsBoolean(source.enabled, fallback.enabled),
+    popular: settingsBoolean(source.popular, fallback.popular),
+    features: features.length > 0 ? features : fallback.features,
+  }
+}
+const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
+  const source = asSettingsRecord(value)
+  const plans = asSettingsRecord(source.plans)
+  const payment = asSettingsRecord(source.payment)
+  const starter = normalizePaidPlanConfig(plans.starter, DEFAULT_COMMERCE_SETTINGS.plans.starter)
+  const pro = normalizePaidPlanConfig(plans.pro, DEFAULT_COMMERCE_SETTINGS.plans.pro)
+  if (starter.popular && pro.popular) pro.popular = false
+  return {
+    plans: { starter, pro },
+    payment: {
+      receiverName: settingsString(payment.receiverName, DEFAULT_COMMERCE_SETTINGS.payment.receiverName, 100) || DEFAULT_COMMERCE_SETTINGS.payment.receiverName,
+      upiId: settingsString(payment.upiId, DEFAULT_COMMERCE_SETTINGS.payment.upiId, 120),
+      upiEnabled: settingsBoolean(payment.upiEnabled, DEFAULT_COMMERCE_SETTINGS.payment.upiEnabled),
+      qrImageUrl: settingsString(payment.qrImageUrl, DEFAULT_COMMERCE_SETTINGS.payment.qrImageUrl, 750000),
+      paymentLink: settingsString(payment.paymentLink, DEFAULT_COMMERCE_SETTINGS.payment.paymentLink, 600),
+      paymentLinkEnabled: settingsBoolean(payment.paymentLinkEnabled, DEFAULT_COMMERCE_SETTINGS.payment.paymentLinkEnabled),
+      bankDetails: settingsString(payment.bankDetails, DEFAULT_COMMERCE_SETTINGS.payment.bankDetails, 1200),
+      bankEnabled: settingsBoolean(payment.bankEnabled, DEFAULT_COMMERCE_SETTINGS.payment.bankEnabled),
+      instructions: settingsString(payment.instructions, DEFAULT_COMMERCE_SETTINGS.payment.instructions, 1200) || DEFAULT_COMMERCE_SETTINGS.payment.instructions,
+      demoCheckoutEnabled: settingsBoolean(payment.demoCheckoutEnabled, DEFAULT_COMMERCE_SETTINGS.payment.demoCheckoutEnabled),
+    },
+    updatedAt: settingsString(source.updatedAt, '', 60) || undefined,
+  }
+}
+const loadStoredCommerceSettings = (): CommerceSettings => {
+  try {
+    const raw = localStorage.getItem(COMMERCE_SETTINGS_KEY)
+    return raw ? normalizeCommerceSettings(JSON.parse(raw)) : normalizeCommerceSettings(DEFAULT_COMMERCE_SETTINGS)
+  } catch { return normalizeCommerceSettings(DEFAULT_COMMERCE_SETTINGS) }
+}
+const validateCommerceSettings = (settings: CommerceSettings): string => {
+  for (const plan of [settings.plans.starter, settings.plans.pro]) {
+    if (!plan.name.trim()) return 'Enter both plan names.'
+    if (!Number.isFinite(plan.price) || plan.price <= 0) return `${plan.name || 'Plan'} price must be above ₹0.`
+    if (!Number.isFinite(plan.validityDays) || plan.validityDays < 1) return `${plan.name || 'Plan'} validity must be at least 1 day.`
+    if (!plan.unlimited && (!Number.isFinite(plan.dailyLimit) || plan.dailyLimit < 1)) return `${plan.name || 'Plan'} daily contact limit must be at least 1.`
+    if (plan.features.map(feature => feature.trim()).filter(Boolean).length === 0) return `Add at least one benefit for ${plan.name || 'the plan'}.`
+  }
+  const payment = settings.payment
+  if (!payment.receiverName.trim()) return 'Enter the payment receiver / payee name.'
+  if (payment.upiEnabled && !/^[\w.\-]{2,}@[A-Za-z]{2,}$/.test(payment.upiId.trim())) return 'Enter a correct UPI ID, or turn UPI payment off.'
+  if (payment.paymentLinkEnabled) {
+    try {
+      const url = new URL(payment.paymentLink.trim())
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid URL')
+    } catch { return 'Enter a correct payment link, or turn Payment Link off.' }
+  }
+  if (payment.bankEnabled && !payment.bankDetails.trim()) return 'Enter bank receiving details, or turn Bank Transfer off.'
+  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled && !payment.demoCheckoutEnabled) return 'Enable at least one payment receiving method.'
+  return ''
+}
+const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+const getPaidPlanLimit = (plan: PaidPlanConfig) => plan.unlimited ? 9999 : Math.max(1, Math.round(plan.dailyLimit) || 1)
+const getActivePlanPurchase = (records: PurchaseRecord[], mobile: string, now = Date.now()): PurchaseRecord | undefined => {
+  const normalizedMobile = normalizeMobile(mobile)
+  if (!normalizedMobile) return undefined
+  const priority: Record<Tier, number> = { free: 0, starter: 1, pro: 2 }
+  return records
+    .filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizedMobile && record.status === 'paid' && record.plan !== 'free' && new Date(record.expiresAt).getTime() > now)
+    .sort((a, b) => priority[b.plan] - priority[a.plan] || new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime() || new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0]
+}
+const mergePurchaseRecords = (primary: PurchaseRecord[], secondary: PurchaseRecord[]): PurchaseRecord[] => {
+  const merged = new Map<string, PurchaseRecord>()
+  ;[...secondary, ...primary].forEach(record => {
+    const key = (record.transactionId || record.id || '').trim().toLowerCase()
+    if (key) merged.set(key, record)
+  })
+  return Array.from(merged.values()).sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
+}
+const getPlanDaysLeft = (expiresAt?: string, now = Date.now()) => {
+  if (!expiresAt) return 0
+  return Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now) / (24 * 60 * 60 * 1000)))
+}
+
 const SEEKER_AI_WELCOME = 'Hi! I’m your PharmaSales AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
 const RECRUITER_AI_WELCOME = 'Hi! I’m your PharmaSales Jobs recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
 const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
@@ -199,8 +376,7 @@ const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom)
 
 // ADMIN (M Divakar Reddy)
 const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
-const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in', ADMIN_REGISTERED_EMAIL]
-const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
+const ADMIN_IDS = ['divakar', 'admin', ADMIN_REGISTERED_EMAIL]
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
@@ -210,6 +386,7 @@ const SESSION_KEY = 'mr-session-v1'
 const GOOGLE_ENTRY_ROLE_KEY = 'mr-google-entry-role-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
+const GUEST_SUPPORT_TICKET_IDS_KEY = 'mr-guest-support-ticket-ids-v1'
 const PURCHASES_KEY = 'mr-purchases-v1'
 const DELETION_REASON_OPTIONS = [
   'I got a job and no longer need this account',
@@ -221,10 +398,11 @@ const DELETION_REASON_OPTIONS = [
 ]
 const CANDIDATE_INTERESTS_KEY = 'mr-candidate-interests-v1'
 const DAILY_JOB_ACCESS_KEY = 'mr-daily-job-access-v1'
+const USER_JOB_STATE_KEY = 'mr-user-job-state-v1'
 const FREE_DAILY_JOB_LIMIT = 3
 const FREE_EXTRA_JOB_LIMIT = 7
 const getTodayKey = () => new Date().toLocaleDateString('en-CA')
-const emptyDailyJobAccess = (): StoredDailyJobAccess => ({ date: getTodayKey(), revealed: [], dailyUnlocks: 0, extraReveals: {} })
+const emptyDailyJobAccess = (): StoredDailyJobAccess => ({ date: getTodayKey(), revealed: [], paidRevealed: [], dailyUnlocks: 0, extraReveals: {} })
 const loadDailyJobAccess = (): StoredDailyJobAccess => {
   try {
     const raw = localStorage.getItem(DAILY_JOB_ACCESS_KEY)
@@ -234,6 +412,7 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     return {
       date: getTodayKey(),
       revealed: Array.isArray(parsed.revealed) ? parsed.revealed.map(String) : [],
+      paidRevealed: Array.isArray(parsed.paidRevealed) ? parsed.paidRevealed.map(String) : [],
       dailyUnlocks: Number.isFinite(parsed.dailyUnlocks) ? Math.max(0, Math.floor(parsed.dailyUnlocks as number)) : 0,
       extraReveals: parsed.extraReveals && typeof parsed.extraReveals === 'object' && !Array.isArray(parsed.extraReveals) ? parsed.extraReveals : {},
     }
@@ -555,6 +734,101 @@ const loadSessionAccount = (): Account | null => {
   if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
   return account
 }
+const emptyUserJobState = (): UserJobState => ({
+  saved: [],
+  applied: [],
+  requestedCandidates: [],
+  dailyAccess: emptyDailyJobAccess(),
+})
+const normalizeStoredIdList = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? Array.from(new Set(value.map(item => String(item).trim()).filter(Boolean))).slice(0, 5000)
+    : []
+)
+const normalizeUserJobState = (value: unknown): UserJobState => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return emptyUserJobState()
+  const candidate = value as Partial<UserJobState>
+  const daily = candidate.dailyAccess && typeof candidate.dailyAccess === 'object' && !Array.isArray(candidate.dailyAccess)
+    ? candidate.dailyAccess as Partial<StoredDailyJobAccess>
+    : null
+  return {
+    saved: normalizeStoredIdList(candidate.saved),
+    applied: normalizeStoredIdList(candidate.applied),
+    requestedCandidates: normalizeStoredIdList(candidate.requestedCandidates),
+    dailyAccess: daily?.date === getTodayKey()
+      ? {
+          date: getTodayKey(),
+          revealed: normalizeStoredIdList(daily.revealed),
+          paidRevealed: normalizeStoredIdList(daily.paidRevealed),
+          dailyUnlocks: Number.isFinite(daily.dailyUnlocks) ? Math.max(0, Math.floor(daily.dailyUnlocks as number)) : 0,
+          extraReveals: daily.extraReveals && typeof daily.extraReveals === 'object' && !Array.isArray(daily.extraReveals)
+            ? daily.extraReveals as Record<string, ExtraJobReveals>
+            : {},
+        }
+      : emptyDailyJobAccess(),
+  }
+}
+const userJobStateKey = (account: Pick<Account, 'role' | 'mobile'>) => `${account.role}:${normalizeMobile(account.mobile)}`
+const loadStoredUserJobStates = (): Record<string, UserJobState> => {
+  try {
+    const raw = localStorage.getItem(USER_JOB_STATE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, state]) => [key, normalizeUserJobState(state)]))
+  } catch { return {} }
+}
+const getStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>): UserJobState | null => (
+  loadStoredUserJobStates()[userJobStateKey(account)] ?? null
+)
+const saveStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>, state: UserJobState) => {
+  try {
+    const states = loadStoredUserJobStates()
+    states[userJobStateKey(account)] = normalizeUserJobState(state)
+    localStorage.setItem(USER_JOB_STATE_KEY, JSON.stringify(states))
+  } catch { /* ignore */ }
+}
+const deleteStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>) => {
+  try {
+    const states = loadStoredUserJobStates()
+    delete states[userJobStateKey(account)]
+    localStorage.setItem(USER_JOB_STATE_KEY, JSON.stringify(states))
+  } catch { /* ignore */ }
+}
+const loadInitialUserJobState = (): UserJobState => {
+  const sessionAccount = loadSessionAccount()
+  const stored = sessionAccount ? getStoredUserJobState(sessionAccount) : null
+  if (stored) return stored
+  let requestedCandidates: string[] = []
+  try {
+    const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY)
+    if (raw) requestedCandidates = normalizeStoredIdList(JSON.parse(raw))
+  } catch { /* ignore */ }
+  return {
+    saved: [],
+    applied: [],
+    requestedCandidates,
+    dailyAccess: loadDailyJobAccess(),
+  }
+}
+const mergeUserJobStates = (primary: UserJobState, secondary: UserJobState): UserJobState => {
+  const mergedExtraReveals: Record<string, ExtraJobReveals> = { ...secondary.dailyAccess.extraReveals }
+  Object.entries(primary.dailyAccess.extraReveals).forEach(([jobId, fields]) => {
+    mergedExtraReveals[jobId] = { ...(mergedExtraReveals[jobId] ?? {}), ...fields }
+  })
+  return normalizeUserJobState({
+    saved: [...primary.saved, ...secondary.saved],
+    applied: [...primary.applied, ...secondary.applied],
+    requestedCandidates: [...primary.requestedCandidates, ...secondary.requestedCandidates],
+    dailyAccess: {
+      date: getTodayKey(),
+      revealed: [...primary.dailyAccess.revealed, ...secondary.dailyAccess.revealed],
+      paidRevealed: [...primary.dailyAccess.paidRevealed, ...secondary.dailyAccess.paidRevealed],
+      dailyUnlocks: Math.max(primary.dailyAccess.dailyUnlocks, secondary.dailyAccess.dailyUnlocks),
+      extraReveals: mergedExtraReveals,
+    },
+  })
+}
 const getAccountDestination = (account: Account): AppPage => {
   if (account.role === 'recruiter') return 'recruiters'
   return isSeekerProfileComplete(account.profile) ? 'home' : 'profile'
@@ -602,6 +876,15 @@ const loadSupportTickets = (): SupportTicket[] => {
       updatedAt: ticket.updatedAt || ticket.createdAt,
     }))
   } catch { return [] }
+}
+
+const loadGuestSupportTicketIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(GUEST_SUPPORT_TICKET_IDS_KEY)
+    if (raw) return normalizeStoredIdList(JSON.parse(raw))
+  } catch { /* ignore */ }
+  // Migrate guest tickets that were created on this device before sync existed.
+  return loadSupportTickets().filter(ticket => ticket.role === 'guest').map(ticket => ticket.id)
 }
 
 // AD COMPONENTS
@@ -655,6 +938,20 @@ export default function App() {
   // App state
   const [tier, setTier] = useState<Tier>('free')
   const [purchases, setPurchases] = useState<PurchaseRecord[]>(() => loadPurchases())
+  const [commerceSettings, setCommerceSettings] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
+  const [commerceDraft, setCommerceDraft] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
+  const [commerceSettingsError, setCommerceSettingsError] = useState('')
+  const [commerceSettingsSaving, setCommerceSettingsSaving] = useState(false)
+  const [commerceAdminPassword, setCommerceAdminPassword] = useState('')
+  const [commerceQrUploading, setCommerceQrUploading] = useState(false)
+  const [checkoutPlan, setCheckoutPlan] = useState<PaidPlanId | null>(null)
+  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>('demo')
+  const [checkoutReference, setCheckoutReference] = useState('')
+  const [checkoutError, setCheckoutError] = useState('')
+  const [checkoutProcessing, setCheckoutProcessing] = useState(false)
+  const [planClock, setPlanClock] = useState(() => Date.now())
+  const [planPurchaseSyncReady, setPlanPurchaseSyncReady] = useState(() => !isSupabaseConfigured)
+  const previousTierRef = useRef<Tier>('free')
   const [search, setSearch] = useState('')
   const [location, setLocation] = useState('All India')
   const [city, setCity] = useState('All Cities')
@@ -663,11 +960,12 @@ export default function App() {
   const [role, setRole] = useState<typeof ROLES[number]>('All Roles')
   const [expFilter, setExpFilter] = useState<typeof EXP_OPTIONS[number]>('All Experience')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
-  const [saved, setSaved] = useState<Set<string>>(new Set())
-  const [applied, setApplied] = useState<Set<string>>(new Set())
-  const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadDailyJobAccess().revealed))
-  const [dailyUnlocks, setDailyUnlocks] = useState(() => loadDailyJobAccess().dailyUnlocks)
-  const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadDailyJobAccess().extraReveals)
+  const [saved, setSaved] = useState<Set<string>>(() => new Set(loadInitialUserJobState().saved))
+  const [applied, setApplied] = useState<Set<string>>(() => new Set(loadInitialUserJobState().applied))
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadInitialUserJobState().dailyAccess.revealed))
+  const [paidRevealed, setPaidRevealed] = useState<Set<string>>(() => new Set(loadInitialUserJobState().dailyAccess.paidRevealed))
+  const [dailyUnlocks, setDailyUnlocks] = useState(() => loadInitialUserJobState().dailyAccess.dailyUnlocks)
+  const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadInitialUserJobState().dailyAccess.extraReveals)
   const [selected, setSelected] = useState<Job | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [showPricing, setShowPricing] = useState(false)
@@ -685,7 +983,7 @@ export default function App() {
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
   const [aiLoading, setAiLoading] = useState(false)
-  // Jobs are now state (Admin can post/delete; saved on this device)
+  // Jobs are state (Admin can post/delete; cached here and synced via Supabase)
   const [jobs, setJobs] = useState<Job[]>(() => loadInitialJobs())
   useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
   // Admin auth (M Divakar Reddy only)
@@ -700,10 +998,11 @@ export default function App() {
   const [adminForgotNew, setAdminForgotNew] = useState('')
   const [adminForgotConfirm, setAdminForgotConfirm] = useState('')
   const [adminForgotError, setAdminForgotError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plans' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
   const [showAdminMenu, setShowAdminMenu] = useState(false)
   const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
+  const [adminAccountDetail, setAdminAccountDetail] = useState<Account | null>(null)
   const [remoteAdminUsers, setRemoteAdminUsers] = useState<RemoteAccountRow[] | null>(null)
   const [remotePurchases, setRemotePurchases] = useState<PurchaseRecord[] | null>(null)
   const [adminDataLoading, setAdminDataLoading] = useState(false)
@@ -741,6 +1040,7 @@ export default function App() {
   const [deletionRequestError, setDeletionRequestError] = useState('')
   const [legalTab, setLegalTab] = useState<LegalTab>('privacy')
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => loadSupportTickets())
+  const [guestSupportTicketIds, setGuestSupportTicketIds] = useState<Set<string>>(() => new Set(loadGuestSupportTicketIds()))
   const [showSupportTicketModal, setShowSupportTicketModal] = useState(false)
   const [supportTicketSource, setSupportTicketSource] = useState<SupportTicketSource>('ai')
   const [supportTicketForm, setSupportTicketForm] = useState({ name: '', mobile: '', email: '', category: '', subject: '', details: '' })
@@ -752,31 +1052,72 @@ export default function App() {
   const resumeInputRef = useRef<HTMLInputElement>(null)
   const [seekerProfileError, setSeekerProfileError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
+  const [profileEditField, setProfileEditField] = useState<keyof SeekerProfile | ''>('')
+  const [accountEditField, setAccountEditField] = useState<'name' | 'email' | ''>('')
+  const [accountEditValue, setAccountEditValue] = useState('')
+  const [accountEditError, setAccountEditError] = useState('')
+  const [accountSaving, setAccountSaving] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
   const [candidateRoleFilter, setCandidateRoleFilter] = useState('All Roles')
   const [candidateExperienceFilter, setCandidateExperienceFilter] = useState('All Candidates')
   const [candidateStateFilter, setCandidateStateFilter] = useState('All India')
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateProfileView | null>(null)
   const [remoteCandidateProfiles, setRemoteCandidateProfiles] = useState<CandidateProfileView[]>([])
-  const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => {
-    try { const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return new Set(parsed as string[]) } } catch { /* ignore */ }
-    return new Set<string>()
-  })
+  const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => new Set(loadInitialUserJobState().requestedCandidates))
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
   useEffect(() => { try { localStorage.setItem(SUPPORT_TICKETS_KEY, JSON.stringify(supportTickets)) } catch { /* ignore */ } }, [supportTickets])
+  useEffect(() => { try { localStorage.setItem(GUEST_SUPPORT_TICKET_IDS_KEY, JSON.stringify(Array.from(guestSupportTicketIds))) } catch { /* ignore */ } }, [guestSupportTicketIds])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
   useEffect(() => { try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(purchases)) } catch { /* ignore */ } }, [purchases])
-  // Restore the buyer's still-active paid plan when their account session opens.
+  useEffect(() => { try { localStorage.setItem(COMMERCE_SETTINGS_KEY, JSON.stringify(commerceSettings)) } catch { /* ignore */ } }, [commerceSettings])
+  // Re-check plan validity while the app stays open (and whenever it regains focus).
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'seeker') return
-    const activePurchase = purchases.find(p => p.mobile === currentUser.mobile && p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now())
-    if (activePurchase) setTier(activePurchase.plan)
+    const tick = () => setPlanClock(Date.now())
+    const interval = window.setInterval(tick, 30000)
+    const onVisibility = () => { if (!document.hidden) tick() }
+    window.addEventListener('focus', tick)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', tick)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+  // A paid tier exists only while a paid purchase for this Job Seeker is inside
+  // its Admin-set validity. At expiry this automatically removes paid benefits.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'seeker' || isAdmin) {
+      previousTierRef.current = 'free'
+      if (tier !== 'free') setTier('free')
+      return
+    }
+    const activePurchase = getActivePlanPurchase(purchases, currentUser.mobile, planClock)
+    const nextTier: Tier = activePurchase?.plan ?? 'free'
+    const wasPaidTier = previousTierRef.current !== 'free'
+    const shouldRemovePaidBenefits = nextTier === 'free' && (wasPaidTier || (planPurchaseSyncReady && paidRevealed.size > 0))
+    if (shouldRemovePaidBenefits) {
+      const remainingRevealed = new Set(Array.from(revealed).filter(id => !paidRevealed.has(id)))
+      setRevealed(remainingRevealed)
+      setExtraReveals(prev => Object.fromEntries(Object.entries(prev).filter(([jobId]) => !paidRevealed.has(jobId))))
+      setPaidRevealed(new Set())
+      setDailyUnlocks(jobs.slice(0, FREE_DAILY_JOB_LIMIT).filter(job => remainingRevealed.has(job.id)).length)
+      setSelected(null)
+      setShowRewarded(null)
+      setRewardProgress(0)
+      setApplyAdJob(null)
+      setApplyAdProgress(0)
+      if (wasPaidTier) setToast('Your paid plan validity has ended. Free plan is now active and paid benefits are turned off.')
+    }
+    previousTierRef.current = nextTier
+    if (tier !== nextTier) setTier(nextTier)
+    // Entitlement is recalculated from purchases + the validity clock. Revealed/job
+    // state is intentionally read only at the expiry transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser])
+  }, [currentUser?.role, currentUser?.mobile, isAdmin, purchases, planClock, planPurchaseSyncReady])
   useEffect(() => {
-    try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
-  }, [revealed, dailyUnlocks, extraReveals])
+    try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), paidRevealed: Array.from(paidRevealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
+  }, [revealed, paidRevealed, dailyUnlocks, extraReveals])
   useEffect(() => {
     if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
   }, [currentUser])
@@ -784,6 +1125,12 @@ export default function App() {
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   const remoteSessionRefreshRef = useRef(false)
+  const remoteSyncLoadStartedRef = useRef(false)
+  const remoteSyncLoadedRef = useRef<Record<string, boolean>>({})
+  const remoteSyncPreviousRef = useRef<Record<string, SyncRecord[]>>({})
+  const remoteSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const remoteUserStateLoadedKeyRef = useRef('')
+  const remoteUserStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const googleAuthProcessingRef = useRef(false)
   const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -794,7 +1141,38 @@ export default function App() {
     setShowAuthConfirmPassword(false)
   }
 
-  const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
+  const limitForTier: Record<Tier, number> = {
+    free: FREE_DAILY_JOB_LIMIT,
+    starter: getPaidPlanLimit(commerceSettings.plans.starter),
+    pro: getPaidPlanLimit(commerceSettings.plans.pro),
+  }
+  const activePlanPurchase = currentUser?.role === 'seeker'
+    ? getActivePlanPurchase(purchases, currentUser.mobile, planClock)
+    : undefined
+  const latestPlanPurchase = currentUser?.role === 'seeker'
+    ? purchases.filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile) && record.status === 'paid' && record.plan !== 'free').sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0]
+    : undefined
+  const planCards = [
+    { ...TIERS[0], enabled: true, validityDays: 0 },
+    ...(['starter', 'pro'] as PaidPlanId[]).map(planId => {
+      const plan = commerceSettings.plans[planId]
+      const base = TIERS.find(item => item.id === planId) ?? TIERS[1]
+      const limitLabel = plan.unlimited ? 'Unlimited' : `${getPaidPlanLimit(plan)}/day`
+      return {
+        ...base,
+        id: planId as Tier,
+        name: plan.name,
+        price: formatINR(plan.price),
+        period: `/${plan.validityDays} days`,
+        features: [`${plan.unlimited ? 'Unlimited direct contacts' : `${getPaidPlanLimit(plan)} direct contacts/day`} — no reveal ads`, ...plan.features],
+        cta: `Buy ${plan.name} — ${formatINR(plan.price)}`,
+        popular: plan.popular,
+        limit: limitLabel,
+        enabled: plan.enabled,
+        validityDays: plan.validityDays,
+      }
+    }),
+  ]
   const isJobSeekerUser = hasAuthenticated && currentUser?.role === 'seeker' && !isAdmin
   const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
   const shouldHideJobSeekerExperience = isRecruiterUser && !isAdmin
@@ -887,8 +1265,16 @@ export default function App() {
   }
 
   // ---- ADMIN: M Divakar Reddy ----
-  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
+  // No hard-coded Admin password: the local fallback exists only after a
+  // successful verified Admin login/reset has stored the current password.
+  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || '' } catch { return '' } }
   const openAdmin = (tab: typeof adminTab = 'overview') => {
+    if (!isAdmin) {
+      setAdminId('')
+      setAdminPass('')
+      setAdminError('')
+      setShowAdminPass(false)
+    }
     setAdminTab(tab)
     setSelected(null)
     setSelectedCandidate(null)
@@ -943,6 +1329,7 @@ export default function App() {
     if (shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved', 'profile'].includes(destination)) return false
     if (destination === 'candidates') return isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
     if (destination === 'profile') return isAdmin || currentUser?.role === 'seeker'
+    if (destination === 'account') return isAdmin || (hasAuthenticated && Boolean(currentUser))
     return true
   }
   const getFallbackBackDestination = (): AppPage | null => {
@@ -957,6 +1344,11 @@ export default function App() {
     if (page === 'saved' || page === 'pricing') return 'jobs'
     if (page === 'jobs') return 'home'
     if (page === 'profile') return currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'home' : 'jobs'
+    if (page === 'account') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
+      return 'welcome'
+    }
     if (page === 'legal') {
       if (isAdmin) return 'admin'
       if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
@@ -1026,6 +1418,7 @@ export default function App() {
   }
   const showGlobalPageBack = canGoBack && page !== 'welcome' && page !== 'auth' && page !== 'candidates' && !isAdminLoginPage
   const handleExitAdminLogin = () => {
+    setAdminId('')
     setAdminError('')
     setAdminPass('')
     setShowAdminPass(false)
@@ -1058,6 +1451,108 @@ export default function App() {
       try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
       return next
     })
+  }
+  const fetchRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey): Promise<T[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('list_app_sync_records', { p_collection_key: collectionKey })
+    if (error) throw error
+    return ((data ?? []) as RemoteSyncRecordRow[]).map(row => ({ ...(row.payload as Record<string, unknown>), id: row.record_id } as T))
+  }
+  const syncRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey, previous: T[], next: T[]) => {
+    if (!supabase) return
+    const previousById = new Map(previous.map((record, index) => [record.id, { index, json: JSON.stringify(record) }]))
+    const nextIds = new Set(next.map(record => record.id))
+    const operations: Promise<void>[] = []
+
+    next.forEach((record, index) => {
+      const previousRecord = previousById.get(record.id)
+      if (!previousRecord || previousRecord.index !== index || previousRecord.json !== JSON.stringify(record)) {
+        operations.push((async () => {
+          const { error } = await supabase.rpc('upsert_app_sync_record', {
+            p_collection_key: collectionKey,
+            p_record_id: record.id,
+            p_position: index,
+            p_payload: record,
+          })
+          if (error) throw error
+        })())
+      }
+    })
+
+    previous.forEach(record => {
+      if (!nextIds.has(record.id)) {
+        operations.push((async () => {
+          const { error } = await supabase.rpc('delete_app_sync_record', {
+            p_collection_key: collectionKey,
+            p_record_id: record.id,
+          })
+          if (error) throw error
+        })())
+      }
+    })
+
+    await Promise.all(operations)
+  }
+  const scheduleRemoteSyncCollection = <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey, next: T[]) => {
+    if (!supabase || !remoteSyncLoadedRef.current[collectionKey]) return
+    const existingTimer = remoteSyncTimersRef.current[collectionKey]
+    if (existingTimer) clearTimeout(existingTimer)
+    remoteSyncTimersRef.current[collectionKey] = setTimeout(() => {
+      const previous = (remoteSyncPreviousRef.current[collectionKey] ?? []) as T[]
+      remoteSyncPreviousRef.current[collectionKey] = next
+      void syncRemoteSyncCollection(collectionKey, previous, next).catch(() => {
+        // Keep the last confirmed snapshot so a later edit retries the diff.
+        remoteSyncPreviousRef.current[collectionKey] = previous
+      })
+    }, 350)
+  }
+  const mergeRemoteSyncRecords = <T extends SyncRecord>(remote: T[], local: T[]): T[] => {
+    const remoteIds = new Set(remote.map(record => record.id))
+    return [...remote, ...local.filter(record => !remoteIds.has(record.id))]
+  }
+  const applyUserJobState = (state: UserJobState) => {
+    const normalized = normalizeUserJobState(state)
+    setSaved(new Set(normalized.saved))
+    setApplied(new Set(normalized.applied))
+    setRequestedCandidates(new Set(normalized.requestedCandidates))
+    setRevealed(new Set(normalized.dailyAccess.revealed))
+    setPaidRevealed(new Set(normalized.dailyAccess.paidRevealed))
+    setDailyUnlocks(normalized.dailyAccess.dailyUnlocks)
+    setExtraReveals(normalized.dailyAccess.extraReveals)
+  }
+  const getCurrentUserJobState = (): UserJobState => ({
+    saved: Array.from(saved),
+    applied: Array.from(applied),
+    requestedCandidates: Array.from(requestedCandidates),
+    dailyAccess: {
+      date: getTodayKey(),
+      revealed: Array.from(revealed),
+      paidRevealed: Array.from(paidRevealed),
+      dailyUnlocks,
+      extraReveals,
+    },
+  })
+  const getLocalUserJobState = (account: Account): UserJobState => (
+    getStoredUserJobState(account) ?? getCurrentUserJobState()
+  )
+  const fetchRemoteUserJobState = async (account: Account): Promise<UserJobState | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('get_app_user_state', {
+      p_role: account.role,
+      p_mobile: normalizeMobile(account.mobile),
+    })
+    if (error) throw error
+    const row = ((data ?? []) as RemoteUserStateRow[])[0]
+    return row?.payload ? normalizeUserJobState(row.payload) : null
+  }
+  const saveRemoteUserJobState = async (account: Account, state: UserJobState) => {
+    if (!supabase) return
+    const { error } = await supabase.rpc('set_app_user_state', {
+      p_role: account.role,
+      p_mobile: normalizeMobile(account.mobile),
+      p_payload: normalizeUserJobState(state),
+    })
+    if (error) throw error
   }
   const fetchRemoteAccountsByMobile = async (mobile: string): Promise<Account[] | null> => {
     if (!supabase) return null
@@ -1149,10 +1644,10 @@ export default function App() {
     purchasedAt: row.purchased_at,
     expiresAt: row.expires_at || row.purchased_at,
   })
-  const recordRemotePurchase = async (record: PurchaseRecord) => {
-    if (!supabase) return
+  const recordRemotePurchase = async (record: PurchaseRecord, throwOnError = false): Promise<boolean> => {
+    if (!supabase) return true
     try {
-      await supabase.rpc('record_app_purchase', {
+      const { data, error } = await supabase.rpc('record_app_purchase', {
         p_role: record.role,
         p_name: record.name,
         p_mobile: record.mobile,
@@ -1164,8 +1659,54 @@ export default function App() {
         p_transaction_id: record.transactionId,
         p_expires_at: record.expiresAt,
       })
-    } catch { /* local purchase record remains the fallback */ }
+      if (error) throw error
+      if (data === false) throw new Error('This payment reference has already been used. Enter the new UPI/UTR transaction reference for this payment.')
+      return true
+    } catch (error) {
+      if (throwOnError) throw error
+      return false
+    }
   }
+  const fetchRemotePurchasesForMobile = async (mobile: string): Promise<PurchaseRecord[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('list_app_purchases_for_mobile', { p_mobile: normalizeMobile(mobile) })
+    if (error) throw error
+    return ((data ?? []) as RemotePurchaseRow[]).map(purchaseFromRemoteRow)
+  }
+  useEffect(() => {
+    if (!supabase || !currentUser || currentUser.role !== 'seeker') {
+      setPlanPurchaseSyncReady(!isSupabaseConfigured)
+      return
+    }
+    let cancelled = false
+    setPlanPurchaseSyncReady(false)
+    void fetchRemotePurchasesForMobile(currentUser.mobile)
+      .then(remoteRecords => {
+        if (cancelled || !remoteRecords) return
+        setPurchases(prev => mergePurchaseRecords(remoteRecords, prev))
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setPlanPurchaseSyncReady(true) })
+    return () => { cancelled = true }
+    // Fetch this seeker's synced purchases whenever the signed-in seeker changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile])
+  const refreshCommerceSettings = async (): Promise<CommerceSettings> => {
+    if (!supabase) return commerceSettings
+    const { data, error } = await supabase.rpc('get_app_setting', { p_setting_key: 'commerce' })
+    if (error) throw error
+    const row = ((data ?? []) as RemoteAppSettingRow[])[0]
+    if (!row?.payload) return commerceSettings
+    const remoteSettings = normalizeCommerceSettings({ ...row.payload, updatedAt: row.updated_at ?? undefined })
+    setCommerceSettings(remoteSettings)
+    if (!isAdmin || adminTab !== 'plans') setCommerceDraft(remoteSettings)
+    return remoteSettings
+  }
+  useEffect(() => {
+    void refreshCommerceSettings().catch(() => undefined)
+    // Load the Admin-set plans/payment receiving source once when the app opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const fetchAdminSupabaseData = async () => {
     if (!supabase) return
     setAdminDataLoading(true)
@@ -1184,6 +1725,14 @@ export default function App() {
     if (isAdmin && page === 'admin' && ['users', 'purchases', 'payments'].includes(adminTab)) void fetchAdminSupabaseData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, page, adminTab])
+  useEffect(() => {
+    if (!isAdmin || adminTab !== 'plans') return
+    setCommerceDraft(commerceSettings)
+    setCommerceSettingsError('')
+    setCommerceAdminPassword(storedAdminPassword())
+    // Refresh the editor from the live settings each time Admin opens it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, adminTab])
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
     if (!supabase) return
     const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
@@ -1197,6 +1746,8 @@ export default function App() {
     setApplyAdProgress(0)
     setRewardProgress(0)
     setAiMessages(getAiWelcomeMessages(account.role))
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(getStoredUserJobState(account) ?? (isNewAccount ? emptyUserJobState() : getCurrentUserJobState()))
     setCurrentUser(account)
     setHasAuthenticated(true)
     setEntryRole(account.role)
@@ -1705,9 +2256,106 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker') return
     setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
     setSeekerProfileError('')
+    setProfileEditField('')
     setShowMobileMenu(false)
     setShowAccountMenu(false)
     navigate('profile')
+  }
+  const openSeekerProfileField = (field: keyof SeekerProfile) => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setSeekerProfileError('')
+    setProfileEditField(field)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('profile')
+  }
+  const openMyAccount = () => {
+    setAccountEditField('')
+    setAccountEditValue('')
+    setAccountEditError('')
+    if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('account')
+  }
+  const startAccountFieldEdit = (field: 'name' | 'email') => {
+    if (!currentUser) return
+    setAccountEditField(field)
+    setAccountEditValue(currentUser[field])
+    setAccountEditError('')
+  }
+  const openMyAccountField = (field: 'name' | 'email') => {
+    if (!currentUser) return
+    setAccountEditField(field)
+    setAccountEditValue(currentUser[field])
+    setAccountEditError('')
+    if (currentUser.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('account')
+  }
+  const cancelAccountFieldEdit = () => {
+    setAccountEditField('')
+    setAccountEditValue('')
+    setAccountEditError('')
+  }
+  const saveAccountField = async () => {
+    if (!currentUser || !accountEditField || accountSaving) return
+    const field = accountEditField
+    const nextValue = field === 'email'
+      ? accountEditValue.trim().toLowerCase()
+      : accountEditValue.trim().replace(/\s+/g, ' ')
+
+    if (field === 'name' && nextValue.length < 3) {
+      setAccountEditError('Please enter your full name (at least 3 characters).')
+      return
+    }
+    if (field === 'email') {
+      const emailError = getEmailValidationError(nextValue)
+      if (emailError) { setAccountEditError(emailError); return }
+      const emailAlreadyUsed = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile) && account.email.trim().toLowerCase() === nextValue)
+      if (emailAlreadyUsed) {
+        setAccountEditError('This email is already used by another account in this role.')
+        return
+      }
+    }
+    if (nextValue === currentUser[field]) {
+      cancelAccountFieldEdit()
+      return
+    }
+
+    setAccountSaving(true)
+    setAccountEditError('')
+    try {
+      let updatedAccount: Account = { ...currentUser, [field]: nextValue }
+      if (supabase) {
+        const { data, error } = await supabase.rpc('update_app_account_email', {
+          p_role: currentUser.role,
+          p_name: updatedAccount.name,
+          p_mobile: currentUser.mobile,
+          p_email: updatedAccount.email,
+        })
+        if (error) throw error
+        const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+        if (!remoteAccount) throw new Error('Updated account was not returned')
+        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
+          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
+          : remoteAccount
+      }
+      const hasLocalAccount = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+      const nextAccounts = hasLocalAccount
+        ? accounts.map(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile) ? updatedAccount : account)
+        : [...accounts, updatedAccount]
+      writeAccounts(nextAccounts)
+      setCurrentUser(updatedAccount)
+      cancelAccountFieldEdit()
+      setToast(`${field === 'name' ? 'Name' : 'Email'} updated in My Account ✅`)
+    } catch {
+      setAccountEditError('Unable to save this detail right now. Please check it and try again.')
+    } finally {
+      setAccountSaving(false)
+    }
   }
   const updateSeekerProfileField = (field: keyof SeekerProfile, value: string) => {
     setSeekerProfileForm(prev => {
@@ -1717,6 +2365,15 @@ export default function App() {
     })
     setSeekerProfileError('')
   }
+  useEffect(() => {
+    if (page !== 'profile' || !profileEditField) return
+    const timer = window.setTimeout(() => {
+      const element = document.querySelector(`[data-profile-field="${profileEditField}"]`) as HTMLElement | null
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element?.focus({ preventScroll: true })
+    }, 140)
+    return () => window.clearTimeout(timer)
+  }, [page, profileEditField, seekerProfileForm.experienceType])
   // Uploads save to the Job Seeker account immediately (with the current form
   // draft) so the photo/resume stay in the account even before "Save Profile".
   const persistSeekerProfilePatch = (patch: Partial<SeekerProfile>) => {
@@ -1885,6 +2542,7 @@ export default function App() {
       setCurrentUser(updatedAccount)
       setSeekerProfileForm(updatedAccount.profile ?? profile)
       setSeekerProfileError('')
+      setProfileEditField('')
       if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
       setToast('Job Seeker profile saved ✅ You can now apply for jobs.')
       navigate('jobs')
@@ -1968,6 +2626,7 @@ export default function App() {
       updatedAt: now,
     }
     setSupportTickets(prev => [ticket, ...prev])
+    if (ticket.role === 'guest') setGuestSupportTicketIds(prev => new Set(prev).add(ticket.id))
     setCreatedSupportTicket(ticket)
     setSupportTicketError('')
     if (supportTicketSource === 'ai') {
@@ -1990,6 +2649,8 @@ export default function App() {
     setApplyAdProgress(0)
     setRewardProgress(0)
     setAiMessages(getAiWelcomeMessages())
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(emptyUserJobState())
     setCurrentUser(null)
     setHasAuthenticated(false)
     setEntryRole(null)
@@ -2014,6 +2675,9 @@ export default function App() {
     }
     const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
     writeAccounts(updatedAccounts)
+    deleteStoredUserJobState(deletedAccount)
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(emptyUserJobState())
     setPendingJobs(prev => prev.filter(job => normalizeMobile(job.phone) !== deletedAccount.mobile))
     setRecruiterJob(prev => ({ ...prev, contactPerson: '', phone: '', email: '' }))
     setRecruiterSubmitted(false)
@@ -2086,6 +2750,7 @@ export default function App() {
     }
     const updatedAccounts = accounts.filter(a => !(a.role === 'seeker' && a.mobile === request.mobile))
     writeAccounts(updatedAccounts)
+    deleteStoredUserJobState({ role: 'seeker', mobile: request.mobile })
     if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
     const updatedRequests = deletionRequests.filter(r => r.id !== request.id)
     setDeletionRequests(updatedRequests)
@@ -2094,10 +2759,8 @@ export default function App() {
       setCurrentUser(null)
       setHasAuthenticated(false)
       try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-      setSaved(new Set())
-      setApplied(new Set())
-      setRevealed(new Set())
-      setDailyUnlocks(0)
+      remoteUserStateLoadedKeyRef.current = ''
+      applyUserJobState(emptyUserJobState())
       setTier('free')
       setShowDeletionRequestModal(false)
     }
@@ -2131,14 +2794,14 @@ export default function App() {
       try {
         const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
         if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
-        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.'); return }
+        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Please try again.'); return }
       } catch { /* fall through to local Admin login */ }
     }
     const idOk = ADMIN_IDS.includes(enteredId)
-    if (idOk && adminPass === storedAdminPassword()) {
+    if (idOk && adminPass && storedAdminPassword() && adminPass === storedAdminPassword()) {
       completeAdminLogin()
     } else {
-      setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.')
+      setAdminError('Wrong Admin ID/Email or Password. Please try again.')
     }
   }
   const handleAdminForgotPassword = async () => {
@@ -2152,7 +2815,7 @@ export default function App() {
     const localDetailsOk = (forgotId === 'divakar' || forgotId === 'admin') && forgotEmail === ADMIN_REGISTERED_EMAIL
     const finishAdminReset = () => {
       try { localStorage.setItem(ADMIN_PASS_KEY, adminForgotNew) } catch { /* ignore */ }
-      setAdminId(ADMIN_REGISTERED_EMAIL)
+      setAdminId('')
       setAdminPass('')
       setAdminError('')
       setAdminForgotError('')
@@ -2173,6 +2836,7 @@ export default function App() {
   }
   const handleAdminLogout = () => {
     const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
+    setAdminId('')
     setIsAdmin(false)
     try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminPass('')
@@ -2197,8 +2861,8 @@ export default function App() {
     navigate(destination, { resetHistory: true })
   }
   const handlePostJob = () => {
-    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
-    const contactEmailError = newJob.email.trim() ? getEmailValidationError(newJob.email) : null
+    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
+    const contactEmailError = getEmailValidationError(newJob.email)
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = newJob.city.trim() || 'Hyderabad'
     const job: Job = {
@@ -2221,7 +2885,7 @@ export default function App() {
       desc: newJob.desc.trim() || `Urgent opening at ${newJob.company.trim()} for ${cityName} HQ. Verified personally by M Divakar Reddy. Immediate joiners preferred.`,
       contactPerson: newJob.contactPerson.trim() || 'M Divakar Reddy',
       phone: newJob.phone.trim(),
-      email: newJob.email.trim() || 'hr@mrvacancieshub.in',
+      email: newJob.email.trim(),
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
       perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
     }
@@ -2244,7 +2908,7 @@ export default function App() {
     setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
   const handleChangePassword = () => {
-    if (passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
+    if (!passForm.current || !storedAdminPassword() || passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
     if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
     if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
     const nextPassword = passForm.next
@@ -2256,37 +2920,195 @@ export default function App() {
     setPassForm({ current: '', next: '', confirm: '' })
     setToast('Admin password changed successfully 🔐 Use it from next login')
   }
+  // ---- ADMIN: JOB SEEKER PLANS + PAYMENT RECEIVING SOURCE ----
+  const updateCommercePlanDraft = (planId: PaidPlanId, patch: Partial<PaidPlanConfig>) => {
+    setCommerceDraft(prev => {
+      const nextPlans = { ...prev.plans, [planId]: { ...prev.plans[planId], ...patch } }
+      if (patch.popular) {
+        const otherPlanId: PaidPlanId = planId === 'starter' ? 'pro' : 'starter'
+        nextPlans[otherPlanId] = { ...nextPlans[otherPlanId], popular: false }
+      }
+      if (patch.unlimited) nextPlans[planId] = { ...nextPlans[planId], dailyLimit: 9999 }
+      return { ...prev, plans: nextPlans }
+    })
+  }
+  const updateCommercePaymentDraft = (patch: Partial<PaymentReceivingSettings>) => {
+    setCommerceDraft(prev => ({ ...prev, payment: { ...prev.payment, ...patch } }))
+  }
+  const handlePaymentQrFile = async (file: File | undefined) => {
+    if (!file || commerceQrUploading) return
+    if (!file.type.startsWith('image/')) { setCommerceSettingsError('Please choose a JPG or PNG payment QR image.'); return }
+    if (file.size > MAX_UPLOAD_BYTES) { setCommerceSettingsError('Payment QR image is too large. Please choose an image up to 5 MB.'); return }
+    setCommerceQrUploading(true)
+    try {
+      const dataUrl = await fileToCompressedPhotoDataUrl(file, 720)
+      updateCommercePaymentDraft({ qrImageUrl: dataUrl })
+      setCommerceSettingsError('')
+      setToast('Payment QR added. Save Plans & Payments to show it to Job Seekers.')
+    } catch {
+      setCommerceSettingsError('Unable to read this QR image. Please try another JPG or PNG image.')
+    } finally {
+      setCommerceQrUploading(false)
+    }
+  }
+  const saveCommerceSettings = async () => {
+    const draftValidationError = validateCommerceSettings(commerceDraft)
+    if (draftValidationError) { setCommerceSettingsError(draftValidationError); return }
+    const normalized = normalizeCommerceSettings({ ...commerceDraft, updatedAt: new Date().toISOString() })
+    const validationError = validateCommerceSettings(normalized)
+    if (validationError) { setCommerceSettingsError(validationError); return }
+    if (supabase && !commerceAdminPassword) {
+      setCommerceSettingsError('Enter the current Admin password to securely save these payment settings to Supabase.')
+      return
+    }
+    setCommerceSettingsSaving(true)
+    setCommerceSettingsError('')
+    try {
+      if (supabase) {
+        const { data, error } = await supabase.rpc('set_app_setting_admin', {
+          p_admin_id: 'divakar',
+          p_admin_password: commerceAdminPassword,
+          p_setting_key: 'commerce',
+          p_payload: normalized,
+        })
+        if (error) throw error
+        if (data !== true) throw new Error('Admin password was not accepted. Payment settings were not saved.')
+      }
+      setCommerceSettings(normalized)
+      setCommerceDraft(normalized)
+      setToast(supabase ? 'Plans & payment receiving source saved live ✅ Job Seekers will see the new price, validity and payment details.' : 'Plans & payment receiving source saved on this device ✅')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save Plans & Payments. Please check the Admin password and try again.'
+      setCommerceSettingsError(message)
+    } finally {
+      setCommerceSettingsSaving(false)
+    }
+  }
   // ---- PLAN PURCHASE -> recorded for Admin Purchases/Payments lists (+ Supabase sync) ----
-  const handlePlanSelect = (nextTier: Tier) => {
-    if (nextTier === tier) { setToast(`${nextTier === 'free' ? 'Free' : nextTier === 'starter' ? 'Starter' : 'Pro'} plan is already active`); return }
-    if (nextTier === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock'); return }
+  const getAvailableCheckoutMethods = (settings: CommerceSettings): { id: CheckoutMethod; label: string }[] => {
+    const methods: { id: CheckoutMethod; label: string }[] = []
+    if (settings.payment.upiEnabled && settings.payment.upiId.trim()) methods.push({ id: 'upi', label: 'UPI' })
+    if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) methods.push({ id: 'payment-link', label: 'Payment Link' })
+    if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) methods.push({ id: 'bank', label: 'Bank Transfer' })
+    if (settings.payment.demoCheckoutEnabled) methods.push({ id: 'demo', label: 'Demo Checkout' })
+    return methods.length > 0 ? methods : [{ id: 'demo', label: 'Demo Checkout' }]
+  }
+  const getPlanCheckoutExpiry = (planId: PaidPlanId, validityDays: number): string => {
+    const now = Date.now()
+    const samePlanExpiry = currentUser?.role === 'seeker'
+      ? purchases
+          .filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile) && record.plan === planId && record.status === 'paid' && new Date(record.expiresAt).getTime() > now)
+          .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0]
+      : undefined
+    const baseTime = samePlanExpiry ? new Date(samePlanExpiry.expiresAt).getTime() : now
+    return new Date(baseTime + validityDays * 24 * 60 * 60 * 1000).toISOString()
+  }
+  const closePlanCheckout = () => {
+    if (checkoutProcessing) return
+    setCheckoutPlan(null)
+    setCheckoutReference('')
+    setCheckoutError('')
+  }
+  const handlePlanSelect = async (nextTier: Tier) => {
+    const latestSettings = await refreshCommerceSettings().catch(() => commerceSettings)
+    const activePurchaseNow = currentUser?.role === 'seeker' ? getActivePlanPurchase(purchases, currentUser.mobile) : undefined
+    if (nextTier === 'free') {
+      if (activePurchaseNow) {
+        setToast(`${activePurchaseNow.planName} is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Free will start automatically after expiry.`)
+      } else {
+        setTier('free')
+        setToast('Free plan is active — 3 daily full-contact unlocks, then 7 extra jobs.')
+      }
+      return
+    }
+    if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) {
+      setShowPricing(false)
+      if (isAdmin) {
+        openAdmin('plans')
+        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to test a purchase.')
+      } else {
+        setToast('Please login as a Job Seeker to purchase a plan.')
+      }
+      return
+    }
+    const planConfig = latestSettings.plans[nextTier]
+    if (!planConfig.enabled) { setToast(`${planConfig.name} is not available for purchase right now.`); return }
+    if (activePurchaseNow?.plan === 'pro' && nextTier === 'starter') {
+      setToast(`Your ${activePurchaseNow.planName} plan is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Starter can be purchased after it expires.`)
+      return
+    }
+    setCheckoutPlan(nextTier)
+    setCheckoutMethod(getAvailableCheckoutMethods(latestSettings)[0].id)
+    setCheckoutReference('')
+    setCheckoutError('')
+    setShowPricing(false)
+  }
+  const completePlanPurchase = async () => {
+    if (!checkoutPlan || checkoutProcessing) return
+    if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) { setCheckoutError('Please login as a Job Seeker to activate this plan.'); return }
+    const planConfig = commerceSettings.plans[checkoutPlan]
+    if (!planConfig.enabled) { setCheckoutError(`${planConfig.name} is not available for purchase right now.`); return }
+    const enteredReference = checkoutReference.trim().replace(/\s+/g, '')
+    if (checkoutMethod !== 'demo' && enteredReference.length < 6) {
+      setCheckoutError('Enter the UPI/UTR/transaction reference shown after payment (minimum 6 characters).')
+      return
+    }
+    if (enteredReference.length > 100) { setCheckoutError('Payment reference is too long. Please enter only the transaction/UTR reference.'); return }
+    const transactionId = checkoutMethod === 'demo'
+      ? 'TXN' + Date.now().toString(36).toUpperCase()
+      : enteredReference
+    const knownPurchases = [...purchases, ...(remotePurchases ?? [])]
+    if (knownPurchases.some(record => record.transactionId.trim().toLowerCase() === transactionId.toLowerCase())) {
+      setCheckoutError('This payment reference has already been used. Enter the new transaction/UTR reference for this payment.')
+      return
+    }
+    const methodLabel = checkoutMethod === 'upi'
+      ? 'UPI'
+      : checkoutMethod === 'payment-link'
+        ? 'Payment Link'
+        : checkoutMethod === 'bank'
+          ? 'Bank Transfer'
+          : 'In-App Checkout (Demo)'
     const now = new Date()
-    const expires = new Date(now)
-    expires.setDate(expires.getDate() + 30)
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
-      name: currentUser?.name ?? 'Guest User',
-      mobile: currentUser?.mobile ?? '',
-      email: currentUser?.email ?? '',
-      role: currentUser?.role ?? 'seeker',
-      plan: nextTier,
-      planName: nextTier === 'starter' ? 'Starter' : 'Pro',
-      amount: nextTier === 'starter' ? 99 : 499,
-      method: 'In-App Checkout (Demo)',
+      name: currentUser.name,
+      mobile: currentUser.mobile,
+      email: currentUser.email,
+      role: 'seeker',
+      plan: checkoutPlan,
+      planName: planConfig.name,
+      amount: planConfig.price,
+      method: methodLabel,
       status: 'paid',
-      transactionId: 'TXN' + Date.now().toString(36).toUpperCase(),
+      transactionId,
       purchasedAt: now.toISOString(),
-      expiresAt: expires.toISOString(),
+      expiresAt: getPlanCheckoutExpiry(checkoutPlan, planConfig.validityDays),
     }
-    setPurchases(prev => [record, ...prev])
-    setTier(nextTier)
-    void recordRemotePurchase(record)
-    setToast(`${record.planName} plan activated ✅ Payment recorded • ${record.transactionId}`)
+    setCheckoutProcessing(true)
+    setCheckoutError('')
+    try {
+      await recordRemotePurchase(record, true)
+      setPurchases(prev => mergePurchaseRecords([record], prev))
+      if (remotePurchases) setRemotePurchases(prev => mergePurchaseRecords([record], prev ?? []))
+      previousTierRef.current = checkoutPlan
+      setTier(checkoutPlan)
+      setPlanClock(Date.now())
+      setCheckoutPlan(null)
+      setCheckoutReference('')
+      setShowPricing(false)
+      setToast(`${record.planName} activated automatically ✅ Valid till ${formatAdminDate(record.expiresAt)}. After expiry, Free will activate automatically.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Payment could not be recorded. Please check the reference and try again.'
+      setCheckoutError(message)
+    } finally {
+      setCheckoutProcessing(false)
+    }
   }
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
-    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Contact Person Name and Contact Mobile Number'); return }
-    const contactEmailError = recruiterJob.email.trim() ? getEmailValidationError(recruiterJob.email) : null
+    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim() || !recruiterJob.email.trim()) { setToast('Please fill Company, CTC, Contact Person Name, Contact Mobile Number and Contact Email'); return }
+    const contactEmailError = getEmailValidationError(recruiterJob.email)
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = recruiterJob.city.trim() || 'Hyderabad'
     const contactName = recruiterJob.contactPerson.trim().split(' - ')[0].trim()
@@ -2312,7 +3134,7 @@ export default function App() {
       desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by a ${posterRole === 'seeker' ? 'Job Seeker' : 'Recruiter'} member — under verification by M Divakar Reddy.`,
       contactPerson: `${contactName} - ${recruiterJob.contactType}`,
       phone: recruiterJob.phone.trim(),
-      email: recruiterJob.email.trim() || 'hr@mrvacancieshub.in',
+      email: recruiterJob.email.trim(),
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
       perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
       postedBy: posterName,
@@ -2420,6 +3242,108 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!supabase || remoteSyncLoadStartedRef.current) return
+    remoteSyncLoadStartedRef.current = true
+    let cancelled = false
+
+    const loadLocalPendingJobs = (): PendingJob[] => {
+      try {
+        const raw = localStorage.getItem(PENDING_JOBS_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) return parsed as PendingJob[]
+        }
+      } catch { /* ignore */ }
+      return []
+    }
+
+    const loadCollection = async <T extends SyncRecord>(
+      collectionKey: RemoteSyncCollectionKey,
+      localRecords: T[],
+      applyRecords: (records: T[]) => void,
+      cleanRemoteRecords: (records: T[]) => T[] = records => records,
+    ) => {
+      try {
+        const remoteRecords = await fetchRemoteSyncCollection<T>(collectionKey)
+        if (cancelled || !remoteRecords) return
+        remoteSyncPreviousRef.current[collectionKey] = remoteRecords
+        remoteSyncLoadedRef.current[collectionKey] = true
+        applyRecords(mergeRemoteSyncRecords(cleanRemoteRecords(remoteRecords), localRecords))
+      } catch {
+        // Local device data remains available if Supabase is temporarily offline.
+      }
+    }
+
+    void Promise.all([
+      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))),
+      loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs(), setPendingJobs),
+      loadCollection<SupportTicket>('support_tickets', loadSupportTickets(), setSupportTickets),
+      loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests(), setDeletionRequests),
+    ])
+
+    return () => { cancelled = true }
+    // Load shared collections once; later edits are mirrored by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => { scheduleRemoteSyncCollection('jobs', jobs) }, [jobs])
+  useEffect(() => { scheduleRemoteSyncCollection('pending_jobs', pendingJobs) }, [pendingJobs])
+  useEffect(() => { scheduleRemoteSyncCollection('support_tickets', supportTickets) }, [supportTickets])
+  useEffect(() => { scheduleRemoteSyncCollection('deletion_requests', deletionRequests) }, [deletionRequests])
+
+  useEffect(() => {
+    if (!currentUser) {
+      remoteUserStateLoadedKeyRef.current = ''
+      return
+    }
+    const account = currentUser
+    const stateKey = userJobStateKey(account)
+    const localState = getLocalUserJobState(account)
+    applyUserJobState(localState)
+    saveStoredUserJobState(account, localState)
+    if (!supabase) {
+      remoteUserStateLoadedKeyRef.current = stateKey
+      return
+    }
+
+    remoteUserStateLoadedKeyRef.current = ''
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remoteState = await fetchRemoteUserJobState(account)
+        if (cancelled) return
+        if (remoteState) {
+          const mergedState = mergeUserJobStates(getStoredUserJobState(account) ?? localState, remoteState)
+          applyUserJobState(mergedState)
+          saveStoredUserJobState(account, mergedState)
+        } else {
+          await saveRemoteUserJobState(account, localState)
+        }
+        if (!cancelled) remoteUserStateLoadedKeyRef.current = stateKey
+      } catch {
+        // The per-account local copy remains available offline.
+      }
+    })()
+    return () => { cancelled = true }
+    // Reload only when the signed-in role/mobile changes, not on profile-object updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const account = currentUser
+    const state = getCurrentUserJobState()
+    saveStoredUserJobState(account, state)
+    if (!supabase || remoteUserStateLoadedKeyRef.current !== userJobStateKey(account)) return
+    if (remoteUserStateTimerRef.current) clearTimeout(remoteUserStateTimerRef.current)
+    remoteUserStateTimerRef.current = setTimeout(() => {
+      void saveRemoteUserJobState(account, state).catch(() => undefined)
+    }, 350)
+    // Persist when the account identity or any synced job-state value changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile, saved, applied, requestedCandidates, revealed, paidRevealed, dailyUnlocks, extraReveals])
+
+  useEffect(() => {
     if (!supabase) return
     void fetchRemoteCandidateProfiles().catch(() => undefined)
   }, [])
@@ -2525,6 +3449,7 @@ export default function App() {
       return
     }
     setRevealed(prev => new Set([...prev, job.id]))
+    setPaidRevealed(prev => new Set([...prev, job.id]))
     const nextUnlocks = dailyUnlocks + 1
     setDailyUnlocks(nextUnlocks)
     setToast(`Contact revealed! ${limitForTier[tier] === 9999 ? 'Unlimited unlocks' : `${limitForTier[tier] - nextUnlocks} unlocks left today`}.`)
@@ -2538,6 +3463,7 @@ export default function App() {
     if (field === 'phone' && isPhoneVisible(job)) return
     if (isAdmin || tier !== 'free') {
       markExtraReveal(job, field)
+      if (!isAdmin) setPaidRevealed(prev => new Set([...prev, job.id]))
       setToast(field === 'company' ? 'Company name revealed.' : field === 'manager' ? 'Manager name revealed.' : 'Contact number revealed.')
       return
     }
@@ -2722,10 +3648,29 @@ export default function App() {
     return a.name.toLowerCase().includes(q) || a.mobile.includes(q) || a.email.toLowerCase().includes(q)
   })
   const displayedPurchases: PurchaseRecord[] = [...(remotePurchases ?? purchases)].sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
-  const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now()
+  const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > planClock
+  const adminAccountPurchases = adminAccountDetail
+    ? displayedPurchases.filter(purchase => purchase.role === adminAccountDetail.role && normalizeMobile(purchase.mobile) === normalizeMobile(adminAccountDetail.mobile))
+    : []
+  const adminAccountActivePurchase = adminAccountDetail?.role === 'seeker'
+    ? getActivePlanPurchase(adminAccountPurchases, adminAccountDetail.mobile, planClock)
+    : undefined
+  const adminAccountSupportTickets = adminAccountDetail
+    ? supportTickets.filter(ticket => normalizeMobile(ticket.mobile) === normalizeMobile(adminAccountDetail.mobile) || ticket.email.trim().toLowerCase() === adminAccountDetail.email.trim().toLowerCase())
+    : []
+  const adminAccountDeletionRequest = adminAccountDetail?.role === 'seeker'
+    ? deletionRequests.find(request => normalizeMobile(request.mobile) === normalizeMobile(adminAccountDetail.mobile))
+    : undefined
+  const adminAccountLiveJobs = adminAccountDetail
+    ? jobs.filter(job => job.postedBy?.trim().toLowerCase() === adminAccountDetail.name.trim().toLowerCase() && job.postedByRole === adminAccountDetail.role)
+    : []
+  const adminAccountPendingJobs = adminAccountDetail
+    ? pendingJobs.filter(job => job.submittedBy.trim().toLowerCase() === adminAccountDetail.name.trim().toLowerCase() && (job.submittedByRole ?? 'recruiter') === adminAccountDetail.role)
+    : []
   const totalRevenue = displayedPurchases.filter(p => p.status === 'paid').reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const thisMonthRevenue = displayedPurchases.filter(p => { const d = new Date(p.purchasedAt); const now = new Date(); return p.status === 'paid' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
-  const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest')
+  const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest' && guestSupportTicketIds.has(ticket.id))
+  const accountSeekerProfile: SeekerProfile = currentUser?.role === 'seeker' ? currentUser.profile ?? EMPTY_SEEKER_PROFILE : EMPTY_SEEKER_PROFILE
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
     .map((a, index) => {
@@ -2859,6 +3804,67 @@ export default function App() {
     )
   }
 
+  const renderPencilEditButton = (label: string, onClick: () => void) => (
+    <button type="button" onClick={onClick} aria-label={`Edit ${label}`} title={`Edit ${label}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition hover:bg-sky-100 hover:text-sky-900 active:scale-95">
+      <Pencil className="h-4 w-4" />
+    </button>
+  )
+  const renderEditableAccountField = (field: 'name' | 'email', label: string, value: string) => {
+    const isEditing = accountEditField === field
+    return (
+      <div key={field} className={`rounded-2xl border p-3.5 ${isEditing ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100' : 'border-slate-200 bg-white'}`}>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}<Pencil className="h-3 w-3 text-sky-500" /></p>
+            {!isEditing && <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || 'Not added'}</p>}
+          </div>
+          {!isEditing && renderPencilEditButton(label, () => startAccountFieldEdit(field))}
+        </div>
+        {isEditing && (
+          <div className="mt-2">
+            <input
+              autoFocus
+              value={accountEditValue}
+              onChange={e => { setAccountEditValue(e.target.value); setAccountEditError('') }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void saveAccountField() } if (e.key === 'Escape') cancelAccountFieldEdit() }}
+              type={field === 'email' ? 'email' : 'text'}
+              inputMode={field === 'email' ? 'email' : 'text'}
+              autoComplete={field === 'email' ? 'email' : 'name'}
+              className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500"
+            />
+            {accountEditError && <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{accountEditError}</p>}
+            <div className="mt-2 flex gap-2">
+              <button type="button" disabled={accountSaving} onClick={() => void saveAccountField()} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-sky-600 px-3 py-2 text-xs font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><Check className="h-3.5 w-3.5" /> {accountSaving ? 'Saving…' : 'Save'}</button>
+              <button type="button" disabled={accountSaving} onClick={cancelAccountFieldEdit} className="flex items-center justify-center gap-1.5 rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><X className="h-3.5 w-3.5" /> Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+  const renderLockedAccountField = (label: string, value: string, note: string) => (
+    <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}</p>
+          <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || 'Not added'}</p>
+          <p className="mt-1 text-[11px] font-semibold leading-snug text-slate-500">{note}</p>
+        </div>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400" title="Locked for account safety"><LockKeyhole className="h-4 w-4" /></span>
+      </div>
+    </div>
+  )
+  const renderSeekerProfileEditRow = (field: keyof SeekerProfile, label: string, value: string | undefined, required = false) => (
+    <div key={field} className="rounded-2xl border border-slate-200 bg-white p-3.5">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}{required && <span className="text-red-500">*</span>}<Pencil className="h-3 w-3 text-sky-500" /></p>
+          <p className={`mt-1 break-words text-sm font-extrabold leading-snug ${value ? 'text-slate-900' : 'text-slate-400'}`}>{value || 'Not added'}</p>
+        </div>
+        {renderPencilEditButton(label, () => openSeekerProfileField(field))}
+      </div>
+    </div>
+  )
   const supportTicketStatusLabel = (status: SupportTicketStatus) => status === 'in-progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)
   const renderSupportTicketSummary = (ticket: SupportTicket) => (
     <article key={ticket.id} className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-left">
@@ -2949,6 +3955,11 @@ export default function App() {
                   <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
                 </div>
               )}
+              {isAdmin && !currentUser && (
+                <button type="button" onClick={() => openAdmin('settings')} title="Admin My Account & Settings" className="hidden items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-extrabold text-sky-800 shadow-sm transition hover:bg-sky-100 lg:flex">
+                  <Pencil className="h-4 w-4" /> My Account
+                </button>
+              )}
               {currentUser && hasAuthenticated && (
                 <div className="relative hidden lg:block">
                   <button type="button" onClick={() => setShowAccountMenu(prev => !prev)} aria-expanded={showAccountMenu} title="My Account" className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-2 shadow-sm transition hover:bg-sky-100">
@@ -2976,9 +3987,10 @@ export default function App() {
                           </div>
                         </div>
                         <div className="space-y-1 p-2">
+                          <button type="button" onClick={openMyAccount} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-50 px-3 py-2.5 text-left text-sm font-extrabold text-sky-800 hover:bg-sky-100"><Pencil className="h-4 w-4 text-sky-600" /><span className="flex-1">My Account</span><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-extrabold text-sky-700 shadow-sm">Edit details</span></button>
                           {currentUser.role === 'seeker' ? (
                             <>
-                              <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><User className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
+                              <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Pencil className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
                               <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
                               <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
                               <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Account Deletion Request Pending' : 'Request Account Deletion'}</span></button>
@@ -3050,20 +4062,28 @@ export default function App() {
                         <X className="h-5 w-5" />
                       </button>
                     </div>
-                    {currentUser.role === 'seeker' && (
-                      <button onClick={openSeekerProfile} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
-                    )}
+                    <div className="mt-2.5 grid gap-2">
+                      <button onClick={openMyAccount} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> My Account • Edit Details</button>
+                      {currentUser.role === 'seeker' && (
+                        <button onClick={openSeekerProfile} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2.5 rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white"><User className="h-5 w-5" /></span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-extrabold leading-tight">{isAdmin ? 'M Divakar Reddy' : 'My Account'}</p>
-                      <p className="text-[11px] font-bold text-sky-700">{isAdmin ? 'Admin' : 'Account details'}</p>
+                  <div className="rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white"><User className="h-5 w-5" /></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-extrabold leading-tight">{isAdmin ? 'M Divakar Reddy' : 'My Account'}</p>
+                        <p className="text-[11px] font-bold text-sky-700">{isAdmin ? 'Admin • Admin ID: divakar' : 'Account details'}</p>
+                      </div>
+                      <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
+                        <X className="h-5 w-5" />
+                      </button>
                     </div>
-                    <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
-                      <X className="h-5 w-5" />
-                    </button>
+                    {isAdmin && (
+                      <button onClick={() => openAdmin('settings')} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> My Account &amp; Settings</button>
+                    )}
                   </div>
                 )}
               </div>
@@ -3096,7 +4116,7 @@ export default function App() {
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
                     { label: 'Browse Jobs', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
-                    { label: 'Subscription Plans', sub: 'Free → Starter ₹99 → Pro ₹499', icon: Crown, page: 'pricing' as const },
+                    { label: 'Subscription Plans', sub: `Free → ${commerceSettings.plans.starter.name} ${formatINR(commerceSettings.plans.starter.price)} → ${commerceSettings.plans.pro.name} ${formatINR(commerceSettings.plans.pro.price)}`, icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
                     { label: 'Post a Vacancy', sub: isJobSeekerUser ? 'Add a vacancy • Live after Admin approval' : 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
@@ -3121,8 +4141,16 @@ export default function App() {
 
                 {currentUser && hasAuthenticated && (
                   <>
-                    <p className="mb-2 mt-5 text-[11px] font-bold tracking-widest text-slate-400">ACCOUNT ACTIONS</p>
+                    <p className="mb-2 mt-5 text-[11px] font-bold tracking-widest text-slate-400">MY ACCOUNT</p>
                     <div className="grid gap-2">
+                      <button type="button" onClick={openMyAccount} className="flex w-full items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-left transition hover:bg-sky-100/70 active:scale-[0.98]">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-sky-700 shadow-sm"><Pencil className="h-5 w-5" /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-bold leading-tight text-sky-900">My Account</span>
+                          <span className="block text-xs text-sky-700">Edit name, email{currentUser.role === 'seeker' ? ' and job profile' : ''}</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-sky-500" />
+                      </button>
                       {currentUser.role === 'seeker' ? (
                         <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-left transition hover:bg-amber-100/70 active:scale-[0.98]">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700 shadow-sm"><FileText className="h-5 w-5" /></span>
@@ -3594,6 +4622,168 @@ export default function App() {
           </div>
         </section>
       )}
+      {/* MY ACCOUNT — available to every signed-in Job Seeker and Recruiter */}
+      {page === 'account' && (
+        <section className="mx-auto max-w-[1120px] px-4 pb-8 pt-2">
+          {!currentUser || !hasAuthenticated ? (
+            isAdmin ? (
+              <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+                <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 text-white"><Settings className="h-7 w-7" /></span>
+                <h2 className="mt-3 text-xl font-extrabold">My Account — Admin</h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">Admin ID <b className="text-slate-900">divakar</b> is correct. Admin account and password settings are inside the Admin Dashboard.</p>
+                <button onClick={() => openAdmin('settings')} className="mt-5 rounded-full bg-slate-900 px-6 py-3 text-sm font-bold text-white">Open Admin Settings</button>
+              </div>
+            ) : (
+              <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+                <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><User className="h-7 w-7" /></span>
+                <h2 className="mt-3 text-xl font-extrabold">My Account Login Required</h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">Login as a Job Seeker or Recruiter to view and edit your account details.</p>
+                <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
+                  <button onClick={() => enterAs('seeker')} className="rounded-full bg-sky-600 px-6 py-3 text-sm font-bold text-white">Job Seeker Login</button>
+                  <button onClick={() => enterAs('recruiter')} className="rounded-full bg-slate-900 px-6 py-3 text-sm font-bold text-white">Recruiter Login</button>
+                </div>
+              </div>
+            )
+          ) : (
+            <>
+              <div className="rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-white shadow-lg">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-16 w-16 border-2 border-white shadow" fallbackClassName="flex h-16 w-16 bg-white text-xl text-sky-700 shadow" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-extrabold tracking-widest text-sky-100">MY ACCOUNT</p>
+                    <h2 className="mt-1 truncate text-[26px] font-extrabold leading-tight">{currentUser.name}</h2>
+                    <p className="mt-1 text-sm font-semibold text-sky-50">{currentUser.role === 'recruiter' ? 'Recruiter Account' : 'Job Seeker Account'} • +91 {currentUser.mobile}</p>
+                    <p className="truncate text-xs text-sky-100">{currentUser.email}</p>
+                  </div>
+                  <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow"><Pencil className="h-3.5 w-3.5" /> Tap pencil to edit</span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+                <div className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> Account Details</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">Use the pencil icon beside a column to edit that detail. Mobile number and account type stay locked for login safety.</p>
+                    </div>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600"><Pencil className="h-5 w-5" /></span>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {renderEditableAccountField('name', 'Full Name', currentUser.name)}
+                    {renderLockedAccountField('Mobile Number', `+91 ${currentUser.mobile}`, 'This is your login ID. Contact Admin/Support if your mobile number must change.')}
+                    {renderEditableAccountField('email', 'Email ID', currentUser.email)}
+                    {renderLockedAccountField('Account Type', currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker', 'Account type is selected during registration and cannot be changed here.')}
+                    {renderLockedAccountField('Password', '••••••••', 'For safety, reset your password through Forgot Password on the login screen.')}
+                    {renderLockedAccountField('Account Created', formatAdminDate(currentUser.createdAt), 'Your PharmaSales Jobs account joining date.')}
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <h3 className="flex items-center gap-2 text-base font-extrabold"><Settings className="h-5 w-5 text-sky-600" /> Account Actions</h3>
+                  <div className="mt-4 grid gap-2">
+                    {currentUser.role === 'seeker' ? (
+                      <>
+                        <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-600 px-4 py-3 text-left text-sm font-extrabold text-white shadow transition hover:bg-sky-700"><Pencil className="h-4 w-4" /><span className="flex-1">Edit Job Profile</span><span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-extrabold">{seekerProfileProgress(currentUser.profile)}%</span></button>
+                        <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
+                        <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
+                        <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm font-bold text-amber-800 transition hover:bg-amber-100/70"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : 'Request Account Deletion'}</span></button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={openCandidateProfiles} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-600 px-4 py-3 text-left text-sm font-extrabold text-white shadow transition hover:bg-sky-700"><Users className="h-4 w-4" /><span className="flex-1">Candidates List</span></button>
+                        <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
+                        <button type="button" onClick={() => setShowDeleteAccountConfirm(true)} className="flex w-full items-center gap-2.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-bold text-red-700 transition hover:bg-red-100/70"><Trash2 className="h-4 w-4" /><span className="flex-1">Delete Recruiter Account</span></button>
+                      </>
+                    )}
+                    <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
+                    <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
+                  </div>
+                </div>
+              </div>
+
+              {currentUser.role === 'seeker' && (
+                <div className="mt-5 rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="flex items-center gap-2 text-base font-extrabold"><Crown className="h-5 w-5 text-violet-600" /> My Subscription</h3>
+                    <span className={`ml-auto rounded-full px-3 py-1 text-[10px] font-extrabold ${activePlanPurchase ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{activePlanPurchase ? `${activePlanPurchase.planName.toUpperCase()} ACTIVE` : 'FREE ACTIVE'}</span>
+                  </div>
+                  {activePlanPurchase ? (
+                    <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><BadgeCheck className="h-6 w-6" /></span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-lg font-extrabold text-emerald-950">{activePlanPurchase.planName} • {formatINR(activePlanPurchase.amount)}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-emerald-900">Valid till <b>{formatAdminDate(activePlanPurchase.expiresAt)}</b> • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left • {activePlanPurchase.method}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-emerald-800">Today: {Math.min(displayedDailyUnlocks, limitForTier[tier])}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} direct contacts used. At expiry, Free activates automatically and paid benefits/revealed paid contacts stop.</p>
+                          <p className="mt-1 break-all font-mono text-[11px] text-emerald-700">Transaction: {activePlanPurchase.transactionId}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void handlePlanSelect(activePlanPurchase.plan)} className="rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Renew / Extend {activePlanPurchase.planName}</button>
+                        {activePlanPurchase.plan === 'starter' && commerceSettings.plans.pro.enabled && <button type="button" onClick={() => void handlePlanSelect('pro')} className="rounded-full bg-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Upgrade to {commerceSettings.plans.pro.name} — {formatINR(commerceSettings.plans.pro.price)}</button>}
+                        <button type="button" onClick={() => navigate('pricing')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">View All Plans</button>
+                      </div>
+                    </div>
+                  ) : latestPlanPurchase ? (
+                    <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="flex items-center gap-2 text-base font-extrabold text-amber-950"><Clock3 className="h-5 w-5 text-amber-700" /> {latestPlanPurchase.planName} expired • Free is active</p>
+                      <p className="mt-1 text-xs leading-relaxed text-amber-900">Your last paid plan ended on <b>{formatAdminDate(latestPlanPurchase.expiresAt)}</b>. Paid benefits are turned off. Buy again to activate a new plan immediately after payment confirmation.</p>
+                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white">Renew Subscription</button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-3xl bg-slate-50 p-4">
+                      <p className="text-base font-extrabold">Free Plan</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">3 daily full-contact unlocks, then 7 extra jobs. Current Admin-set paid plans: {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days and {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days.</p>
+                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-sky-600 px-4 py-2.5 text-xs font-extrabold text-white">View Subscription Plans</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {currentUser.role === 'seeker' && (
+                <div className="mt-5 rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Job Profile Details</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">Every profile column has a pencil. Tap it to jump directly to that field and edit it.</p>
+                    </div>
+                    <div className="w-full rounded-2xl bg-sky-50 px-4 py-3 sm:w-[220px]">
+                      <div className="flex items-center justify-between text-xs font-extrabold text-sky-800"><span>Profile completion</span><span>{seekerProfileProgress(accountSeekerProfile)}%</span></div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${seekerProfileProgress(accountSeekerProfile)}%` }} /></div>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {renderSeekerProfileEditRow('experienceType', 'Fresher / Experienced', accountSeekerProfile.experienceType === 'fresher' ? 'Fresher' : 'Experienced', true)}
+                    {renderSeekerProfileEditRow('qualification', 'Qualification', accountSeekerProfile.qualification, true)}
+                    {renderSeekerProfileEditRow('desiredRole', 'Role Looking For', accountSeekerProfile.desiredRole ? getRoleLabel(accountSeekerProfile.desiredRole) : undefined, true)}
+                    {accountSeekerProfile.experienceType === 'fresher' ? (
+                      renderSeekerProfileEditRow('passingYear', 'Passing Year', accountSeekerProfile.passingYear, true)
+                    ) : (
+                      <>
+                        {renderSeekerProfileEditRow('totalExperience', 'Total Experience', accountSeekerProfile.totalExperience, true)}
+                        {renderSeekerProfileEditRow('currentCompany', 'Current Company', accountSeekerProfile.currentCompany, true)}
+                        {renderSeekerProfileEditRow('currentRole', 'Current Role', accountSeekerProfile.currentRole ? getRoleLabel(accountSeekerProfile.currentRole) : undefined, true)}
+                        {renderSeekerProfileEditRow('currentPackage', 'Current Package', accountSeekerProfile.currentPackage, true)}
+                      </>
+                    )}
+                    {renderSeekerProfileEditRow('expectedPackage', 'Expected Package', accountSeekerProfile.expectedPackage, true)}
+                    {renderSeekerProfileEditRow('state', 'Current State', accountSeekerProfile.state, true)}
+                    {renderSeekerProfileEditRow('city', 'Current City', accountSeekerProfile.city, true)}
+                    {renderSeekerProfileEditRow('currentHq', 'Current HQ', accountSeekerProfile.currentHq, true)}
+                    {renderSeekerProfileEditRow('preferredHq', 'Preferred HQ', accountSeekerProfile.preferredHq)}
+                    {renderSeekerProfileEditRow('noticePeriod', 'Notice Period / Joining', accountSeekerProfile.noticePeriod, true)}
+                    {renderSeekerProfileEditRow('twoWheeler', 'Two-Wheeler', accountSeekerProfile.twoWheeler, true)}
+                    {renderSeekerProfileEditRow('skills', 'Skills', accountSeekerProfile.skills)}
+                    {renderSeekerProfileEditRow('profilePhoto', 'Profile Photo', accountSeekerProfile.profilePhoto ? 'Photo added' : undefined)}
+                    {renderSeekerProfileEditRow('resumeName', 'Resume', accountSeekerProfile.resumeName)}
+                  </div>
+                  <button type="button" onClick={openSeekerProfile} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white shadow transition hover:bg-sky-700 sm:w-auto sm:px-6"><Pencil className="h-4 w-4" /> Open Full Profile Editor</button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
       {/* JOB SEEKER PROFILE — required job data; Recruiters see it anonymously */}
       {page === 'profile' && (
         <section className="mx-auto max-w-[1120px] px-4 pb-8 pt-2">
@@ -3635,9 +4825,9 @@ export default function App() {
                   <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
                     <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700"><LockKeyhole className="h-4 w-4" /> ACCOUNT DETAILS</p>
                     <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">NAME</p><p className="truncate font-extrabold">{currentUser.name}</p></div>
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p></div>
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">EMAIL</p><p className="truncate font-extrabold">{currentUser.email}</p></div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="flex items-center gap-1 text-[10px] font-bold text-slate-400">NAME <Pencil className="h-3 w-3 text-sky-500" /></p><p className="truncate font-extrabold">{currentUser.name}</p></div>{renderPencilEditButton('Full Name', () => openMyAccountField('name'))}</div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p><p className="text-[10px] font-semibold text-slate-400">Login ID • locked</p></div><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400" title="Mobile number is your login ID"><LockKeyhole className="h-4 w-4" /></span></div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="flex items-center gap-1 text-[10px] font-bold text-slate-400">EMAIL <Pencil className="h-3 w-3 text-sky-500" /></p><p className="truncate font-extrabold">{currentUser.email}</p></div>{renderPencilEditButton('Email ID', () => openMyAccountField('email'))}</div>
                     </div>
                   </div>
 
@@ -3657,7 +4847,7 @@ export default function App() {
                           <p className="truncate text-sm font-extrabold">{currentUser.name}</p>
                           <p className="text-[11px] font-semibold text-slate-500">{seekerProfileForm.profilePhoto ? 'Profile photo added' : 'Add your profile photo'}</p>
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            <button type="button" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
+                            <button type="button" data-profile-field="profilePhoto" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
                             {seekerProfileForm.profilePhoto && (
                               <button type="button" disabled={!!uploadBusy} onClick={handleRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             )}
@@ -3673,7 +4863,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
-                          <button type="button" disabled={!!uploadBusy} onClick={() => resumeInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-3.5 w-3.5" /> {uploadBusy === 'resume' ? 'Uploading…' : seekerProfileForm.resumeName ? 'Change Resume' : 'Upload Resume'}</button>
+                          <button type="button" data-profile-field="resumeName" disabled={!!uploadBusy} onClick={() => resumeInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-3.5 w-3.5" /> {uploadBusy === 'resume' ? 'Uploading…' : seekerProfileForm.resumeName ? 'Change Resume' : 'Upload Resume'}</button>
                           {seekerProfileForm.resumeName && (
                             <>
                               <button type="button" disabled={!!uploadBusy} onClick={() => void handleDownloadResume()} className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-3.5 w-3.5" /> {uploadBusy === 'download' ? 'Opening…' : 'View / Download'}</button>
@@ -3686,14 +4876,14 @@ export default function App() {
                     <p className="mt-3 flex items-start gap-1.5 text-[11px] font-medium leading-relaxed text-slate-500"><LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Private to your account. Recruiters cannot see your name, photo, resume, mobile number or email ID.</p>
                   </div>
 
-                  <p className="mt-6 text-sm font-extrabold">1. Are you a Fresher or Experienced? *</p>
+                  <p className="mt-6 flex items-center justify-between gap-2 text-sm font-extrabold"><span>1. Are you a Fresher or Experienced? *</span><Pencil className="h-4 w-4 shrink-0 text-sky-500" /></p>
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                    <button type="button" data-profile-field="experienceType" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'} ${profileEditField === 'experienceType' ? 'ring-4 ring-sky-100' : ''}`}>
                       <GraduationCap className={`h-6 w-6 ${seekerProfileForm.experienceType === 'fresher' ? 'text-emerald-600' : 'text-slate-400'}`} />
                       <span className="mt-2 block text-sm font-extrabold">Fresher</span>
                       <span className="block text-xs text-slate-500">No pharma field-force experience</span>
                     </button>
-                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                    <button type="button" data-profile-field="experienceType" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'} ${profileEditField === 'experienceType' ? 'ring-4 ring-sky-100' : ''}`}>
                       <Briefcase className={`h-6 w-6 ${seekerProfileForm.experienceType === 'experienced' ? 'text-violet-600' : 'text-slate-400'}`} />
                       <span className="mt-2 block text-sm font-extrabold">Experienced</span>
                       <span className="block text-xs text-slate-500">Currently / previously working</span>
@@ -3703,92 +4893,92 @@ export default function App() {
                   <p className="mt-6 text-sm font-extrabold">2. Required job details</p>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Qualification *</label>
-                      <select value={seekerProfileForm.qualification} onChange={e => updateSeekerProfileField('qualification', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Qualification *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="qualification" value={seekerProfileForm.qualification} onChange={e => updateSeekerProfileField('qualification', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'qualification' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select qualification</option>
                         {SEEKER_QUALIFICATIONS.map(q => <option key={q} value={q}>{q}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Role You Are Looking For *</label>
-                      <select value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Role You Are Looking For *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="desiredRole" value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'desiredRole' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         {(seekerProfileForm.experienceType === 'fresher' ? ['Trainee MR', 'Field MR'] : JOB_ROLES).map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                       </select>
                     </div>
 
                     {seekerProfileForm.experienceType === 'fresher' ? (
                       <div>
-                        <label className="mb-1 block text-xs font-bold text-slate-600">Passing Year *</label>
-                        <input value={seekerProfileForm.passingYear} onChange={e => updateSeekerProfileField('passingYear', e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="e.g. 2026" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                        <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Passing Year *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                        <input data-profile-field="passingYear" value={seekerProfileForm.passingYear} onChange={e => updateSeekerProfileField('passingYear', e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="e.g. 2026" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'passingYear' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         <p className="mt-1 text-[11px] font-semibold text-emerald-700">Fresher selected — current company & current package are not required.</p>
                       </div>
                     ) : (
                       <>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Total Pharma Experience *</label>
-                          <select value={seekerProfileForm.totalExperience} onChange={e => updateSeekerProfileField('totalExperience', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Total Pharma Experience *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <select data-profile-field="totalExperience" value={seekerProfileForm.totalExperience} onChange={e => updateSeekerProfileField('totalExperience', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'totalExperience' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                             <option value="">Select experience</option>
                             {SEEKER_EXPERIENCE_OPTIONS.map(exp => <option key={exp} value={exp}>{exp}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Company *</label>
-                          <input value={seekerProfileForm.currentCompany} onChange={e => updateSeekerProfileField('currentCompany', e.target.value)} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Company *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <input data-profile-field="currentCompany" value={seekerProfileForm.currentCompany} onChange={e => updateSeekerProfileField('currentCompany', e.target.value)} placeholder="e.g. Sun Pharma" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentCompany' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Role *</label>
-                          <select value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Role *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <select data-profile-field="currentRole" value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentRole' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                             <option value="">Select current role</option>
                             {[...JOB_ROLES, 'Other Pharma Role'].map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Package ( CTC ) *</label>
-                          <input value={seekerProfileForm.currentPackage} onChange={e => updateSeekerProfileField('currentPackage', e.target.value)} placeholder="e.g. ₹4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Package ( CTC ) *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <input data-profile-field="currentPackage" value={seekerProfileForm.currentPackage} onChange={e => updateSeekerProfileField('currentPackage', e.target.value)} placeholder="e.g. ₹4.5 LPA" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentPackage' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         </div>
                       </>
                     )}
 
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Expected Package *</label>
-                      <input value={seekerProfileForm.expectedPackage} onChange={e => updateSeekerProfileField('expectedPackage', e.target.value)} placeholder="e.g. ₹4.0 - 4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Expected Package *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="expectedPackage" value={seekerProfileForm.expectedPackage} onChange={e => updateSeekerProfileField('expectedPackage', e.target.value)} placeholder="e.g. ₹4.0 - 4.5 LPA" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'expectedPackage' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current State *</label>
-                      <select value={seekerProfileForm.state} onChange={e => updateSeekerProfileField('state', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current State *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="state" value={seekerProfileForm.state} onChange={e => updateSeekerProfileField('state', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'state' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select state</option>
                         {LOCATIONS.slice(1).map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current City *</label>
-                      <input value={seekerProfileForm.city} onChange={e => updateSeekerProfileField('city', e.target.value)} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current City *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="city" value={seekerProfileForm.city} onChange={e => updateSeekerProfileField('city', e.target.value)} placeholder="e.g. Hyderabad" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'city' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current HQ / Work Location *</label>
-                      <input value={seekerProfileForm.currentHq} onChange={e => updateSeekerProfileField('currentHq', e.target.value)} placeholder="e.g. Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current HQ / Work Location *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="currentHq" value={seekerProfileForm.currentHq} onChange={e => updateSeekerProfileField('currentHq', e.target.value)} placeholder="e.g. Hyderabad - Ameerpet" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentHq' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Preferred HQ (Optional)</label>
-                      <input value={seekerProfileForm.preferredHq} onChange={e => updateSeekerProfileField('preferredHq', e.target.value)} placeholder="e.g. Hyderabad / Bengaluru" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Preferred HQ (Optional)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="preferredHq" value={seekerProfileForm.preferredHq} onChange={e => updateSeekerProfileField('preferredHq', e.target.value)} placeholder="e.g. Hyderabad / Bengaluru" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'preferredHq' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Notice Period / Joining *</label>
-                      <select value={seekerProfileForm.noticePeriod} onChange={e => updateSeekerProfileField('noticePeriod', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Notice Period / Joining *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="noticePeriod" value={seekerProfileForm.noticePeriod} onChange={e => updateSeekerProfileField('noticePeriod', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'noticePeriod' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select availability</option>
                         {['Immediate', '15 days', '30 days', '45 days', '60 days'].map(np => <option key={np} value={np}>{np}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Two-Wheeler Available? *</label>
-                      <select value={seekerProfileForm.twoWheeler} onChange={e => updateSeekerProfileField('twoWheeler', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Two-Wheeler Available? *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="twoWheeler" value={seekerProfileForm.twoWheeler} onChange={e => updateSeekerProfileField('twoWheeler', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'twoWheeler' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select option</option>
                         {['Yes', 'No', 'Will arrange'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
                       </select>
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Skills (Optional, comma separated)</label>
-                      <input value={seekerProfileForm.skills} onChange={e => updateSeekerProfileField('skills', e.target.value)} placeholder="e.g. RCPA, Doctor Calling, Stockist Handling" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Skills (Optional, comma separated)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="skills" value={seekerProfileForm.skills} onChange={e => updateSeekerProfileField('skills', e.target.value)} placeholder="e.g. RCPA, Doctor Calling, Stockist Handling" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'skills' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                   </div>
 
@@ -4044,14 +5234,14 @@ export default function App() {
               <div className="rounded-2xl border bg-white p-4">
                 <p className="text-sm font-extrabold">Subscription</p>
                 <div className="mt-3 space-y-2">
-                  {TIERS.slice(0, 3).map(t => (
-                    <button key={t.id} onClick={() => handlePlanSelect(t.id)} className={`w-full rounded-xl border p-3 text-left ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
+                  {planCards.map(t => (
+                    <button key={t.id} onClick={() => void handlePlanSelect(t.id)} disabled={!t.enabled && tier !== t.id} className={`w-full rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
                       <div className="flex items-center gap-2">
                         <t.icon className={`h-4 w-4 ${tier === t.id ? 'text-sky-600' : 'text-slate-500'}`} />
                         <span className="text-sm font-bold">{t.name}</span>
                         <span className="ml-auto text-xs font-bold">{t.price}{t.period}</span>
                       </div>
-                      <p className="mt-1 text-xs text-slate-600">{t.limit} unlocks</p>
+                      <p className="mt-1 text-xs text-slate-600">{t.id === 'free' ? `${t.limit} unlocks` : t.enabled ? `${t.limit} unlocks • ${t.validityDays}-day validity` : 'Purchase paused by Admin'}</p>
                     </button>
                   ))}
                 </div>
@@ -4327,27 +5517,54 @@ export default function App() {
           <div className="mx-auto max-w-3xl text-center">
             <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">JOB SEEKER SUBSCRIPTION TIERS</span>
             <h2 className="mt-3 text-[28px] font-extrabold leading-tight">Choose how you unlock contacts. <br className="hidden sm:block" /><span className="text-sky-600">Free works — Pro wins faster.</span></h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies. Apply Now plays one sponsored ad on every plan; Starter/Pro remove browsing and contact-reveal ads.</p>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">Prices, validity and the payment receiving source are set by Admin and shown before payment. Apply Now plays one sponsored ad on every plan; paid plans remove browsing and contact-reveal ads.</p>
           </div>
 
+          {currentUser?.role === 'seeker' && activePlanPurchase && (
+            <div className="mx-auto mt-6 flex max-w-5xl flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"><BadgeCheck className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-extrabold text-emerald-950">{activePlanPurchase.planName} is active</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-emerald-800">Valid till <b>{formatAdminDate(activePlanPurchase.expiresAt)}</b> • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left. At expiry, Free activates automatically and paid benefits stop.</p>
+              </div>
+              <span className="w-fit rounded-full bg-emerald-600 px-3 py-1.5 text-[11px] font-extrabold text-white">AUTO-ACTIVE</span>
+            </div>
+          )}
+          {currentUser?.role === 'seeker' && !activePlanPurchase && latestPlanPurchase && (
+            <div className="mx-auto mt-6 flex max-w-5xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <p className="text-sm leading-relaxed text-amber-950"><b>{latestPlanPurchase.planName} expired on {formatAdminDate(latestPlanPurchase.expiresAt)}.</b> Free is active now. Purchase again to reactivate paid benefits automatically.</p>
+            </div>
+          )}
+
           <div className="mx-auto mt-8 grid max-w-5xl gap-4 md:grid-cols-3">
-            {TIERS.map(t => (
+            {planCards.map(t => (
               <div key={t.id} className={`relative rounded-2xl border p-5 ${t.popular ? 'border-sky-500 bg-sky-50 shadow-lg' : 'bg-slate-50'} ${tier === t.id ? 'ring-2 ring-sky-500' : ''}`}>
                 {t.popular && <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MOST POPULAR</span>}
                 {tier === t.id && <span className="absolute -top-3 right-4 rounded-full bg-emerald-500 px-2.5 py-1 text-xs font-bold text-white">Active</span>}
                 <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${t.id === 'free' ? 'bg-slate-900 text-white' : t.id === 'starter' ? 'bg-sky-600 text-white' : t.id === 'pro' ? 'bg-violet-600 text-white' : 'bg-amber-500 text-white'}`}>
                   <t.icon className="h-5 w-5" />
                 </div>
-                <h3 className="mt-3 text-lg font-extrabold">{t.name} {t.id === 'pro' && 'MR'}</h3>
+                <h3 className="mt-3 text-lg font-extrabold">{t.name}</h3>
                 <p className="mt-1 text-2xl font-extrabold">{t.price} <span className="text-sm font-semibold text-slate-500">{t.period}</span></p>
-                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : 'No reveal ads'}</p>
+                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : `${t.validityDays}-day validity • No reveal ads`}</p>
                 <ul className="mt-4 space-y-2">
-                  {t.features.map(f => (
-                    <li key={f} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
+                  {t.features.map((f, featureIndex) => (
+                    <li key={`${f}-${featureIndex}`} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
                   ))}
                 </ul>
-                <button onClick={() => handlePlanSelect(t.id)} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
-                  {tier === t.id ? '✓ Active' : t.cta}
+                <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
+                  {t.id === 'free'
+                    ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : '✓ Free Active')
+                    : !t.enabled
+                      ? 'Purchase Paused by Admin'
+                      : activePlanPurchase?.plan === 'pro' && t.id === 'starter'
+                        ? 'Available After Pro Expiry'
+                        : tier === t.id
+                          ? `Renew / Extend ${t.name}`
+                          : activePlanPurchase?.plan === 'starter' && t.id === 'pro'
+                            ? `Upgrade to ${t.name} — ${t.price}`
+                            : t.cta}
                 </button>
               </div>
             ))}
@@ -4643,7 +5860,7 @@ export default function App() {
               </div>
               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <button onClick={() => navigate('postjob')} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-sky-600 py-3.5 text-[15px] font-extrabold text-white shadow-lg transition hover:bg-sky-700 active:scale-[0.99]"><Plus className="h-5 w-5" /> Post Vacancy</button>
-                <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-3 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
+                <a href={buildSupportMailto()} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-bold text-white"><Mail className="h-4 w-4" /> Email Support</a>
               </div>
             </div>
 
@@ -4758,7 +5975,7 @@ export default function App() {
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Type *</label><select value={recruiterJob.contactType} onChange={e => setRecruiterJob({ ...recruiterJob, contactType: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Manager">Manager</option><option value="RBM">RBM (Regional Business Manager)</option><option value="ZSM">ZSM (Zonal Sales Manager)</option><option value="HR">HR</option></select></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Name *</label><input value={recruiterJob.contactPerson} onChange={e => setRecruiterJob({ ...recruiterJob, contactPerson: e.target.value })} placeholder="e.g. Ramesh Reddy" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Mobile Number *</label><input value={recruiterJob.phone} onChange={e => setRecruiterJob({ ...recruiterJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email *</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                 </div>
                 <button type="submit" className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Send className="h-4 w-4" /> Submit for Admin Approval</button>
                 <p className="mt-2 text-center text-xs text-slate-500">By submitting, you confirm this is a genuine vacancy. Fake/duplicate posts are rejected by Admin.</p>
@@ -4891,7 +6108,7 @@ export default function App() {
                     <p className="text-sm font-extrabold">Frequently Asked Questions</p>
                     <div className="mt-3 space-y-2">
                       {[
-                        { q: 'Where are my account options?', a: 'Use the Account menu in the top menu bar on desktop, or My Account & Plan in the mobile menu. Job profile, account deletion and logout are kept there so the main pages stay clean.' },
+                        { q: 'Where are my account options?', a: 'Open My Account from the Account menu on desktop or the My Account section in the mobile menu. Tap the pencil icon beside any editable column to update your name, email or Job Seeker profile field. Account deletion and logout are also kept there.' },
                         { q: 'Is the Free plan really free?', a: 'Yes. Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
                         { q: 'How are vacancies verified?', a: 'Recruiter-submitted vacancies are reviewed by Admin M Divakar Reddy before they go LIVE. Still verify the company, role, CTC and interview details before joining, and never pay money for a job.' },
                         { q: 'How can AI Assistant help me?', a: 'Open AI Assistant from the menu for resume wording, interview preparation, RCPA and salary guidance. You can also raise a support ticket there with a proper reason.' },
@@ -4958,15 +6175,15 @@ export default function App() {
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
                   <p className="text-xs text-slate-500">App Founder — PharmaSales Jobs • Admin</p>
                 </div>
-                <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
+                <form className="mt-5 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
-                    <input value={adminId} onChange={e => setAdminId(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
                     <div className="relative">
-                      <input type={showAdminPass ? 'text' : 'password'} value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Enter admin password" autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:border-sky-500" />
+                      <input type={showAdminPass ? 'text' : 'password'} value={adminPass} onChange={e => setAdminPass(e.target.value)} name="admin-login-password" placeholder="Enter admin password" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:border-sky-500" />
                       <button type="button" onClick={() => setShowAdminPass(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-500 hover:bg-slate-100">{showAdminPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                     </div>
                   </div>
@@ -4976,14 +6193,14 @@ export default function App() {
                 <button type="button" onClick={() => { setShowAdminForgot(v => !v); setAdminForgotError('') }} className="mx-auto mt-3 block text-xs font-extrabold text-sky-700 hover:underline">Forgot Admin Password?</button>
                 {showAdminForgot && (
                   <form className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-left" onSubmit={e => { e.preventDefault(); void handleAdminForgotPassword() }}>
-                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter Admin ID <b>divakar</b> and the registered Admin email to set a new password.</p>
+                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email to set a new password.</p>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
-                      <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} placeholder="divakar" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                      <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} name="admin-forgot-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
-                      <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="email" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                      <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} name="admin-registered-email" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password</label>
@@ -4997,22 +6214,6 @@ export default function App() {
                     <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
                   </form>
                 )}
-                {storedAdminPassword() === DEFAULT_ADMIN_PASSWORD && (
-                  <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-slate-700">
-                    <p className="font-extrabold">First-time login (default)</p>
-                    <p>Use your private Admin ID and password.</p>
-                    <p className="text-slate-500">After login, change it in Dashboard → Settings.</p>
-                  </div>
-                )}
-              </div>
-              <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
-                <p className="text-sm font-extrabold">How to login? (3 steps)</p>
-                <ol className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-600">
-                  <li><b>1.</b> Tap the <b>logo or Divakar Reddy’s photo 5 times</b> quickly (secret — no button is shown)</li>
-                  <li><b>2.</b> Enter Admin email <b>akhildivakara@gmail.com</b> (or Admin ID <b>divakar</b>) and your password</li>
-                  <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
-                </ol>
-                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters stay logged in until logout; after logout they login with their mobile number.</p>
               </div>
             </div>
           ) : (
@@ -5056,7 +6257,7 @@ export default function App() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-extrabold tracking-widest text-slate-400">ADMIN MENU</p>
-                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', plans: 'Plans & Payments', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
                 </div>
                 <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
               </div>
@@ -5083,10 +6284,11 @@ export default function App() {
                             { id: 'users' as const, label: 'Users List', sub: 'Job Seekers • Recruiters • Admin', icon: Users, badge: displayedAdminUsers.length + 1, badgeClass: 'bg-sky-100 text-sky-700' },
                             { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Crown, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
                             { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
+                            { id: 'plans' as const, label: 'Plans & Payments', sub: 'Set price, validity, UPI & receiving source', icon: CreditCard, badge: undefined, badgeClass: '' },
                             { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
                             { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
-                            { id: 'settings' as const, label: 'Settings', sub: 'Admin password & account', icon: Settings, badge: undefined, badgeClass: '' },
+                            { id: 'settings' as const, label: 'Settings', sub: 'My Account • Admin ID divakar • Password', icon: Settings, badge: undefined, badgeClass: '' },
                           ].map(item => (
                             <button key={item.id} type="button" onClick={() => { setAdminTab(item.id); setShowAdminMenu(false) }} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.98] ${adminTab === item.id ? 'bg-slate-900 text-white shadow' : 'hover:bg-slate-50'}`}>
                               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${adminTab === item.id ? 'bg-white/15 text-white' : 'bg-sky-50 text-sky-600'}`}><item.icon className="h-5 w-5" /></span>
@@ -5101,7 +6303,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="border-t bg-slate-50 px-3 py-3">
-                        <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
+                        <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, vacancies, tickets, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
                         <button type="button" onClick={handleAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
                       </div>
                     </motion.div>
@@ -5191,7 +6393,7 @@ export default function App() {
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={newJob.qual} onChange={e => setNewJob({ ...newJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person</label><input value={newJob.contactPerson} onChange={e => setNewJob({ ...newJob, contactPerson: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Phone *</label><input value={newJob.phone} onChange={e => setNewJob({ ...newJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={newJob.email} onChange={e => setNewJob({ ...newJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email *</label><input value={newJob.email} onChange={e => setNewJob({ ...newJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Job Description</label><textarea value={newJob.desc} onChange={e => setNewJob({ ...newJob, desc: e.target.value })} rows={3} placeholder="Write about the role, HQ coverage, requirements..." className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2"><input type="checkbox" checked={newJob.urgent} onChange={e => setNewJob({ ...newJob, urgent: e.target.checked })} className="h-4 w-4" /> Mark as Urgent Hiring</label>
                   </div>
@@ -5251,7 +6453,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remoteAdminUsers ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">All three roles in one place — <b>Job Seekers</b>, <b>Recruiters</b> and <b>Admin</b>. Accounts are created and managed in Supabase ({isSupabaseConfigured ? 'connected' : 'connect Supabase to sync every device'}).</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">All three roles in one place — <b>Job Seekers</b>, <b>Recruiters</b> and <b>Admin</b>. Accounts are created and managed in Supabase ({isSupabaseConfigured ? 'connected' : 'connect Supabase to sync every device'}). Use <b>View Account</b> to open a user’s account/profile, current plan and purchases. User passwords are never shown and there is no master-password login.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Accounts</p><p className="mt-0.5 text-2xl font-extrabold">{displayedAdminUsers.length + 1}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Job Seekers</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{adminSeekerCount}</p></div>
@@ -5278,6 +6480,7 @@ export default function App() {
                           <p className="text-xs text-sky-100">Admin ID: divakar • App Founder — PharmaSales Jobs</p>
                         </div>
                         <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-extrabold">Full Access</span>
+                        <button type="button" onClick={() => setAdminTab('settings')} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow-sm"><Eye className="h-3.5 w-3.5" /> View Account</button>
                       </div>
                     )}
                     {filteredAdminUsers.map(account => (
@@ -5288,9 +6491,10 @@ export default function App() {
                           <p className="truncate text-xs text-slate-600">+91 {account.mobile} • {account.email}</p>
                           <p className="text-[11px] text-slate-400">Joined: {formatAdminDate(account.createdAt)}</p>
                         </div>
-                        <div className="flex shrink-0 flex-wrap gap-1.5">
+                        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                           {account.role === 'seeker' && <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(account.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(account.profile) ? 'Profile Complete' : `Profile ${seekerProfileProgress(account.profile)}%`}</span>}
                           <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.hasPassword || account.passwordHash) ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>{(account.hasPassword || account.passwordHash) ? 'Password Set' : 'No Password'}</span>
+                          <button type="button" onClick={() => setAdminAccountDetail(account)} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-slate-800"><Eye className="h-3.5 w-3.5" /> View Account</button>
                         </div>
                       </div>
                     ))}
@@ -5312,12 +6516,12 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every Starter and Pro plan purchase is recorded here with its 30-day validity.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every paid plan purchase is recorded with the Admin-set price and validity used at checkout. Plans turn EXPIRED automatically at their expiry time.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Purchases</p><p className="mt-0.5 text-2xl font-extrabold">{displayedPurchases.length}</p></div>
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Active Plans</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">{displayedPurchases.filter(isPurchaseActive).length}</p></div>
-                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Starter ₹99</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{displayedPurchases.filter(p => p.plan === 'starter').length}</p></div>
-                    <div className="rounded-2xl bg-violet-50 p-3.5"><p className="text-[11px] font-bold text-violet-700">Pro ₹499</p><p className="mt-0.5 text-2xl font-extrabold text-violet-700">{displayedPurchases.filter(p => p.plan === 'pro').length}</p></div>
+                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">{commerceSettings.plans.starter.name} • Current {formatINR(commerceSettings.plans.starter.price)}</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{displayedPurchases.filter(p => p.plan === 'starter').length}</p></div>
+                    <div className="rounded-2xl bg-violet-50 p-3.5"><p className="text-[11px] font-bold text-violet-700">{commerceSettings.plans.pro.name} • Current {formatINR(commerceSettings.plans.pro.price)}</p><p className="mt-0.5 text-2xl font-extrabold text-violet-700">{displayedPurchases.filter(p => p.plan === 'pro').length}</p></div>
                   </div>
                   <div className="mt-3 space-y-2">
                     {displayedPurchases.map(purchase => (
@@ -5381,6 +6585,146 @@ export default function App() {
                         <p className="text-xs text-slate-500">Starter and Pro payments will be listed here with transaction IDs.</p>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'plans' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-2 text-base font-extrabold"><CreditCard className="h-5 w-5 text-sky-600" /> Job Seeker Plans &amp; Payment Receiving</p>
+                    <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live Settings' : 'This Device'}</span>
+                    {isSupabaseConfigured && <button type="button" onClick={() => void refreshCommerceSettings().then(settings => { setCommerceDraft(settings); setCommerceSettingsError(''); setToast('Latest live plan and payment settings loaded.') }).catch(() => setCommerceSettingsError('Unable to refresh live settings. Your current editor values were kept.'))} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Refresh</button>}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Set the Job Seeker plan price, validity, daily contact limit and benefits, plus the payment source shown during purchase. After the Job Seeker confirms payment, the plan activates automatically. At the exact expiry time, Free activates automatically and paid benefits stop.</p>
+                  {commerceSettings.updatedAt && <p className="mt-2 text-[11px] font-bold text-slate-400">Last saved: {formatAdminDate(commerceSettings.updatedAt)}</p>}
+
+                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    {(['starter', 'pro'] as PaidPlanId[]).map(planId => {
+                      const plan = commerceDraft.plans[planId]
+                      return (
+                        <div key={planId} className={`rounded-3xl border p-4 ${planId === 'starter' ? 'border-sky-200 bg-sky-50/50' : 'border-violet-200 bg-violet-50/50'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white ${planId === 'starter' ? 'bg-sky-600' : 'bg-violet-600'}`}>{planId === 'starter' ? <Zap className="h-5 w-5" /> : <Crown className="h-5 w-5" />}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-extrabold">{planId === 'starter' ? 'Starter Plan Settings' : 'Pro Plan Settings'}</p>
+                              <p className="text-[11px] font-semibold text-slate-500">Job Seekers see these details before paying.</p>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${plan.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>{plan.enabled ? 'PURCHASE ON' : 'PURCHASE OFF'}</span>
+                          </div>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Plan Name</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input value={plan.name} onChange={e => updateCommercePlanDraft(planId, { name: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder={planId === 'starter' ? 'Starter' : 'Pro'} />
+                            </div>
+                            <div>
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Price (₹)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="100000" value={plan.price} onChange={e => updateCommercePlanDraft(planId, { price: Number(e.target.value) })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" />
+                            </div>
+                            <div>
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Validity (days)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="3650" value={plan.validityDays} onChange={e => updateCommercePlanDraft(planId, { validityDays: Number(e.target.value) })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Direct Contacts Per Day</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="10000" value={plan.unlimited ? '' : plan.dailyLimit} disabled={plan.unlimited} onChange={e => updateCommercePlanDraft(planId, { dailyLimit: Number(e.target.value) })} placeholder={plan.unlimited ? 'Unlimited' : 'Example: 15'} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-100 disabled:text-slate-400" />
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.enabled} onChange={e => updateCommercePlanDraft(planId, { enabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Purchase ON</label>
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.unlimited} onChange={e => updateCommercePlanDraft(planId, { unlimited: e.target.checked })} className="h-4 w-4 accent-sky-600" /> Unlimited contacts</label>
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.popular} onChange={e => updateCommercePlanDraft(planId, { popular: e.target.checked })} className="h-4 w-4 accent-violet-600" /> Most Popular</label>
+                          </div>
+                          <div className="mt-3">
+                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Plan Benefits (one benefit per line)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                            <textarea value={plan.features.join('\n')} onChange={e => updateCommercePlanDraft(planId, { features: e.target.value.split('\n') })} rows={6} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-sky-500" placeholder={'No banner or native ads\nUnmasked phone + email'} />
+                            <p className="mt-1 text-[11px] text-slate-500">The contact limit above is added automatically as the first benefit.</p>
+                          </div>
+                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-[11px] font-bold text-slate-600">Preview: {formatINR(plan.price)} / {plan.validityDays || 0} days • {plan.unlimited ? 'Unlimited' : `${plan.dailyLimit || 0}/day`} direct contacts</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50/50 p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Wallet className="h-5 w-5" /></span>
+                      <div>
+                        <p className="text-sm font-extrabold">Payment Receiving Source</p>
+                        <p className="text-[11px] font-semibold text-slate-500">These details are shown to the Job Seeker at checkout.</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Receiver / Payee Name</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                        <input value={commerceDraft.payment.receiverName} onChange={e => updateCommercePaymentDraft({ receiverName: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="M Divakar Reddy" />
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>UPI ID</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                        <input value={commerceDraft.payment.upiId} onChange={e => updateCommercePaymentDraft({ upiId: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="yourname@upi" />
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.upiEnabled} onChange={e => updateCommercePaymentDraft({ upiEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> UPI Payment ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.paymentLinkEnabled} onChange={e => updateCommercePaymentDraft({ paymentLinkEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Payment Link ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.bankEnabled} onChange={e => updateCommercePaymentDraft({ bankEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Bank Transfer ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.demoCheckoutEnabled} onChange={e => updateCommercePaymentDraft({ demoCheckoutEnabled: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Demo Checkout ON</label>
+                    </div>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+                      <div className="rounded-2xl border bg-white p-3">
+                        <p className="flex items-center gap-2 text-xs font-extrabold text-slate-700"><QrCode className="h-4 w-4 text-emerald-600" /> UPI QR Image</p>
+                        {commerceDraft.payment.qrImageUrl ? (
+                          <img src={commerceDraft.payment.qrImageUrl} alt="Admin UPI payment QR" className="mx-auto mt-3 max-h-56 w-auto rounded-xl border object-contain" />
+                        ) : (
+                          <div className="mt-3 rounded-xl bg-slate-50 px-4 py-8 text-center text-xs font-semibold text-slate-400">No QR image added</div>
+                        )}
+                        <input id="admin-payment-qr-input" type="file" accept="image/*" className="hidden" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void handlePaymentQrFile(file) }} />
+                        <div className="mt-3 flex gap-2">
+                          <label htmlFor="admin-payment-qr-input" className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-slate-900 px-3 py-2.5 text-xs font-bold text-white ${commerceQrUploading ? 'pointer-events-none opacity-60' : ''}`}><Upload className="h-3.5 w-3.5" /> {commerceQrUploading ? 'Adding QR…' : 'Upload QR'}</label>
+                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={() => updateCommercePaymentDraft({ qrImageUrl: '' })} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
+                        </div>
+                        {!commerceDraft.payment.qrImageUrl.startsWith('data:') && (
+                          <input value={commerceDraft.payment.qrImageUrl} onChange={e => updateCommercePaymentDraft({ qrImageUrl: e.target.value.trim() })} className="mt-3 w-full rounded-xl border bg-white px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500" placeholder="Or paste QR image URL (optional)" />
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Payment Link</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <input value={commerceDraft.payment.paymentLink} onChange={e => updateCommercePaymentDraft({ paymentLink: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="https://…" />
+                        </div>
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Bank Receiving Details</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <textarea value={commerceDraft.payment.bankDetails} onChange={e => updateCommercePaymentDraft({ bankDetails: e.target.value })} rows={4} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-emerald-500" placeholder={'Account Name:\nAccount Number:\nIFSC:\nBank / Branch:'} />
+                        </div>
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Instructions Shown to Job Seeker</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <textarea value={commerceDraft.payment.instructions} onChange={e => updateCommercePaymentDraft({ instructions: e.target.value })} rows={4} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-emerald-500" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p><b>Manual UPI/bank payments:</b> the plan activates after the Job Seeker submits the payment/UTR reference. Always cross-check that reference in your UPI/bank app from the Payment List. Automatic bank verification/Play Billing can replace this manual confirmation during production billing setup.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-3xl border bg-slate-50 p-4">
+                    <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                      <div>
+                        {supabase && (
+                          <div className="max-w-md">
+                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Current Admin Password (required for secure Supabase save)</span><KeyRound className="h-3.5 w-3.5 text-sky-500" /></label>
+                            <input type="password" value={commerceAdminPassword} onChange={e => setCommerceAdminPassword(e.target.value)} autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder="Enter current Admin password" />
+                          </div>
+                        )}
+                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Saving updates the live plan prices, validity and payment source for Job Seekers. Existing purchases keep the price and expiry recorded at their checkout time.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') }} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
+                        <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : 'Save Plans & Payments'}</button>
+                      </div>
+                    </div>
+                    {commerceSettingsError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {commerceSettingsError}</p>}
                   </div>
                 </div>
               )}
@@ -5536,25 +6880,32 @@ export default function App() {
                   <form className="rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handleChangePassword() }}>
                     <p className="flex items-center gap-2 text-base font-extrabold"><KeyRound className="h-5 w-5 text-sky-600" /> Change Admin Password</p>
                     <div className="mt-3 space-y-3">
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Current Password</label><input type="password" value={passForm.current} onChange={e => setPassForm({ ...passForm, current: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">New Password (min 6 characters)</label><input type="password" value={passForm.next} onChange={e => setPassForm({ ...passForm, next: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label><input type="password" value={passForm.confirm} onChange={e => setPassForm({ ...passForm, confirm: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <button type="submit" className="w-full rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Update Password</button>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Password</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input id="admin-current-password" type="password" value={passForm.current} onChange={e => setPassForm({ ...passForm, current: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>New Password (min 6 characters)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input type="password" value={passForm.next} onChange={e => setPassForm({ ...passForm, next: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Confirm New Password</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input type="password" value={passForm.confirm} onChange={e => setPassForm({ ...passForm, confirm: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Pencil className="h-4 w-4" /> Update Password</button>
                     </div>
                   </form>
                   <div className="rounded-2xl border bg-white p-5">
-                    <p className="text-base font-extrabold">Admin Account</p>
+                    <p className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> My Account — Admin</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">Admin ID <b className="text-slate-800">divakar</b> is correct. Login also accepts <b className="text-slate-800">admin</b> or the registered Admin email.</p>
                     <div className="mt-3 space-y-2 text-sm">
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><b>M Divakar Reddy</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><b>divakar</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><b>App Founder &amp; Admin</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></p>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><span className="flex items-center gap-2"><b>M Divakar Reddy</b><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><span className="flex items-center gap-2"><b>divakar</b><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">Correct</span><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="shrink-0 text-slate-500">Registered Email</span><span className="flex min-w-0 items-center gap-2"><b className="truncate">{ADMIN_REGISTERED_EMAIL}</b><LockKeyhole className="h-3.5 w-3.5 shrink-0 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Password</span><span className="flex items-center gap-2"><b>••••••••</b>{renderPencilEditButton('Admin Password', () => document.getElementById('admin-current-password')?.focus())}</span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><span className="flex items-center gap-2"><b>App Founder &amp; Admin</b><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></div>
+                      <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs leading-relaxed text-sky-950"><b>All user accounts:</b> open <b>Users List → View Account</b> to review any Job Seeker/Recruiter account, profile, plan and purchases. User passwords are never shown, and no universal/master password is enabled.</div>
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-xs leading-relaxed text-emerald-950"><b>Current paid plans:</b> {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days • {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days. Receiver: {commerceSettings.payment.receiverName}.</div>
                     </div>
-                    <div className="mt-4 flex gap-2">
-                      <button onClick={handleClearAllVacancies} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={handleAdminLogout} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
+                      <button onClick={() => setAdminTab('plans')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><CreditCard className="h-3.5 w-3.5" /> Plans & Payments</button>
+                      <button onClick={handleClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
-                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly.</p>
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
                 </div>
               )}
@@ -5728,7 +7079,7 @@ export default function App() {
                   </button>
                 )}
                 <p className="mt-2 text-center text-xs text-slate-500">Reward granted only after watching full 15 sec</p>
-                <button onClick={() => closeSponsoredReveal(true)} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip reveal ads — Starter ₹99/mo (Apply ad still plays once)</button>
+                <button onClick={() => closeSponsoredReveal(true)} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip reveal ads — {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days (Apply ad still plays once)</button>
               </div>
             </motion.div>
           </motion.div>
@@ -5776,6 +7127,186 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* ADMIN VIEW ACCOUNT — safe account/profile/plan view; never a user-password bypass */}
+      <AnimatePresence>
+        {isAdmin && adminAccountDetail && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setAdminAccountDetail(null)}>
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[860px] overflow-y-auto rounded-3xl bg-slate-50 shadow-2xl">
+              <div className="sticky top-0 z-10 bg-gradient-to-r from-sky-600 to-indigo-600 p-5 text-white">
+                <div className="flex items-start gap-4">
+                  <AccountAvatar name={adminAccountDetail.name} photo={adminAccountDetail.role === 'seeker' ? adminAccountDetail.profile?.profilePhoto : undefined} imgClassName="h-16 w-16 border-2 border-white shadow" fallbackClassName="flex h-16 w-16 bg-white text-xl text-sky-700 shadow" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-extrabold tracking-widest text-sky-100">ADMIN • VIEW ACCOUNT</p>
+                    <h3 className="mt-1 truncate text-2xl font-extrabold leading-tight">{adminAccountDetail.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-sky-50">{adminAccountDetail.role === 'seeker' ? 'Job Seeker Account' : 'Recruiter Account'} • +91 {adminAccountDetail.mobile}</p>
+                    <p className="truncate text-xs text-sky-100">{adminAccountDetail.email}</p>
+                  </div>
+                  <button type="button" onClick={() => setAdminAccountDetail(null)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 transition hover:bg-white/30" aria-label="Close account details"><X className="h-5 w-5" /></button>
+                </div>
+              </div>
+
+              <div className="p-5">
+                <div className="flex items-start gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-950">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
+                  <p><b>Safe Admin view:</b> you can review this account after your normal Admin login. The user’s password is protected and is never shown. This view does not log you in as the user and does not use a universal/master password.</p>
+                </div>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> Account Details</h4>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {[
+                        ['Full Name', adminAccountDetail.name],
+                        ['Account Type', adminAccountDetail.role === 'seeker' ? 'Job Seeker' : 'Recruiter'],
+                        ['Mobile Number', `+91 ${adminAccountDetail.mobile}`],
+                        ['Email ID', adminAccountDetail.email],
+                        ['Joined', formatAdminDate(adminAccountDetail.createdAt)],
+                        ['Password', (adminAccountDetail.hasPassword || adminAccountDetail.passwordHash) ? 'Password set • Protected' : 'No password set'],
+                        ...(adminAccountDetail.role === 'seeker' ? [['Job Profile', isSeekerProfileComplete(adminAccountDetail.profile) ? 'Complete' : `${seekerProfileProgress(adminAccountDetail.profile)}% complete`]] as [string, string][] : []),
+                        ...(adminAccountDeletionRequest ? [['Deletion Request', `${adminAccountDeletionRequest.status === 'pending' ? 'Pending' : 'Rejected'} • ${adminAccountDeletionRequest.reasonCategory}`]] as [string, string][] : []),
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-2xl bg-slate-50 px-3.5 py-3">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">{label.toUpperCase()}</p>
+                          <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <a href={`tel:+91${adminAccountDetail.mobile}`} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3.5 py-2 text-xs font-extrabold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
+                      <a href={`https://wa.me/91${adminAccountDetail.mobile}?text=${encodeURIComponent(`Hi ${adminAccountDetail.name}, I am M Divakar Reddy from PharmaSales Jobs regarding your account.`)}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-[#25D366] px-3.5 py-2 text-xs font-extrabold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                      <a href={`mailto:${adminAccountDetail.email}?subject=${encodeURIComponent('PharmaSales Jobs account support')}`} className="flex items-center gap-1.5 rounded-full border bg-white px-3.5 py-2 text-xs font-extrabold"><Mail className="h-3.5 w-3.5" /> Email</a>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><Crown className="h-5 w-5 text-violet-600" /> Current Plan</h4>
+                    {adminAccountDetail.role === 'recruiter' ? (
+                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                        <p className="text-sm font-extrabold">No Recruiter plan needed</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-600">Recruiters register free, post vacancies for Admin approval and browse anonymous candidate profiles.</p>
+                      </div>
+                    ) : adminAccountActivePurchase ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                        <div className="flex items-center gap-2">
+                          <p className="flex-1 text-base font-extrabold text-emerald-950">{adminAccountActivePurchase.planName} Active</p>
+                          <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-extrabold text-white">ACTIVE</span>
+                        </div>
+                        <div className="mt-3 space-y-1.5 text-xs leading-relaxed text-emerald-900">
+                          <p><b>Amount:</b> {formatINR(adminAccountActivePurchase.amount)} • {adminAccountActivePurchase.method}</p>
+                          <p><b>Purchased:</b> {formatAdminDate(adminAccountActivePurchase.purchasedAt)}</p>
+                          <p><b>Valid till:</b> {formatAdminDate(adminAccountActivePurchase.expiresAt)} • {getPlanDaysLeft(adminAccountActivePurchase.expiresAt, planClock)} day(s) left</p>
+                          <p className="break-all"><b>Transaction:</b> {adminAccountActivePurchase.transactionId}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                        <p className="text-sm font-extrabold">Free Active</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-600">{adminAccountPurchases[0] ? `Last paid plan ${adminAccountPurchases[0].planName} expired on ${formatAdminDate(adminAccountPurchases[0].expiresAt)}.` : 'No Starter/Pro purchase recorded for this Job Seeker.'}</p>
+                      </div>
+                    )}
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountPurchases.length}</p><p className="text-[10px] font-bold text-slate-500">Purchases</p></div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountSupportTickets.length}</p><p className="text-[10px] font-bold text-slate-500">Tickets</p></div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountLiveJobs.length + adminAccountPendingJobs.length}</p><p className="text-[10px] font-bold text-slate-500">Vacancies</p></div>
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('purchases') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Crown className="h-4 w-4" /> Open Purchase List</button>
+                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('support') }} className="flex w-full items-center justify-center gap-2 rounded-full border bg-white py-2.5 text-xs font-extrabold"><MessageCircle className="h-4 w-4 text-sky-600" /> Open Support Tickets</button>
+                      {adminAccountPendingJobs.length > 0 && <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('approvals') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-2.5 text-xs font-extrabold text-white"><Clock3 className="h-4 w-4" /> Review Pending Vacancies ({adminAccountPendingJobs.length})</button>}
+                    </div>
+                  </div>
+                </div>
+
+                {adminAccountDetail.role === 'seeker' && (
+                  <div className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Job Seeker Profile</h4>
+                      <span className={`ml-auto rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(adminAccountDetail.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(adminAccountDetail.profile) ? 'PROFILE COMPLETE' : `PROFILE ${seekerProfileProgress(adminAccountDetail.profile)}%`}</span>
+                    </div>
+                    {adminAccountDetail.profile ? (
+                      <>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {([
+                            ['Fresher / Experienced', adminAccountDetail.profile.experienceType === 'fresher' ? 'Fresher' : 'Experienced'],
+                            ['Qualification', adminAccountDetail.profile.qualification],
+                            ['Role Looking For', adminAccountDetail.profile.desiredRole ? getRoleLabel(adminAccountDetail.profile.desiredRole) : ''],
+                            ...(adminAccountDetail.profile.experienceType === 'fresher'
+                              ? [['Passing Year', adminAccountDetail.profile.passingYear]] as [string, string][]
+                              : [
+                                  ['Total Experience', adminAccountDetail.profile.totalExperience],
+                                  ['Current Company', adminAccountDetail.profile.currentCompany],
+                                  ['Current Role', adminAccountDetail.profile.currentRole ? getRoleLabel(adminAccountDetail.profile.currentRole) : ''],
+                                  ['Current Package', adminAccountDetail.profile.currentPackage],
+                                ] as [string, string][]),
+                            ['Expected Package', adminAccountDetail.profile.expectedPackage],
+                            ['Current State', adminAccountDetail.profile.state],
+                            ['Current City', adminAccountDetail.profile.city],
+                            ['Current HQ', adminAccountDetail.profile.currentHq],
+                            ['Preferred HQ', adminAccountDetail.profile.preferredHq],
+                            ['Notice Period / Joining', adminAccountDetail.profile.noticePeriod],
+                            ['Two-Wheeler', adminAccountDetail.profile.twoWheeler],
+                            ['Skills', adminAccountDetail.profile.skills],
+                          ] as [string, string][]).map(([label, value]) => (
+                            <div key={label} className="rounded-2xl bg-slate-50 px-3.5 py-3">
+                              <p className="text-[10px] font-extrabold tracking-widest text-slate-400">{label.toUpperCase()}</p>
+                              <p className="mt-1 break-words text-sm font-bold leading-snug text-slate-900">{value?.trim() ? value : 'Not filled'}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-2xl bg-sky-50 px-3.5 py-3 text-xs leading-relaxed text-sky-950"><b>Profile Photo:</b> {adminAccountDetail.profile.profilePhoto ? 'Added' : 'Not added'}</div>
+                          <div className="rounded-2xl bg-sky-50 px-3.5 py-3 text-xs leading-relaxed text-sky-950"><b>Resume:</b> {adminAccountDetail.profile.resumeName ? `${adminAccountDetail.profile.resumeName}${adminAccountDetail.profile.resumeSize ? ` • ${formatFileSize(adminAccountDetail.profile.resumeSize)}` : ''}` : 'Not uploaded'}<span className="block text-sky-700">The resume file itself remains private on the Job Seeker’s device.</span></div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="mt-4 rounded-2xl bg-slate-50 p-5 text-center text-sm font-semibold text-slate-500">This Job Seeker has not filled the job profile yet.</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><IndianRupee className="h-5 w-5 text-emerald-600" /> Recent Purchases</h4>
+                    <div className="mt-3 space-y-2">
+                      {adminAccountPurchases.slice(0, 5).map(purchase => (
+                        <div key={purchase.id} className="flex items-start gap-3 rounded-2xl border px-3.5 py-3">
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white ${purchase.plan === 'pro' ? 'bg-violet-600' : 'bg-sky-600'}`}><Crown className="h-4 w-4" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-extrabold">{purchase.planName} • {formatINR(purchase.amount)}</p>
+                            <p className="break-all font-mono text-[11px] text-slate-500">{purchase.transactionId}</p>
+                            <p className="text-[11px] text-slate-400">{purchase.method} • {formatAdminDate(purchase.purchasedAt)} → {formatAdminDate(purchase.expiresAt)}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${purchase.status !== 'paid' ? 'bg-red-50 text-red-600' : isPurchaseActive(purchase) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{purchase.status !== 'paid' ? purchase.status.toUpperCase() : isPurchaseActive(purchase) ? 'ACTIVE' : 'EXPIRED'}</span>
+                        </div>
+                      ))}
+                      {adminAccountPurchases.length === 0 && <p className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">No purchases for this account.</p>}
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Vacancies Submitted</h4>
+                    <div className="mt-3 space-y-2">
+                      {[...adminAccountPendingJobs.map(job => ({ job, status: 'PENDING APPROVAL' })), ...adminAccountLiveJobs.map(job => ({ job, status: 'LIVE' }))].slice(0, 6).map(({ job, status }) => (
+                        <div key={`${status}-${job.id}`} className="flex items-start gap-3 rounded-2xl border px-3.5 py-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-extrabold">{job.company} • {job.title}</p>
+                            <p className="truncate text-[11px] text-slate-500">{job.hq} • {job.type} • {job.ctc}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${status === 'LIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{status}</span>
+                        </div>
+                      ))}
+                      {adminAccountLiveJobs.length + adminAccountPendingJobs.length === 0 && <p className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">No vacancies submitted by this account.</p>}
+                    </div>
+                    <div className="mt-4 rounded-2xl bg-slate-50 px-3.5 py-3 text-xs leading-relaxed text-slate-600"><b>Support:</b> {adminAccountSupportTickets.filter(ticket => ticket.status === 'open' || ticket.status === 'in-progress').length} open/in-progress ticket(s), {adminAccountSupportTickets.length} total.</div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* PRICING MODAL */}
       <AnimatePresence>
         {showPricing && !shouldHideJobSeekerExperience && (
@@ -5784,25 +7315,130 @@ export default function App() {
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
                   <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Jobs</p>
-                  <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
+                  <p className="text-xs text-slate-500">Admin-set prices and validity. The payment receiving source is shown at checkout; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
               </div>
               <div className="grid gap-4 p-6 md:grid-cols-3">
-                {TIERS.map(t => (
+                {planCards.map(t => (
                   <div key={t.id} className={`rounded-2xl border p-4 ${tier === t.id ? 'border-sky-600 bg-sky-50' : 'bg-slate-50'}`}>
-                    <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p></div>
+                    <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p>{t.popular && <span className="ml-auto rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-extrabold text-white">POPULAR</span>}</div>
                     <p className="mt-1 text-xl font-extrabold">{t.price}<span className="text-xs font-semibold text-slate-500">{t.period}</span></p>
+                    <p className="mt-0.5 text-[11px] font-bold text-slate-500">{t.limit} unlocks{t.id !== 'free' ? ` • ${t.validityDays}-day validity` : ''}</p>
                     <ul className="mt-3 space-y-1.5">
-                      {t.features.map(f => <li key={f} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
+                      {t.features.map((f, featureIndex) => <li key={`${f}-${featureIndex}`} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
                     </ul>
-                    <button onClick={() => { handlePlanSelect(t.id); setShowPricing(false) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
+                    <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{t.id === 'free' ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : 'Free Active') : !t.enabled ? 'Purchase Paused' : activePlanPurchase?.plan === 'pro' && t.id === 'starter' ? 'After Pro Expiry' : tier === t.id ? `Renew ${t.name}` : `Buy ${t.name}`}</button>
                   </div>
                 ))}
               </div>
               <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                 <p><b>Free plan:</b> 3 daily full-contact unlocks open 7 extra jobs. Extra jobs use separate sponsored ads for company, manager name and contact number.</p>
-                <p className="mt-1"><b>Starter & Pro:</b> Direct contact reveals and no browsing/native ads. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
+                <p className="mt-1"><b>Paid plans:</b> Direct contact reveals and no browsing/native ads until the shown validity ends. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PLAN CHECKOUT — Admin-set payment source; activation is automatic after confirmation */}
+      <AnimatePresence>
+        {checkoutPlan && currentUser?.role === 'seeker' && hasAuthenticated && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 p-4" onClick={closePlanCheckout}>
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-3xl bg-white shadow-2xl">
+              <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-white p-4">
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white ${checkoutPlan === 'starter' ? 'bg-sky-600' : 'bg-violet-600'}`}>{checkoutPlan === 'starter' ? <Zap className="h-5 w-5" /> : <Crown className="h-5 w-5" />}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-base font-extrabold">Buy {commerceSettings.plans[checkoutPlan].name} Plan</p>
+                  <p className="text-[11px] font-semibold text-slate-500">Payment source set by Admin • Plan activates automatically after confirmation</p>
+                </div>
+                <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="rounded-full border p-2 disabled:opacity-50" aria-label="Close checkout"><X className="h-5 w-5" /></button>
+              </div>
+
+              <div className="p-5">
+                <div className={`rounded-3xl border p-4 ${checkoutPlan === 'starter' ? 'border-sky-200 bg-sky-50' : 'border-violet-200 bg-violet-50'}`}>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="min-w-[180px] flex-1">
+                      <p className="text-[10px] font-extrabold tracking-widest text-slate-500">PLAN AMOUNT</p>
+                      <p className="mt-1 text-3xl font-extrabold">{formatINR(commerceSettings.plans[checkoutPlan].price)} <span className="text-sm font-semibold text-slate-500">/ {commerceSettings.plans[checkoutPlan].validityDays} days</span></p>
+                      <p className="mt-1 text-xs font-bold text-slate-600">{commerceSettings.plans[checkoutPlan].unlimited ? 'Unlimited' : `${getPaidPlanLimit(commerceSettings.plans[checkoutPlan])}/day`} direct contact reveals</p>
+                    </div>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold text-emerald-700 shadow-sm">AUTO-ACTIVATES</span>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">JOB SEEKER</span><b>{currentUser.name}</b><span className="block truncate text-slate-500">+91 {currentUser.mobile}</span></p>
+                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">NEW EXPIRY AFTER PAYMENT</span><b>{formatAdminDate(getPlanCheckoutExpiry(checkoutPlan, commerceSettings.plans[checkoutPlan].validityDays))}</b><span className="block text-slate-500">{activePlanPurchase?.plan === checkoutPlan ? 'Renewal extends your current validity.' : 'Free starts automatically after this time.'}</span></p>
+                  </div>
+                </div>
+
+                <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">SELECT PAYMENT METHOD</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {getAvailableCheckoutMethods(commerceSettings).map(method => (
+                    <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-extrabold transition disabled:opacity-50 ${checkoutMethod === method.id ? 'bg-slate-900 text-white shadow' : 'border bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      {method.id === 'upi' ? <QrCode className="h-3.5 w-3.5" /> : method.id === 'bank' ? <Landmark className="h-3.5 w-3.5" /> : <CreditCard className="h-3.5 w-3.5" />} {method.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50/60 p-4">
+                  <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-950"><Wallet className="h-4 w-4 text-emerald-700" /> Pay To — Admin Receiving Source</p>
+                  <p className="mt-2 text-sm"><span className="text-slate-500">Receiver:</span> <b>{commerceSettings.payment.receiverName}</b></p>
+                  <p className="text-sm"><span className="text-slate-500">Exact amount:</span> <b>{formatINR(commerceSettings.plans[checkoutPlan].price)}</b></p>
+
+                  {checkoutMethod === 'upi' && (
+                    <div className="mt-3">
+                      <div className="flex flex-col gap-2 rounded-2xl bg-white p-3 sm:flex-row sm:items-center">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">UPI ID</p>
+                          <p className="truncate font-mono text-sm font-extrabold">{commerceSettings.payment.upiId}</p>
+                        </div>
+                        <button type="button" onClick={() => void (async () => { try { await navigator.clipboard.writeText(commerceSettings.payment.upiId); setToast('Admin UPI ID copied.') } catch { setCheckoutError('Unable to copy automatically. Please copy the UPI ID shown above.') } })()} className="flex items-center justify-center gap-1.5 rounded-full border px-3 py-2 text-xs font-bold"><Copy className="h-3.5 w-3.5" /> Copy UPI ID</button>
+                      </div>
+                      {commerceSettings.payment.qrImageUrl && <img src={commerceSettings.payment.qrImageUrl} alt="Admin UPI payment QR" className="mx-auto mt-3 max-h-64 w-auto rounded-2xl border bg-white object-contain p-2" />}
+                      <a href={`upi://pay?pa=${encodeURIComponent(commerceSettings.payment.upiId)}&pn=${encodeURIComponent(commerceSettings.payment.receiverName)}&am=${commerceSettings.plans[checkoutPlan].price}&cu=INR&tn=${encodeURIComponent(`PharmaSales Jobs ${commerceSettings.plans[checkoutPlan].name} plan for ${currentUser.mobile}`)}`} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-extrabold text-white shadow"><Smartphone className="h-4 w-4" /> Pay via UPI App</a>
+                      <p className="mt-2 text-center text-[11px] text-slate-500">If the UPI app does not open on desktop, scan the QR or pay manually using the UPI ID.</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'payment-link' && (
+                    <div className="mt-3">
+                      <a href={commerceSettings.payment.paymentLink} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-extrabold text-white shadow"><CreditCard className="h-4 w-4" /> Open Admin Payment Link</a>
+                      <p className="mt-2 break-all rounded-xl bg-white px-3 py-2 text-[11px] font-semibold text-slate-500">{commerceSettings.payment.paymentLink}</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'bank' && (
+                    <div className="mt-3 rounded-2xl bg-white p-3">
+                      <p className="flex items-center gap-2 text-[10px] font-extrabold tracking-widest text-slate-400"><Landmark className="h-4 w-4" /> BANK RECEIVING DETAILS</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{commerceSettings.payment.bankDetails}</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'demo' && (
+                    <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p><b>Demo checkout:</b> no real money moves in this preview. Use it only to test automatic plan activation and expiry. Connect Play Billing or a verified payment gateway for production purchases.</p>
+                    </div>
+                  )}
+
+                  {commerceSettings.payment.instructions.trim() && checkoutMethod !== 'demo' && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
+                </div>
+
+                {checkoutMethod !== 'demo' && (
+                  <div className="mt-4">
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Payment / UTR / Transaction Reference *</label>
+                    <input value={checkoutReference} onChange={e => { setCheckoutReference(e.target.value); setCheckoutError('') }} disabled={checkoutProcessing} className="w-full rounded-xl border bg-white px-3 py-3 font-mono text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-50" placeholder="Enter reference shown after successful payment" autoComplete="off" />
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Use a new reference for every purchase/renewal. Admin can cross-check it in the Payment List.</p>
+                  </div>
+                )}
+
+                {checkoutError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {checkoutError}</p>}
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                  <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
+                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : checkoutMethod === 'demo' ? 'Complete Demo Payment — Activate Plan' : 'Payment Done — Activate Plan'}</button>
+                </div>
+                <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">After activation, this purchase appears in Admin Purchase &amp; Payment Lists. Paid benefits stop automatically at expiry.</p>
               </div>
             </motion.div>
           </motion.div>
@@ -6051,13 +7687,13 @@ export default function App() {
               <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
             </button>
           )}
-          {currentUser?.role === 'seeker' && hasAuthenticated ? (
-            <button onClick={openSeekerProfile} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <User className={`h-5 w-5 ${page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='profile'?'text-white':''}`}>Profile</span>
+          {currentUser && hasAuthenticated ? (
+            <button onClick={openMyAccount} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='account' || page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <User className={`h-5 w-5 ${page==='account' || page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='account' || page==='profile'?'text-white':''}`}>Account</span>
             </button>
-          ) : currentUser?.role === 'recruiter' && hasAuthenticated ? (
-            <button onClick={() => openLegal('support')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='legal'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <FileText className={`h-5 w-5 ${page==='legal'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='legal'?'text-white':''}`}>Support</span>
+          ) : isAdmin ? (
+            <button onClick={() => openAdmin('settings')} className="flex flex-col items-center gap-1 rounded-xl px-4 py-1 hover:bg-slate-50">
+              <User className="h-5 w-5 text-sky-600" /><span className="text-[11px] font-bold">Account</span>
             </button>
           ) : (
             <button onClick={() => navigate('recruiters')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='recruiters'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
