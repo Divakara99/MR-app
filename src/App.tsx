@@ -4384,7 +4384,7 @@ export default function App() {
 
       {/* NAVBAR */}
       {!isIsolatedShellPage && (
-      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-sky-700/30 bg-gradient-to-r from-sky-600 via-sky-600 to-indigo-600 text-white shadow-md`}>
+      <header className={`app-topbar-background sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b text-white shadow-md`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
@@ -4535,7 +4535,7 @@ export default function App() {
               className="fixed right-0 top-0 z-50 flex h-[100dvh] w-[86%] max-w-[360px] flex-col bg-white shadow-2xl lg:hidden"
             >
               {/* Frozen account profile — only this top profile area stays fixed in the menu. */}
-              <div className="relative z-10 shrink-0 border-b bg-slate-50 px-4 pb-3 pt-4">
+              <div className="app-topbar-background relative z-10 shrink-0 border-b px-4 pb-3 pt-4">
                 {currentUser && hasAuthenticated ? (
                   <div className="rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
                     <div className="flex items-start gap-2.5">
@@ -6846,20 +6846,37 @@ export default function App() {
             </div>
           ) : (
             <div>
-              <div className="mb-4 flex flex-wrap items-center gap-3">
-                {canGoBack && (
-                  <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-100 bg-white text-slate-800 shadow-sm transition hover:bg-sky-50 active:scale-95">
-                    <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
+              {/* One blue Admin top bar: back + brand on the left, ADMIN + Menu on the top-right. */}
+              <div className="app-topbar-background mb-4 overflow-hidden rounded-[26px] border">
+                <div className="flex items-center gap-2 px-2.5 py-2.5 min-[420px]:gap-3 min-[420px]:px-3.5 sm:px-4">
+                  {canGoBack && (
+                    <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-slate-800 shadow-md transition hover:bg-sky-50 active:scale-95">
+                      <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
+                    </button>
+                  )}
+                  <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="flex min-w-0 flex-1 items-center gap-2.5 text-left min-[420px]:gap-3">
+                    <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-9 w-9 shrink-0 rounded-[22%] bg-white object-cover shadow-[0_8px_20px_rgba(8,47,73,0.32),0_0_0_2px_rgba(255,255,255,0.92)] min-[380px]:h-10 min-[380px]:w-10 min-[420px]:h-11 min-[420px]:w-11" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[16px] font-extrabold leading-none tracking-tight text-white [text-shadow:0_1px_2px_rgba(8,47,73,0.38)] min-[380px]:text-[17px] min-[420px]:text-[19px]">PharmaSales Jobs</span>
+                      <span className="mt-1 block truncate text-[8px] font-extrabold leading-none tracking-wide text-sky-50 min-[420px]:text-[9px]">The MR to NSM Jobs Network</span>
+                    </span>
                   </button>
-                )}
-                <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="brand-title-card flex min-w-0 items-center gap-3 rounded-2xl border px-3 py-2 text-left">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-11 w-11 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow" />
-                  <span className="min-w-0">
-                    <span className="brand-title-text block truncate text-[18px] font-extrabold leading-none tracking-tight">PharmaSales Jobs</span>
-                    <span className="brand-title-subtitle mt-1 block truncate text-[9px] leading-none tracking-wide">The MR to NSM Jobs Network</span>
-                  </span>
-                </button>
-                <span className="ml-auto rounded-full bg-slate-900 px-3 py-1.5 text-[10px] font-extrabold tracking-widest text-white">ADMIN WORKSPACE</span>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <span className="hidden rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold tracking-[0.14em] text-sky-800 shadow-sm sm:inline-flex">ADMIN</span>
+                    <button type="button" onClick={() => setShowAdminMenu(true)} aria-label="Open Admin Menu" title="Admin Menu" className="relative flex h-11 min-w-11 items-center justify-center gap-2 rounded-2xl bg-white px-2.5 text-sky-800 shadow-md transition hover:bg-sky-50 active:scale-95 min-[420px]:px-3.5">
+                      <Menu className="h-5 w-5" />
+                      <span className="hidden text-xs font-extrabold min-[420px]:inline">Menu</span>
+                      {(pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length) > 0 && (
+                        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-extrabold text-slate-900 shadow">{pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length}</span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 border-t border-white/20 bg-slate-950/15 px-3 py-2 min-[420px]:px-3.5 sm:px-4">
+                  <p className="shrink-0 text-[9px] font-extrabold tracking-[0.14em] text-sky-100">ADMIN MENU</p>
+                  <p className="min-w-0 flex-1 truncate text-xs font-extrabold text-white">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', 'plan-settings': 'Plan Settings', 'payment-settings': 'Payment Settings', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                  <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-extrabold text-white"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-300' : 'bg-amber-300'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-4 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-5 text-white shadow-lg">
                 <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — Admin" className="h-16 w-16 shrink-0 aspect-square rounded-full object-cover object-center border-2 border-white shadow" />
@@ -6878,24 +6895,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Admin options live in the sliding Admin Menu — no scrolling pill row. */}
-              <div className="mt-5 flex items-center gap-3 rounded-2xl border bg-white px-3 py-2.5 shadow-sm">
-                <button type="button" onClick={() => setShowAdminMenu(true)} aria-label="Open Admin Menu" title="Admin Menu" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white shadow transition hover:bg-slate-800 active:scale-95">
-                  <Menu className="h-5 w-5" />
-                </button>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-extrabold tracking-widest text-slate-400">ADMIN MENU</p>
-                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', 'plan-settings': 'Plan Settings', 'payment-settings': 'Payment Settings', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
-                </div>
-                <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
-              </div>
-
               <AnimatePresence>
                 {showAdminMenu && (
                   <>
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} onClick={() => setShowAdminMenu(false)} className="fixed inset-0 z-[55] bg-black/50 backdrop-blur-sm" />
-                    <motion.div initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'spring', damping: 28, stiffness: 260 }} className="fixed left-0 top-0 z-[60] flex h-[100dvh] w-[86%] max-w-[340px] flex-col bg-white shadow-2xl">
-                      <div className="flex items-center gap-3 bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
+                    <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 28, stiffness: 260 }} className="fixed right-0 top-0 z-[60] flex h-[100dvh] w-[86%] max-w-[340px] flex-col bg-white shadow-2xl">
+                      <div className="app-topbar-background flex items-center gap-3 px-4 py-4 text-white">
                         <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy — Admin" className="h-11 w-11 shrink-0 select-none aspect-square rounded-full border-2 border-white object-cover object-center shadow" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-extrabold leading-tight">M Divakar Reddy</p>
