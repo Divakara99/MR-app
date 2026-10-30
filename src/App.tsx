@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow } from './supabase'
+import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
 // TYPES
@@ -83,7 +84,7 @@ type SeekerProfile = {
 type CandidateProfileView = {
   id: string
   code: string
-  source: 'registered' | 'sample'
+  source: 'registered'
   profile: SeekerProfile
 }
 type Account = {
@@ -154,30 +155,10 @@ type SupportTicket = {
   updatedAt: string
 }
 
-// MOCK DATA
-const JOBS: Job[] = [
-  { id:'1', company:'Sun Pharma', color:'#ef4444', division:'Sunrise - Cardio Diabetic', title:'Medical Representative', hq:'Hyderabad - Ameerpet', state:'Telangana', exp:'1-4 yrs', ctc:'₹4.2 - 5.5 LPA + TA/DA', vacancies:3, qual:'B.Pharm / B.Sc / D.Pharm', type:'Field MR', posted:'2 hrs ago', verified:true, urgent:true, hot:true, desc:'Handling GP, Consulting Physicians & Cardiologists. RCPA, detailing & stockist management. Immediate joiners preferred with 2-wheeler.', contactPerson:'Ramesh Reddy - Regional Manager', phone:'+91 98490 23456', email:'ramesh.reddy@sunpharma.com', skills:['Doctor Calling','RCPA','Stockist Handling'], perks:['Incentives Qtrly','Mobile Allowance','Field TA/DA ₹18k'] },
-  { id:'2', company:'Cipla Ltd', color:'#0ea5e9', division:'Respiratory & Chest Physicians', title:'Medical Representative', hq:'Bengaluru - Jayanagar', state:'Karnataka', exp:'0-2 yrs (Freshers can apply)', ctc:'₹3.0 - 4.2 LPA + TA/DA', vacancies:5, qual:'B.Pharm / M.Pharm / B.Sc Biology', type:'Trainee MR', posted:'5 hrs ago', verified:true, urgent:false, hot:true, desc:'Cipla is hiring Trainee MRs for Bangalore HQ. Excellent training at Cipla Academy, Lonavala. Science background mandatory.', contactPerson:'Anita Sharma - HR Talent', phone:'+91 91008 11234', email:'anita.sharma@cipla.com', skills:['Product Detailing','Communication'], perks:['Training Allowance','Mediclaim','PF + Gratuity'] },
-  { id:'3', company:'Mankind Pharma', color:'#f97316', division:'Discovery Mankind - Gynae & Paediatric', title:'Medical Representative', hq:'Vijayawada', state:'Andhra Pradesh', exp:'1-3 yrs', ctc:'₹3.6 - 4.8 LPA + Attractive Incentives', vacancies:2, qual:'D.Pharm / B.Sc / Any Graduate', type:'Field MR', posted:'1 day ago', verified:true, urgent:true, hot:false, desc:'Mankind Discovery division - high growth. HQ: Vijayawada. Must have local HQ knowledge. Best incentive structure in industry.', contactPerson:'S. Divakar - ASM', phone:'+91 98660 99887', email:'careers@mankindpharma.co.in', skills:['Local HQ Knowledge','Chemist Relations'], perks:['Top Incentives','Annual Trip','Bike Loan'] },
-  { id:'4', company:'Dr. Reddy\'s', color:'#7c3aed', division:'Oncology & Critical Care', title:'Area Sales Manager', hq:'Chennai - T Nagar', state:'Tamil Nadu', exp:'4-7 yrs', ctc:'₹7.5 - 9.0 LPA + Incentives + Car Allowance', vacancies:1, qual:'B.Pharm + MBA Preferred', type:'ASM', posted:'1 day ago', verified:true, urgent:false, hot:false, desc:'Leading team of 6 MRs in Chennai. Responsible for primary & secondary sales, KOL management. Oncology experience added advantage.', contactPerson:'Vikram Pillai - ZSM', phone:'+91 93810 44556', email:'vikram.pillai@drreddys.com', skills:['Team Handling','KOL Management','Sales Planning'], perks:['Car Allowance ₹12k','Laptop','Foreign Trip'] },
-  { id:'5', company:'Alkem Laboratories', color:'#059669', division:'Alkem - Anti Infective', title:'Medical Representative', hq:'Pune - Kothrud', state:'Maharashtra', exp:'0.5-3 yrs', ctc:'₹3.2 - 4.5 LPA', vacancies:4, qual:'B.Pharm / D.Pharm / B.Sc', type:'Field MR', posted:'2 days ago', verified:true, urgent:false, hot:true, desc:'Alkem Rank 4 pharma - urgent hiring for Pune. Good science knowledge, stockist visits, chemist sampling. Fresher with internship considered.', contactPerson:'Mahesh Kulkarni - DM', phone:'+91 99230 77665', email:'mahesh.k@alkem.com', skills:['Sampling','Order Booking'], perks:['Daily Allowance ₹650','Medical Insurance'] },
-  { id:'6', company:'Torrent Pharma', color:'#0284c7', division:'Torrent - CNS & Cardio', title:'Medical Representative', hq:'Ahmedabad - Navrangpura', state:'Gujarat', exp:'2-5 yrs', ctc:'₹4.0 - 5.2 LPA', vacancies:2, qual:'B.Pharm / B.Sc Chemistry', type:'Field MR', posted:'3 hrs ago', verified:true, urgent:true, hot:false, desc:'Torrent hiring MR for Ahmedabad HQ. Must cover Ahmedabad & Gandhinagar. Thorough knowledge of CNS/CVS segment preferred.', contactPerson:'Jatin Patel - RSM', phone:'+91 98250 33445', email:'jatin.patel@torrentpharma.com', skills:['CNS Knowledge','Coverage Plan'], perks:['Quarterly Bonus','TA/DA'] },
-  { id:'7', company:'Zydus Lifesciences', color:'#dc2626', division:'Zydus - Women Healthcare', title:'Medical Representative', hq:'Lucknow - Hazratganj', state:'Uttar Pradesh', exp:'1-4 yrs', ctc:'₹3.4 - 4.6 LPA + TA', vacancies:3, qual:'B.Pharm / B.Sc / D.Pharm', type:'Field MR', posted:'2 days ago', verified:true, urgent:false, hot:false, desc:'Zydus Lifesciences (Zydus Cadila) hiring for Lucknow HQ. Female MRs encouraged to apply. Good communication & 2-wheeler mandatory.', contactPerson:'Neha Singh - HR', phone:'+91 98390 12345', email:'neha.singh@zyduslife.com', skills:['Women Health','Doctor Detailing'], perks:['Maternity Benefits','Creche Support'] },
-  { id:'8', company:'Lupin Ltd', color:'#0e7490', division:'Lupin - Respiratory', title:'Medical Representative', hq:'Indore', state:'Madhya Pradesh', exp:'1-3 yrs', ctc:'₹3.8 - 5.0 LPA', vacancies:2, qual:'B.Pharm / M.Pharm', type:'Field MR', posted:'6 hrs ago', verified:true, urgent:true, hot:true, desc:'Lupin Respiratory - high prescription generation. Indore HQ, covering Indore-Ujjain belt. Science graduate with MR exp required.', contactPerson:'Amit Jain - Area Manager', phone:'+91 94250 88990', email:'amit.jain@lupin.com', skills:['Prescription Generation','RCPA'], perks:['Incentive Uncapped','Health Cover'] },
-  { id:'9', company:'Abbott India', color:'#1d4ed8', division:'Abbott - Nutrition & Specialty', title:'Medical Representative', hq:'Mumbai - Andheri', state:'Maharashtra', exp:'2-4 yrs', ctc:'₹5.0 - 6.2 LPA (Top Pay) + Incentives', vacancies:1, qual:'B.Pharm / B.Sc + MBA', type:'Field MR', posted:'4 days ago', verified:true, urgent:false, hot:true, desc:'Abbott - MNC pharma. Mumbai HQ, premium division. Excellent salary, global training, growth to ASM in 2-3 yrs.', contactPerson:'Sarah D\'Souza - Talent Partner', phone:'+91 98190 55667', email:'sarah.dsouza@abbott.com', skills:['MNC Experience','Premium Detailing'], perks:['Global Exposure','5-day Work Culture'] },
-  { id:'10', company:'Glenmark Pharma', color:'#be123c', division:'Glenmark - Dermatology', title:'Medical Representative', hq:'Kolkata - Salt Lake', state:'West Bengal', exp:'0-2 yrs', ctc:'₹3.0 - 4.0 LPA', vacancies:6, qual:'Any Graduate with Science', type:'Trainee MR', posted:'12 hrs ago', verified:true, urgent:false, hot:false, desc:'Glenmark Dermatology division mass hiring in Kolkata. Freshers welcome - 15 days induction at Mumbai HQ. Stipend during training.', contactPerson:'Subhojit Das - Zonal Manager', phone:'+91 98310 99887', email:'subhojit.das@glenmark.com', skills:['Dermatology','Field Work'], perks:['Training + Stipend','Fast Growth'] },
-  { id:'11', company:'Intas Pharmaceuticals', color:'#4338ca', division:'Intas - Nephrology', title:'Medical Representative', hq:'Hyderabad - Kukatpally', state:'Telangana', exp:'2-5 yrs', ctc:'₹4.5 - 5.8 LPA', vacancies:2, qual:'B.Pharm / B.Sc', type:'Field MR', posted:'3 days ago', verified:true, urgent:false, hot:false, desc:'Intas Nephrology - super specialty. Handle nephrologists, dialysis centres. Hyderabad HQ with own vehicle.', contactPerson:'Kiran Kumar - DM', phone:'+91 98485 77665', email:'kiran.k@intaspharma.com', skills:['Nephrology','Dialysis KOL'], perks:['Special Allowance','Conference Support'] },
-  { id:'12', company:'Aurobindo Pharma', color:'#047857', division:'Aurobindo - ARV & General', title:'RSM - Regional Sales Manager', hq:'Delhi - Connaught Place', state:'Delhi', exp:'6-10 yrs', ctc:'₹10 - 13 LPA + Car + Incentives', vacancies:1, qual:'B.Pharm + MBA', type:'RSM', posted:'5 days ago', verified:true, urgent:false, hot:false, desc:'Aurobindo hiring RSM for North Delhi region. Manage 4 ASMs & 25 MRs. Proven leadership in pharma sales required.', contactPerson:'Rajeev Malhotra - VP Sales', phone:'+91 98101 23456', email:'rajeev.m@aurobindo.com', skills:['Leadership','P&L Management'], perks:['Company Car','Stock Options'] },
-  { id:'13', company:'Mankind Pharma', color:'#f97316', division:'Mankind - Cardio Diabetic', title:'Senior Medical Representative', hq:'Hyderabad - Banjara Hills', state:'Telangana', exp:'3-6 yrs', ctc:'₹5.5 - 7.0 LPA + Incentives', vacancies:2, qual:'B.Pharm / B.Sc', type:'Senior MR', posted:'4 hrs ago', verified:true, urgent:false, hot:true, desc:'Senior MR role for a high-value Hyderabad HQ. Own key doctors, KOL coverage, RCPA, chemist mapping and new-product launch execution. Strong cardio-diabetic territory performance preferred.', contactPerson:'Ramesh Reddy - ASM', phone:'+91 98491 44556', email:'careers@mankindpharma.co.in', skills:['KOL Coverage','RCPA','Territory Planning'], perks:['Top Incentives','Mobile Allowance','Field TA/DA'] },
-  { id:'14', company:'Cipla Ltd', color:'#0ea5e9', division:'Cipla - Respiratory', title:'ZSM - Zonal Sales Manager', hq:'Bengaluru - Koramangala', state:'Karnataka', exp:'8-12 yrs', ctc:'₹14 - 18 LPA + Car + Incentives', vacancies:1, qual:'B.Pharm / B.Sc + MBA Preferred', type:'ZSM', posted:'1 day ago', verified:true, urgent:true, hot:false, desc:'Lead the South Zone field force through RSMs and ASMs. Responsible for zonal primary/secondary targets, launch execution, KOL strategy, team coaching and stockist performance.', contactPerson:'Anita Sharma - HR Talent', phone:'+91 91008 11234', email:'anita.sharma@cipla.com', skills:['Zonal Leadership','Team Coaching','Sales Strategy'], perks:['Company Car','Laptop','Leadership Bonus'] },
-  { id:'15', company:'Abbott India', color:'#1d4ed8', division:'Abbott - Specialty Care', title:'NSM - National Sales Manager', hq:'Mumbai - BKC', state:'Maharashtra', exp:'12-18 yrs', ctc:'₹28 - 38 LPA + Car + Leadership Incentives', vacancies:1, qual:'B.Pharm / B.Sc + MBA', type:'NSM', posted:'2 days ago', verified:true, urgent:true, hot:true, desc:'Pan-India national sales leadership role. Own national targets, field-force productivity, ZSM/RSM coaching, launch planning, KOL engagement and cross-functional execution with marketing and medical teams.', contactPerson:'Sarah D\'Souza - Talent Partner', phone:'+91 98190 55667', email:'sarah.dsouza@abbott.com', skills:['National Sales Leadership','P&L Ownership','Launch Excellence'], perks:['Company Car','Leadership Incentives','Global Exposure'] },
+// Vacancies are real only: no seeded/demo jobs are bundled with the app.
+const JOBS: Job[] = []
 
-]
-
-const COMPANIES = ['All Companies', 'Sun Pharma', 'Cipla Ltd', 'Mankind Pharma', 'Dr. Reddy\'s', 'Alkem Laboratories', 'Torrent Pharma', 'Zydus Lifesciences', 'Lupin Ltd', 'Abbott India', 'Glenmark Pharma', 'Intas Pharmaceuticals', 'Aurobindo Pharma']
 const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tamil Nadu', 'Maharashtra', 'Gujarat', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Delhi']
-const CITIES_ALL = ['All Cities', ...Array.from(new Set(JOBS.map(j => j.hq.split(' - ')[0].trim())))]
-const HQ_ALL = ['All HQs', ...JOBS.map(j => j.hq)]
 const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
 const JOB_ROLES = ['Trainee MR', 'Field MR', 'Senior MR', 'ASM', 'RSM', 'ZSM', 'NSM'] as const
 const ROLES = ['All Roles', ...JOB_ROLES] as const
@@ -223,10 +204,10 @@ const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
-const ROLE_SEED_MIGRATION_KEY = 'mr-to-nsm-seed-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
+const GOOGLE_ENTRY_ROLE_KEY = 'mr-google-entry-role-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
 const PURCHASES_KEY = 'mr-purchases-v1'
@@ -258,22 +239,17 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     }
   } catch { return emptyDailyJobAccess() }
 }
+const LEGACY_DEMO_JOB_IDS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
 const loadInitialJobs = (): Job[] => {
   try {
     const raw = localStorage.getItem(ADMIN_JOBS_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length) {
-        const storedJobs = parsed as Job[]
-        if (localStorage.getItem(ROLE_SEED_MIGRATION_KEY) === '1') return storedJobs
-        const existingIds = new Set(storedJobs.map(job => job.id))
-        const roleSeedJobs = JOBS.filter(job => ['13', '14', '15'].includes(job.id) && !existingIds.has(job.id))
-        try { localStorage.setItem(ROLE_SEED_MIGRATION_KEY, '1') } catch { /* ignore */ }
-        return [...storedJobs, ...roleSeedJobs]
-      }
-    }
-  } catch { /* ignore */ }
-  return JOBS
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    // Keep only real Admin-posted/Admin-approved jobs already saved on this
+    // device. Old bundled demo vacancies (IDs 1–15) are never restored.
+    return (parsed as Job[]).filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))
+  } catch { return [] }
 }
 const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
 const SEEKER_EXPERIENCE_OPTIONS = ['0-6 months', '6 months - 1 year', '1-2 years', '2-4 years', '4-7 years', '7-10 years', '10-15 years', '15+ years']
@@ -382,19 +358,14 @@ const AccountAvatar = ({ name, photo, imgClassName, fallbackClassName }: { name:
     ? <img src={photo} alt={name} className={`${imgClassName} shrink-0 select-none rounded-full object-cover object-center`} />
     : <span className={`${fallbackClassName} shrink-0 select-none items-center justify-center rounded-full font-extrabold`} style={{ display: 'inline-flex' }}>{name.trim().charAt(0).toUpperCase()}</span>
 )
-const SAMPLE_CANDIDATE_PROFILES: CandidateProfileView[] = [
-  { id: 'sample-mr-2026-1011', code: 'MR-2026-1011', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Trainee MR', qualification: 'B.Pharm', passingYear: '2026', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹3.0 - 3.6 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Ameerpet', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Communication, Product Knowledge, MS Excel' } },
-  { id: 'sample-mr-2026-1042', code: 'MR-2026-1042', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Senior MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '2-4 years', currentCompany: 'Sun Pharma', currentRole: 'Field MR', currentPackage: '₹4.8 LPA', expectedPackage: '₹5.5 - 6.0 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Jayanagar', preferredHq: 'Bengaluru', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'RCPA, Doctor Calling, Stockist Handling' } },
-  { id: 'sample-mr-2026-1075', code: 'MR-2026-1075', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'D.Pharm', passingYear: '', totalExperience: '1-2 years', currentCompany: 'Mankind Pharma', currentRole: 'Field MR', currentPackage: '₹3.9 LPA', expectedPackage: '₹4.5 LPA', state: 'Andhra Pradesh', city: 'Vijayawada', currentHq: 'Vijayawada', preferredHq: 'Vijayawada / Guntur', noticePeriod: '15 days', twoWheeler: 'Yes', skills: 'Chemist Relations, Local HQ Knowledge, Order Booking' } },
-  { id: 'sample-mr-2026-1108', code: 'MR-2026-1108', source: 'sample', profile: { experienceType: 'fresher', desiredRole: 'Field MR', qualification: 'B.Sc', passingYear: '2025', totalExperience: 'Fresher (0 years)', currentCompany: 'Fresher — No current company', currentRole: 'Fresher', currentPackage: 'Not applicable', expectedPackage: '₹2.8 - 3.4 LPA', state: 'Maharashtra', city: 'Pune', currentHq: 'Pune - Kothrud', preferredHq: 'Pune', noticePeriod: 'Immediate', twoWheeler: 'Will arrange', skills: 'Communication, Field Work, Hindi / Marathi / English' } },
-  { id: 'sample-mr-2026-1136', code: 'MR-2026-1136', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ASM', qualification: 'B.Sc + MBA', passingYear: '', totalExperience: '4-7 years', currentCompany: "Dr. Reddy's", currentRole: 'Field MR', currentPackage: '₹6.8 LPA', expectedPackage: '₹8.0 - 9.0 LPA', state: 'Tamil Nadu', city: 'Chennai', currentHq: 'Chennai - T Nagar', preferredHq: 'Chennai', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'Team Handling, KOL Management, Sales Planning' } },
-  { id: 'sample-mr-2026-1164', code: 'MR-2026-1164', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'Field MR', qualification: 'B.Pharm', passingYear: '', totalExperience: '6 months - 1 year', currentCompany: 'Cipla Ltd', currentRole: 'Trainee MR', currentPackage: '₹3.2 LPA', expectedPackage: '₹3.8 - 4.2 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Kukatpally', preferredHq: 'Hyderabad', noticePeriod: 'Immediate', twoWheeler: 'Yes', skills: 'Product Detailing, Sampling, SFA Reporting' } },
-  { id: 'sample-mr-2026-1180', code: 'MR-2026-1180', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'RSM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '7-10 years', currentCompany: 'Alkem Laboratories', currentRole: 'ASM', currentPackage: '₹9.5 LPA', expectedPackage: '₹11 - 13 LPA', state: 'Maharashtra', city: 'Pune', currentHq: 'Pune - Kothrud', preferredHq: 'Maharashtra Region', noticePeriod: '45 days', twoWheeler: 'Yes / Car', skills: 'Area Leadership, Team Handling, Secondary Sales, Stockist Strategy' } },
-  { id: 'sample-mr-2026-1192', code: 'MR-2026-1192', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ASM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '4-7 years', currentCompany: 'Sun Pharma', currentRole: 'Senior MR', currentPackage: '₹6.5 LPA', expectedPackage: '₹7.5 - 8.5 LPA', state: 'Telangana', city: 'Hyderabad', currentHq: 'Hyderabad - Banjara Hills', preferredHq: 'Hyderabad', noticePeriod: '30 days', twoWheeler: 'Yes', skills: 'Territory Leadership, KOL Management, RCPA, Team Coaching' } },
-  { id: 'sample-mr-2026-1220', code: 'MR-2026-1220', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'ZSM', qualification: 'B.Pharm + MBA', passingYear: '', totalExperience: '7-10 years', currentCompany: 'Cipla Ltd', currentRole: 'RSM', currentPackage: '₹13.0 LPA', expectedPackage: '₹16 - 18 LPA', state: 'Karnataka', city: 'Bengaluru', currentHq: 'Bengaluru - Koramangala', preferredHq: 'South Zone', noticePeriod: '45 days', twoWheeler: 'Yes / Car', skills: 'Regional Leadership, Sales Strategy, Launch Planning, P&L' } },
-  { id: 'sample-mr-2026-1248', code: 'MR-2026-1248', source: 'sample', profile: { experienceType: 'experienced', desiredRole: 'NSM', qualification: 'B.Sc + MBA', passingYear: '', totalExperience: '10-15 years', currentCompany: 'Abbott India', currentRole: 'ZSM', currentPackage: '₹21.0 LPA', expectedPackage: '₹28 - 32 LPA', state: 'Maharashtra', city: 'Mumbai', currentHq: 'Mumbai - BKC', preferredHq: 'Pan India', noticePeriod: '60 days', twoWheeler: 'Yes / Car', skills: 'National Sales Leadership, Zonal Management, Launch Excellence, Team Building' } },
-
-]
+const GoogleIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" aria-hidden="true" focusable="false">
+    <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2.1 3.7-5.1 3.7-8.8z" />
+    <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.7-2.9c-1 .7-2.4 1.1-4.2 1.1-3.2 0-5.9-2.1-6.8-5.1L1.3 17.2C3.3 21.2 7.3 24 12 24z" />
+    <path fill="#FBBC05" d="M5.2 14.2c-.2-.7-.4-1.4-.4-2.2s.1-1.5.4-2.2L1.3 6.8C.5 8.4 0 10.1 0 12s.5 3.6 1.3 5.2l3.9-3z" />
+    <path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.3 0 3.3 2.8 1.3 6.8l3.9 3c.9-3 3.6-5.1 6.8-5.1z" />
+  </svg>
+)
 const normalizeMobile = (value: string) => {
   const digits = value.replace(/\D/g, '')
   if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
@@ -761,6 +732,8 @@ export default function App() {
   const [showAuthPassword, setShowAuthPassword] = useState(false)
   const [showAuthConfirmPassword, setShowAuthConfirmPassword] = useState(false)
   const [authLoading, setAuthLoading] = useState(false)
+  const [googleAuthLoading, setGoogleAuthLoading] = useState(false)
+  const [googlePendingProfile, setGooglePendingProfile] = useState<{ role: EntryRole; name: string; email: string } | null>(null)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
@@ -811,6 +784,7 @@ export default function App() {
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   const remoteSessionRefreshRef = useRef(false)
+  const googleAuthProcessingRef = useRef(false)
   const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const resetAuthPasswordState = () => {
@@ -1226,6 +1200,7 @@ export default function App() {
     setCurrentUser(account)
     setHasAuthenticated(true)
     setEntryRole(account.role)
+    setGooglePendingProfile(null)
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role: account.role, mobile: account.mobile })) } catch { /* ignore */ }
     setAuthError('')
     setAuthStep('mobile')
@@ -1268,6 +1243,112 @@ export default function App() {
     setAuthEmailTouched(false)
     resetAuthPasswordState()
     setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' }))
+  }
+  const clearGoogleAuthReturn = async () => {
+    try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
+    try { window.history.replaceState({}, document.title, window.location.pathname) } catch { /* ignore */ }
+    if (supabase) {
+      try { await supabase.auth.signOut() } catch { /* Google identity is only a short-lived login check */ }
+    }
+  }
+  const handleGoogleLogin = async () => {
+    if (authLoading || googleAuthLoading) return
+    if (!supabase) {
+      setAuthError('Google login needs the Supabase connection. Please login with your mobile number/email and password.')
+      return
+    }
+    const selectedRole = entryRole ?? 'seeker'
+    setGoogleAuthLoading(true)
+    setAuthError('')
+    try { localStorage.setItem(GOOGLE_ENTRY_ROLE_KEY, selectedRole) } catch { /* ignore */ }
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'select_account' },
+      },
+    })
+    if (error) {
+      try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
+      setGoogleAuthLoading(false)
+      setAuthError('Google login is not available yet. Please login with your mobile number/email and password.')
+    }
+    // On success the browser leaves this page for Google, then returns here.
+  }
+  const completeGoogleLogin = async (googleUser: SupabaseUser, selectedRole: EntryRole) => {
+    if (googleAuthProcessingRef.current) return
+    googleAuthProcessingRef.current = true
+    setGoogleAuthLoading(true)
+    setAuthError('')
+    try {
+      const email = (googleUser.email ?? '').trim().toLowerCase()
+      if (!email || !isValidEmail(email)) throw new Error('Google did not return a valid email ID')
+      const metadata = googleUser.user_metadata ?? {}
+      const googleName = String(metadata.full_name || metadata.name || '').trim() || email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Google User'
+
+      let availableAccounts = accounts
+      if (supabase) {
+        const remoteAccounts = await fetchRemoteAccountsByIdentifier(email)
+        if (remoteAccounts) {
+          availableAccounts = mergeAccountLists(accounts, remoteAccounts)
+          writeAccounts(availableAccounts)
+        }
+      }
+
+      const matchedAccount = availableAccounts.find(a => a.role === selectedRole && a.email.trim().toLowerCase() === email)
+      if (matchedAccount) {
+        const blockedByRecruiter = selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(matchedAccount.mobile))
+        if (blockedByRecruiter) {
+          await clearGoogleAuthReturn()
+          setEntryRole(selectedRole)
+          setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+          setAuthStep('mobile')
+          setAuthError('Job Seeker login is blocked because this mobile number has a Recruiter account. Delete the Recruiter account first, or login as Recruiter.')
+          navigate('auth', { resetHistory: true })
+          return
+        }
+
+        if (!hasAccountPassword(matchedAccount)) {
+          await clearGoogleAuthReturn()
+          setEntryRole(selectedRole)
+          setGooglePendingProfile({ role: selectedRole, name: matchedAccount.name, email })
+          setAuthForm({ name: matchedAccount.name, mobile: normalizeMobile(matchedAccount.mobile), email, identifier: email, password: '', confirmPassword: '' })
+          setAuthStep('register')
+          setAuthError('Google verified your email. Set a password once to secure this existing account.')
+          setAuthEmailTouched(false)
+          resetAuthPasswordState()
+          navigate('auth', { resetHistory: true })
+          return
+        }
+
+        await clearGoogleAuthReturn()
+        completeUserAuth(matchedAccount, false)
+        return
+      }
+
+      // First Google login: keep the existing registration rules. The user
+      // adds a mobile number and creates a password once, so the same person
+      // can later login with Google OR mobile/email + password.
+      await clearGoogleAuthReturn()
+      setEntryRole(selectedRole)
+      setGooglePendingProfile({ role: selectedRole, name: googleName, email })
+      setAuthForm({ name: googleName, mobile: '', email, identifier: email, password: '', confirmPassword: '' })
+      setAuthStep('register')
+      setAuthError('')
+      setAuthEmailTouched(false)
+      resetAuthPasswordState()
+      navigate('auth', { resetHistory: true })
+      setToast('Google email verified ✅ Add your mobile number and create a password to finish.')
+    } catch {
+      await clearGoogleAuthReturn()
+      setEntryRole(selectedRole)
+      setAuthStep('mobile')
+      setAuthError('Google login could not be completed. Please try again, or login with your mobile number/email and password.')
+      navigate('auth', { resetHistory: true })
+    } finally {
+      googleAuthProcessingRef.current = false
+      setGoogleAuthLoading(false)
+    }
   }
   const handleLoginContinue = async () => {
     if (authLoading) return
@@ -2154,10 +2235,13 @@ export default function App() {
     setSaved(prev => { const n = new Set(prev); n.delete(id); return n })
     setToast('Vacancy deleted by Admin')
   }
-  const handleResetJobs = () => {
-    setJobs(JOBS)
-    try { localStorage.removeItem(ADMIN_JOBS_KEY) } catch { /* ignore */ }
-    setToast('Vacancies reset to the default 12 verified jobs')
+  const handleClearAllVacancies = () => {
+    setJobs([])
+    setSaved(new Set())
+    setApplied(new Set())
+    setSelected(null)
+    try { localStorage.setItem(ADMIN_JOBS_KEY, '[]') } catch { /* ignore */ }
+    setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
   const handleChangePassword = () => {
     if (passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
@@ -2295,6 +2379,44 @@ export default function App() {
       }
     })()
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    let pendingRole: EntryRole | null = null
+    try {
+      const storedRole = localStorage.getItem(GOOGLE_ENTRY_ROLE_KEY)
+      if (storedRole === 'seeker' || storedRole === 'recruiter') pendingRole = storedRole
+    } catch { /* ignore */ }
+    if (!pendingRole) return
+
+    const searchParams = new URLSearchParams(window.location.search)
+    const hashParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '')
+    const oauthError = searchParams.get('error_description') || searchParams.get('error') || hashParams.get('error_description') || hashParams.get('error')
+    if (oauthError) {
+      void clearGoogleAuthReturn()
+      setEntryRole(pendingRole)
+      setAuthStep('mobile')
+      setAuthError('Google login was not completed. If this continues, the Google provider may not be enabled yet. You can login with your mobile number/email and password.')
+      navigate('auth', { resetHistory: true })
+      return
+    }
+
+    let cancelled = false
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!cancelled && session?.user) {
+        const googleUser = session.user
+        // Supabase recommends deferring other Supabase calls out of this
+        // callback; the account lookup runs on the next tick.
+        window.setTimeout(() => { if (!cancelled) void completeGoogleLogin(googleUser, pendingRole) }, 0)
+      }
+    })
+    void supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled && data.user) void completeGoogleLogin(data.user, pendingRole)
+    }, () => undefined)
+    return () => { cancelled = true; subscription.unsubscribe() }
+    // Run once when the browser returns from Google.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -2580,6 +2702,9 @@ export default function App() {
   const authLookupIdentifier = authStep === 'mobile'
     ? (parsedAuthIdentifier.error ? '' : parsedAuthIdentifier.value)
     : (isValidMobile(normalizedAuthMobile) ? normalizedAuthMobile : '')
+  const activeGooglePendingProfile = googlePendingProfile && entryRole === googlePendingProfile.role && authForm.email.trim().toLowerCase() === googlePendingProfile.email
+    ? googlePendingProfile
+    : null
   const myDeletionRequest = currentUser?.role === 'seeker' ? deletionRequests.find(r => r.mobile === currentUser.mobile) : undefined
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
@@ -2614,9 +2739,8 @@ export default function App() {
       return { id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: publicProfile }
     })
   const registeredCandidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? remoteCandidateProfiles : localRegisteredCandidateProfiles
-  // Sample profiles help preview the directory before a backend is connected.
-  // Once Supabase is configured, only real registered Job Seeker profiles are shown.
-  const candidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? registeredCandidateProfiles : [...registeredCandidateProfiles, ...SAMPLE_CANDIDATE_PROFILES]
+  // Only real registered Job Seeker profiles are shown — no sample/demo profiles.
+  const candidateProfiles: CandidateProfileView[] = registeredCandidateProfiles
   const candidateStates = ['All India', ...Array.from(new Set(candidateProfiles.map(c => c.profile.state).filter(Boolean)))]
   const filteredCandidateProfiles = candidateProfiles.filter(c => {
     const p = c.profile
@@ -2671,7 +2795,7 @@ export default function App() {
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-extrabold text-slate-900">Candidate {candidate.code}</span>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${isFresher ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700'}`}>{isFresher ? 'FRESHER' : 'EXPERIENCED'}</span>
-            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-extrabold text-sky-700">{candidate.source === 'registered' ? 'REGISTERED' : 'SAMPLE'}</span>
+            <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-extrabold text-sky-700">REGISTERED</span>
           </span>
           <span className="mt-1 block truncate text-xs font-bold text-slate-700">{profile.desiredRole ? getRoleLabel(profile.desiredRole) : 'Role not filled'} • {profile.qualification || 'Qualification not filled'}{isFresher && profile.passingYear ? ` • ${profile.passingYear}` : ''}</span>
           <span className="mt-0.5 block truncate text-[11px] font-semibold text-slate-500">{isFresher ? 'Fresher' : (profile.totalExperience || 'Experience not filled')} • {profile.currentHq || profile.city || 'HQ not filled'}{profile.state ? `, ${profile.state}` : ''}</span>
@@ -2710,7 +2834,7 @@ export default function App() {
           <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isFresher ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700'}`}>{isFresher ? 'FRESHER' : 'EXPERIENCED'}</span>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-extrabold text-sky-700">{candidate.source === 'registered' ? 'REGISTERED JOB SEEKER' : 'SAMPLE PROFILE'}</span>
+          <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-extrabold text-sky-700">REGISTERED JOB SEEKER</span>
           <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-extrabold text-slate-600"><EyeOff className="h-3 w-3" /> Name • Mobile • Email hidden</span>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -3193,7 +3317,7 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="mt-10 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • Login with mobile or email + password</p>
+              <p className="mt-10 flex items-center justify-center gap-1.5 text-center text-[11px] font-medium text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Stay logged in until logout • Google or mobile/email login</p>
               <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-extrabold text-sky-700">
                 <button type="button" onClick={() => openLegal('privacy')} className="hover:text-sky-900 hover:underline">Privacy Policy</button><span className="text-slate-300">•</span>
                 <button type="button" onClick={() => openLegal('terms')} className="hover:text-sky-900 hover:underline">Terms &amp; Privacy</button><span className="text-slate-300">•</span>
@@ -3224,7 +3348,7 @@ export default function App() {
                 </div>
                 <div className="text-center">
                   <h1 className="mt-5 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Login with your registered mobile number or email ID and your password. New users continue to registration.' : authStep === 'forgot' ? 'Reset your password by matching your registered mobile number and email ID.' : 'Register once with your mobile number, correct email ID and a password of at least 6 characters.'}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Continue with Google, or login with your registered mobile number/email ID and password. New users continue to registration.' : authStep === 'forgot' ? 'Reset your password by matching your registered mobile number and email ID.' : 'Register once with your mobile number, correct email ID and a password of at least 6 characters.'}</p>
                   <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><LockKeyhole className="h-3.5 w-3.5" /> Password • Minimum 6 characters</span>
                 </div>
               </div>
@@ -3295,7 +3419,21 @@ export default function App() {
                     <button type="button" onClick={openForgotPassword} className="text-xs font-extrabold text-sky-700 hover:text-sky-900 hover:underline">Forgot Password?</button>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Set Password & Continue' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading || googleAuthLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Set Password & Continue' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
+                  {isSupabaseConfigured && (
+                    <>
+                      <div className="my-4 flex items-center gap-3" aria-hidden="true">
+                        <span className="h-px flex-1 bg-slate-200" />
+                        <span className="text-[10px] font-extrabold tracking-[0.18em] text-slate-400">OR</span>
+                        <span className="h-px flex-1 bg-slate-200" />
+                      </div>
+                      <button type="button" onClick={() => void handleGoogleLogin()} disabled={authLoading || googleAuthLoading} className="flex w-full items-center justify-center gap-3 rounded-full border border-slate-300 bg-white py-3 text-sm font-extrabold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+                        <GoogleIcon />
+                        {googleAuthLoading ? 'Opening Google...' : 'Continue with Google'}
+                      </button>
+                      <p className="mt-2 text-center text-[11px] font-medium leading-relaxed text-slate-400">For Job Seeker &amp; Recruiter only. New Google users add a mobile number and password once.</p>
+                    </>
+                  )}
                 </form>
               ) : authStep === 'forgot' ? (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleForgotPasswordReset() }}>
@@ -3363,6 +3501,17 @@ export default function App() {
                     <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Your Password' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
                     <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'This account was created before password login. Set a minimum-6-character password to secure it.' : authExistingAccount ? 'Enter your current password to login to this existing account.' : 'Register with your name, mobile number, correct email ID and a minimum-6-character password.'}</p>
                   </div>
+                  {activeGooglePendingProfile && (
+                    <div className="mt-3 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-left">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white shadow-sm"><GoogleIcon /></span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-emerald-900">Google email verified</p>
+                        <p className="mt-0.5 break-all text-[11px] font-semibold text-emerald-800">{activeGooglePendingProfile.email}</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-emerald-700">Add your mobile number and create a password once. After that, login with Google <b>or</b> mobile/email + password.</p>
+                      </div>
+                      <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
+                    </div>
+                  )}
                   {authRecruiterBlockAccount && (
                     <div className="mt-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
                       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
@@ -3387,8 +3536,8 @@ export default function App() {
                       </div>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *</label>
-                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *{activeGooglePendingProfile ? ' (verified by Google)' : ''}</label>
+                      <input value={authForm.email} disabled={Boolean(activeGooglePendingProfile)} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-slate-600 ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                       {showAuthEmailError ? (
                         <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailValidation.error}{authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { setAuthForm(prev => ({ ...prev, email: authEmailValidation.suggestion ?? prev.email })); setAuthError(''); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
                       ) : showAuthEmailSuccess ? (
@@ -3432,7 +3581,7 @@ export default function App() {
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
                   <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authRegisterNeedsPasswordSetup && authExistingAccount ? 'Setting Password...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError && authRegisterNeedsPasswordSetup ? 'Correct Email & Set Password' : authExistingEmailError ? 'Correct Email & Continue' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Password & Continue' : authExistingAccount ? 'Login & Continue' : 'Register & Continue'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setGooglePendingProfile(null); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
                 </form>
               )}
 
@@ -3998,8 +4147,8 @@ export default function App() {
               {visibleFiltered.length === 0 ? (
                 <div className="rounded-2xl border bg-white p-10 text-center">
                   <SearchX className="mx-auto h-10 w-10 text-slate-300" />
-                  <p className="mt-3 text-sm font-bold">{filtered.length === 0 ? 'No vacancies match your filters' : 'No vacancies are available in today’s Free access for these filters'}</p>
-                  <p className="text-xs text-slate-500">{filtered.length === 0 ? 'Try clearing location/company or search with different HQ like Hyderabad/Pune' : 'Free shows today’s first 3 jobs, then 7 extra jobs after all 3 unlocks. Clear filters or view Starter/Pro for every matching job.'}</p>
+                  <p className="mt-3 text-sm font-bold">{jobs.length === 0 ? 'No live vacancies yet' : filtered.length === 0 ? 'No vacancies match your filters' : 'No vacancies are available in today’s Free access for these filters'}</p>
+                  <p className="text-xs text-slate-500">{jobs.length === 0 ? 'New real vacancies will appear here after Admin posts or approves them.' : filtered.length === 0 ? 'Try clearing location/company or search with different HQ like Hyderabad/Pune' : 'Free shows today’s first 3 jobs, then 7 extra jobs after all 3 unlocks. Clear filters or view Starter/Pro for every matching job.'}</p>
                   <button onClick={() => { setSearch(''); setLocation('All India'); setCity('All Cities'); setHq('All HQs'); setCompany('All Companies'); setRole('All Roles'); setExpFilter('All Experience'); setVerifiedOnly(false) }} className="mt-4 rounded-full bg-sky-600 px-6 py-2 text-sm font-bold text-white">Clear filters</button>
                 </div>
               ) : (
@@ -4416,7 +4565,7 @@ export default function App() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Only completed Job Seeker profiles are shown{!isSupabaseConfigured ? ' • Sample profiles are clearly labelled' : ''}</span>
+                  <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Only real completed Job Seeker profiles are shown</span>
                   <span>•</span><span>Contact only through Admin after candidate consent</span>
                 </div>
 
@@ -5363,7 +5512,7 @@ export default function App() {
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-base font-extrabold">All Vacancies ({jobs.length})</p>
-                    <button onClick={handleResetJobs} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><RotateCcw className="h-3.5 w-3.5" /> Reset to Default 12</button>
+                    <button onClick={handleClearAllVacancies} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {jobs.length === 0 && <p className="rounded-xl bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No vacancies. Post your first vacancy from the Post Vacancy tab.</p>}
@@ -5402,7 +5551,7 @@ export default function App() {
                       <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></p>
                     </div>
                     <div className="mt-4 flex gap-2">
-                      <button onClick={handleResetJobs} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><RotateCcw className="h-3.5 w-3.5" /> Reset Vacancies</button>
+                      <button onClick={handleClearAllVacancies} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
                       <button onClick={handleAdminLogout} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
                     <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly.</p>

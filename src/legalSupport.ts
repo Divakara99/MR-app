@@ -156,7 +156,7 @@ export const TERMS_SECTIONS: LegalSection[] = [
   {
     title: '2. Accounts, Password & Login',
     bullets: [
-      'First-time Job Seeker or Recruiter registration requires your full name, correct 10-digit mobile number, correct email ID and a password of at least 6 characters. After registration, you may login with either your registered mobile number or registered email ID together with your password.',
+      'First-time Job Seeker or Recruiter registration requires your full name, correct 10-digit mobile number, correct email ID and a password of at least 6 characters. After registration, you may continue with Google using the same registered email ID, or login with either your registered mobile number or registered email ID together with your password. Admin uses a separate login and does not use Google or mobile-number login.',
       'Forgot Password reset requires the registered mobile number and registered email ID to match the same account, followed by creation of a new minimum-6-character password. Keep your password private and do not share it with any person.',
       'Once logged in, your session may remain active on your device until you choose Logout. You are responsible for activity performed through your logged-in device, registered mobile number, email ID and password.',
       'A mobile number used for an active Recruiter account cannot be used for Job Seeker login or registration until that Recruiter account is deleted.',

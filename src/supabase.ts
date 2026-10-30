@@ -12,9 +12,13 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
+        // Required for the Google OAuth return used by Job Seeker/Recruiter
+        // login. The app clears this short-lived identity session after it has
+        // matched the verified Google email to the app account.
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce',
       },
     })
   : null

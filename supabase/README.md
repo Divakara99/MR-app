@@ -22,6 +22,13 @@ owner changed the live Admin password from the seeded bootstrap value;
 never store the live Admin password in this repository. Do not add this
 schema to an unrelated app's Supabase database.
 
+**Google login application code is ready, but the Supabase Google provider
+still needs the project owner's Google OAuth Client ID and Client Secret.**
+Until those are entered in the Supabase Dashboard using the steps below,
+Job Seeker/Recruiter password login works, while the Google button will
+return an “not completed/provider may not be enabled” message. Admin does
+not use Google login.
+
 ## What to send when the new account/project is ready
 
 Send only these two public frontend values:
@@ -95,6 +102,45 @@ variable in the hosting provider's environment-variable settings.
 Vite embeds these values when the frontend is built, so **rebuild and
 restart/redeploy** after adding or changing them.
 
+### Enable Google login for Job Seeker / Recruiter
+
+The app uses Supabase Auth only to verify the person's Google email. It then
+matches that email to the existing `app_accounts` record for the selected
+Job Seeker or Recruiter role. First-time Google users still add a mobile
+number and create a password once, preserving mobile/email + password login.
+Admin is excluded.
+
+The project owner must complete this one-time setup directly in Google Cloud
+and Supabase. **Never paste the Google Client Secret into chat, GitHub, or a
+`VITE_` variable.**
+
+1. In **Google Cloud Console → APIs & Services → Credentials**, create an
+   **OAuth client ID** of type **Web application** (configure the OAuth
+   consent screen if Google asks).
+2. Add this **Authorized redirect URI** exactly:
+
+   ```text
+   https://zrkkjgxgykpnzeginbpq.supabase.co/auth/v1/callback
+   ```
+
+3. Add the current app origins under **Authorized JavaScript origins** (add
+   the final production domain later, before launch):
+
+   ```text
+   https://3000-iyg9rmxugh7mseljbsodv.e2b.app
+   http://localhost:3000
+   ```
+
+4. In **Supabase Dashboard → Authentication → Providers → Google**, enable
+   Google and paste the Google **Client ID** and **Client Secret** there.
+5. In **Supabase Dashboard → Authentication → URL Configuration**, keep the
+   app origins in the redirect allow-list. The current preview origin and
+   `http://localhost:3000` were allow-listed on 30 Oct 2026; add the final
+   production domain later. The code returns to the current app origin after
+   Google verifies the user.
+6. Test both roles: an already-registered email should log in directly; a
+   new Google email should ask for mobile number + password once.
+
 ### 4. Verify the connection
 
 After rebuilding:
@@ -119,6 +165,8 @@ When both environment variables are present at build time, the app uses
 Supabase for:
 
 - Job Seeker and Recruiter registration
+- Google email matching for Job Seeker/Recruiter login after the owner
+  enables the Supabase Google provider
 - Login by registered mobile **or** registered email
 - Password setting/reset flows implemented by the app
 - Job Seeker profile storage and updates
