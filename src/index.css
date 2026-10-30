@@ -1,12 +1,93 @@
+@import "@fontsource-variable/inter";
 @import "tailwindcss";
 
-* { scrollbar-width: thin; scrollbar-color: #0ea5e9 #f1f5f9; }
+/*
+ * Project-wide readability theme.
+ * The app is used outdoors and on small mobile screens, so secondary text
+ * uses stronger slate/sky shades instead of pale gray/blue colors.
+ */
+@theme {
+  --font-sans: "Inter Variable", Roboto, "Segoe UI", Arial, Helvetica, ui-sans-system, system-ui, sans-serif;
+  --color-slate-400: #5d6f86;
+  --color-slate-500: #40546e;
+  --color-slate-600: #2f4159;
+  --color-sky-500: #0284c7;
+  --color-sky-600: #0369a1;
+}
+
+:root {
+  color-scheme: light;
+}
+
+* { scrollbar-width: thin; scrollbar-color: #0284c7 #e2e8f0; }
 *::-webkit-scrollbar { width: 6px; height: 6px; }
-*::-webkit-scrollbar-thumb { background: #0ea5e9; border-radius: 999px; }
-*::-webkit-scrollbar-track { background: #f1f5f9; }
+*::-webkit-scrollbar-thumb { background: #0284c7; border-radius: 999px; }
+*::-webkit-scrollbar-track { background: #e2e8f0; }
 
 html { scroll-behavior: smooth; }
-body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body {
+  color: #0f172a;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+::placeholder {
+  color: #5d6f86;
+  opacity: 1;
+}
+
+/*
+ * Reusable PharmaSales Jobs title-card treatment.
+ * A strong blue card with white brand text is used on Welcome, the role
+ * logins, Admin screens, the main header, and the footer.
+ */
+.brand-title-card {
+  background: linear-gradient(135deg, #075985 0%, #0369a1 52%, #1e3a8a 100%) !important;
+  border-color: rgba(125, 211, 252, 0.78) !important;
+  box-shadow: 0 14px 30px rgba(3, 105, 161, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.24) !important;
+  color: #ffffff !important;
+}
+
+.brand-title-card .brand-title-text {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(8, 47, 73, 0.38);
+}
+
+.brand-title-card .brand-title-subtitle {
+  color: #f0f9ff !important;
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(8, 47, 73, 0.3);
+}
+
+.brand-title-card .brand-title-badge-since {
+  background: #ffffff !important;
+  color: #075985 !important;
+  box-shadow: 0 2px 8px rgba(8, 47, 73, 0.22);
+}
+
+.brand-title-card img {
+  background: #ffffff !important;
+  box-shadow: 0 8px 20px rgba(8, 47, 73, 0.32), 0 0 0 2px rgba(255, 255, 255, 0.92) !important;
+}
+
+/*
+ * Shared blue header/menu background for everyone — Job Seekers, Recruiters
+ * and Admin all see the same strong PharmaSales Jobs blue at the top.
+ */
+.app-topbar-background {
+  background: linear-gradient(90deg, #075985 0%, #0369a1 52%, #1e3a8a 100%) !important;
+  border-color: rgba(125, 211, 252, 0.62) !important;
+  box-shadow: 0 16px 34px rgba(3, 105, 161, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
+  color: #ffffff !important;
+}
 
 /* shimmer for masked */
 .shimmer {

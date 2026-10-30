@@ -1,0 +1,33 @@
+# PharmaSales Jobs is a Vite application. Netlify must build the project and
+# publish the generated dist folder, not the repository/source folder.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# The application uses client-side page state and OAuth return parameters at
+# the site root. Let the compiled SPA handle non-file routes.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Always fetch the newest service worker so a corrected deployment is not
+# hidden behind an old PWA cache.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/registerSW.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Vite asset filenames contain content hashes and can be cached aggressively.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
