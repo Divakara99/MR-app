@@ -59,6 +59,11 @@ export type RemoteUserStateRow = {
   updated_at?: string | null
 }
 
+export type RemoteAppSettingRow = {
+  payload: Record<string, unknown>
+  updated_at?: string | null
+}
+
 export type RemoteSyncRecordRow = {
   record_id: string
   record_position: number

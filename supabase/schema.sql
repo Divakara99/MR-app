@@ -602,21 +602,51 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_role text := lower(trim(coalesce(p_role, 'seeker')));
+  v_mobile text := regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+  v_transaction_id text := trim(coalesce(p_transaction_id, ''));
+  v_status text := lower(trim(coalesce(nullif(p_status, ''), 'paid')));
 begin
+  if length(v_mobile) = 12 and left(v_mobile, 2) = '91' then
+    v_mobile := right(v_mobile, 10);
+  end if;
+
+  if v_role not in ('seeker', 'recruiter')
+     or trim(coalesce(p_name, '')) = ''
+     or p_plan not in ('starter', 'pro')
+     or p_amount is null
+     or p_amount < 0
+     or v_status not in ('paid', 'pending', 'failed')
+     or v_transaction_id = ''
+     or char_length(v_transaction_id) > 160
+     or p_expires_at is null then
+    return false;
+  end if;
+
+  -- A UPI/UTR/payment reference can activate only one purchase.
+  if exists (
+    select 1
+    from public.app_purchases existing_purchase
+    where lower(existing_purchase.transaction_id) = lower(v_transaction_id)
+  ) then
+    return false;
+  end if;
+
   insert into public.app_purchases (role, name, mobile, email, plan, amount_inr, method, status, transaction_id, expires_at)
   values (
-    coalesce(nullif(trim(p_role), ''), 'seeker'),
+    v_role,
     trim(p_name),
-    coalesce(p_mobile, ''),
+    v_mobile,
     coalesce(lower(trim(p_email)), ''),
     p_plan,
     p_amount,
     coalesce(nullif(trim(p_method), ''), 'In-App'),
-    coalesce(nullif(trim(p_status), ''), 'paid'),
-    p_transaction_id,
+    v_status,
+    v_transaction_id,
     p_expires_at
-  )
-  on conflict (transaction_id) do nothing;
+  );
+
   return true;
 end;
 $$;
@@ -644,6 +674,44 @@ set search_path = public
 as $$
   select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
   from public.app_purchases p
+  order by p.purchased_at desc;
+$$;
+
+-- One Job Seeker's synced Starter/Pro purchases, used to restore the active
+-- paid plan automatically on every signed-in device and remove it at expiry.
+create or replace function public.list_app_purchases_for_mobile(p_mobile text)
+returns table (
+  id text,
+  role text,
+  name text,
+  mobile text,
+  email text,
+  plan text,
+  amount_inr numeric,
+  method text,
+  status text,
+  transaction_id text,
+  purchased_at timestamptz,
+  expires_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with normalized as (
+    select case
+      when length(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')) = 12
+        and left(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+      then right(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 10)
+      else regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')
+    end as mobile
+  )
+  select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
+  from public.app_purchases p
+  cross join normalized n
+  where p.role = 'seeker'
+    and p.mobile = n.mobile
   order by p.purchased_at desc;
 $$;
 
@@ -769,6 +837,7 @@ $$;
 revoke all on function public.admin_list_accounts() from public;
 revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public;
 revoke all on function public.admin_list_purchases() from public;
+revoke all on function public.list_app_purchases_for_mobile(text) from public;
 revoke all on function public.admin_login(text, text) from public;
 revoke all on function public.admin_change_password(text, text, text) from public;
 revoke all on function public.admin_reset_password_with_registered_details(text, text, text) from public;
@@ -776,6 +845,7 @@ revoke all on function public.admin_reset_password_with_registered_details(text,
 grant execute on function public.admin_list_accounts() to anon, authenticated;
 grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to anon, authenticated;
 grant execute on function public.admin_list_purchases() to anon, authenticated;
+grant execute on function public.list_app_purchases_for_mobile(text) to anon, authenticated;
 grant execute on function public.admin_login(text, text) to anon, authenticated;
 grant execute on function public.admin_change_password(text, text, text) to anon, authenticated;
 grant execute on function public.admin_reset_password_with_registered_details(text, text, text) to anon, authenticated;
@@ -997,6 +1067,80 @@ revoke all on function public.set_app_user_state(text, text, jsonb) from public;
 grant execute on function public.get_app_user_state(text, text) to anon, authenticated;
 grant execute on function public.set_app_user_state(text, text, jsonb) to anon, authenticated;
 
+-- Admin-managed app settings. The only current key is `commerce`: Job Seeker
+-- Starter/Pro names, prices, validity days, daily limits, benefits and the
+-- payment receiving source (receiver, UPI ID/QR, payment link, bank details
+-- and checkout instructions). Reads are public because these values are shown
+-- at checkout; writes require the current verified Admin password.
+create table if not exists public.app_settings (
+  setting_key text primary key check (setting_key in ('commerce')),
+  payload jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.app_settings enable row level security;
+revoke all on table public.app_settings from public, anon, authenticated;
+
+create or replace function public.get_app_setting(p_setting_key text)
+returns table (
+  payload jsonb,
+  updated_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.payload, s.updated_at
+  from public.app_settings s
+  where s.setting_key = lower(trim(coalesce(p_setting_key, '')))
+    and s.setting_key in ('commerce');
+$$;
+
+create or replace function public.set_app_setting_admin(
+  p_admin_id text,
+  p_admin_password text,
+  p_setting_key text,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_setting_key text := lower(trim(coalesce(p_setting_key, '')));
+  v_admin_id text := coalesce(nullif(lower(trim(coalesce(p_admin_id, ''))), ''), 'divakar');
+begin
+  if v_setting_key not in ('commerce')
+     or p_payload is null
+     or jsonb_typeof(p_payload) <> 'object'
+     or octet_length(p_payload::text) > 1048576 then
+    return false;
+  end if;
+
+  if not public.admin_login(v_admin_id, coalesce(p_admin_password, '')) then
+    return false;
+  end if;
+
+  insert into public.app_settings (setting_key, payload)
+  values (v_setting_key, p_payload)
+  on conflict (setting_key)
+  do update set
+    payload = excluded.payload,
+    updated_at = now();
+
+  return true;
+end;
+$$;
+
+revoke all on function public.get_app_setting(text) from public;
+revoke all on function public.set_app_setting_admin(text, text, text, jsonb) from public;
+
+grant execute on function public.get_app_setting(text) to anon, authenticated;
+grant execute on function public.set_app_setting_admin(text, text, text, jsonb) to anon, authenticated;
+
 -- IMPORTANT SECURITY NOTE:
 -- This schema implements the requested custom mobile/email + password flow and
 -- stores passwords only as bcrypt hashes. Forgot Password currently requires
@@ -1007,3 +1151,6 @@ grant execute on function public.set_app_user_state(text, text, jsonb) to anon, 
 -- every account/purchase to anon callers who know the function names (same
 -- front-end Admin-lock model as the app today) — before a large public launch,
 -- move Admin data behind an authenticated admin role or a service-role API.
+-- Commerce-setting writes additionally require the current Admin password,
+-- but should also move to that authenticated Admin session model. Manual
+-- UPI/bank transaction references are not independently bank-verified.

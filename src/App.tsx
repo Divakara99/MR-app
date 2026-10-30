@@ -7,10 +7,10 @@ import {
   GraduationCap, Layers, Siren, Megaphone, Quote,
   LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
   Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
-  Package, Upload, Camera, Download, Pencil
+  Package, Upload, Camera, Download, Pencil, Copy, CreditCard, Landmark, QrCode, Wallet
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
+import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteAppSettingRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
@@ -22,6 +22,7 @@ type ExtraJobReveals = Partial<Record<ExtraRevealField, boolean>>
 type StoredDailyJobAccess = {
   date: string
   revealed: string[]
+  paidRevealed: string[]
   dailyUnlocks: number
   extraReveals: Record<string, ExtraJobReveals>
 }
@@ -118,6 +119,35 @@ type PurchaseRecord = {
   purchasedAt: string
   expiresAt: string
 }
+type PaidPlanId = 'starter' | 'pro'
+type PaidPlanConfig = {
+  name: string
+  price: number
+  validityDays: number
+  dailyLimit: number
+  unlimited: boolean
+  enabled: boolean
+  popular: boolean
+  features: string[]
+}
+type PaymentReceivingSettings = {
+  receiverName: string
+  upiId: string
+  upiEnabled: boolean
+  qrImageUrl: string
+  paymentLink: string
+  paymentLinkEnabled: boolean
+  bankDetails: string
+  bankEnabled: boolean
+  instructions: string
+  demoCheckoutEnabled: boolean
+}
+type CommerceSettings = {
+  plans: Record<PaidPlanId, PaidPlanConfig>
+  payment: PaymentReceivingSettings
+  updatedAt?: string
+}
+type CheckoutMethod = 'upi' | 'payment-link' | 'bank' | 'demo'
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
   name: string
@@ -197,6 +227,145 @@ const TIERS = [
   { id: 'pro' as Tier, name: 'Pro', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
 
+const COMMERCE_SETTINGS_KEY = 'mr-commerce-settings-v1'
+const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
+  plans: {
+    starter: {
+      name: 'Starter',
+      price: 99,
+      validityDays: 30,
+      dailyLimit: 15,
+      unlimited: false,
+      enabled: true,
+      popular: true,
+      features: ['No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'],
+    },
+    pro: {
+      name: 'Pro',
+      price: 499,
+      validityDays: 30,
+      dailyLimit: 9999,
+      unlimited: true,
+      enabled: true,
+      popular: false,
+      features: ['No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile during plan validity', 'Salary insights & negotiation tips'],
+    },
+  },
+  payment: {
+    receiverName: 'M Divakar Reddy',
+    upiId: '',
+    upiEnabled: false,
+    qrImageUrl: '',
+    paymentLink: '',
+    paymentLinkEnabled: false,
+    bankDetails: '',
+    bankEnabled: false,
+    instructions: 'Pay the exact plan amount using the Admin payment source shown here. After payment, enter the UPI/UTR/transaction reference and tap Payment Done — Activate Plan.',
+    demoCheckoutEnabled: true,
+  },
+}
+const asSettingsRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+)
+const settingsString = (value: unknown, fallback: string, maxLength: number) => (
+  typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+)
+const settingsBoolean = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback
+const settingsNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback
+}
+const normalizePaidPlanConfig = (value: unknown, fallback: PaidPlanConfig): PaidPlanConfig => {
+  const source = asSettingsRecord(value)
+  const unlimited = settingsBoolean(source.unlimited, fallback.unlimited)
+  const features = Array.isArray(source.features)
+    ? source.features.map(item => String(item).trim()).filter(Boolean).slice(0, 12).map(item => item.slice(0, 160))
+    : fallback.features
+  return {
+    name: settingsString(source.name, fallback.name, 40) || fallback.name,
+    price: settingsNumber(source.price, fallback.price, 1, 100000),
+    validityDays: settingsNumber(source.validityDays, fallback.validityDays, 1, 3650),
+    dailyLimit: unlimited ? 9999 : settingsNumber(source.dailyLimit, fallback.dailyLimit, 1, 10000),
+    unlimited,
+    enabled: settingsBoolean(source.enabled, fallback.enabled),
+    popular: settingsBoolean(source.popular, fallback.popular),
+    features: features.length > 0 ? features : fallback.features,
+  }
+}
+const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
+  const source = asSettingsRecord(value)
+  const plans = asSettingsRecord(source.plans)
+  const payment = asSettingsRecord(source.payment)
+  const starter = normalizePaidPlanConfig(plans.starter, DEFAULT_COMMERCE_SETTINGS.plans.starter)
+  const pro = normalizePaidPlanConfig(plans.pro, DEFAULT_COMMERCE_SETTINGS.plans.pro)
+  if (starter.popular && pro.popular) pro.popular = false
+  return {
+    plans: { starter, pro },
+    payment: {
+      receiverName: settingsString(payment.receiverName, DEFAULT_COMMERCE_SETTINGS.payment.receiverName, 100) || DEFAULT_COMMERCE_SETTINGS.payment.receiverName,
+      upiId: settingsString(payment.upiId, DEFAULT_COMMERCE_SETTINGS.payment.upiId, 120),
+      upiEnabled: settingsBoolean(payment.upiEnabled, DEFAULT_COMMERCE_SETTINGS.payment.upiEnabled),
+      qrImageUrl: settingsString(payment.qrImageUrl, DEFAULT_COMMERCE_SETTINGS.payment.qrImageUrl, 750000),
+      paymentLink: settingsString(payment.paymentLink, DEFAULT_COMMERCE_SETTINGS.payment.paymentLink, 600),
+      paymentLinkEnabled: settingsBoolean(payment.paymentLinkEnabled, DEFAULT_COMMERCE_SETTINGS.payment.paymentLinkEnabled),
+      bankDetails: settingsString(payment.bankDetails, DEFAULT_COMMERCE_SETTINGS.payment.bankDetails, 1200),
+      bankEnabled: settingsBoolean(payment.bankEnabled, DEFAULT_COMMERCE_SETTINGS.payment.bankEnabled),
+      instructions: settingsString(payment.instructions, DEFAULT_COMMERCE_SETTINGS.payment.instructions, 1200) || DEFAULT_COMMERCE_SETTINGS.payment.instructions,
+      demoCheckoutEnabled: settingsBoolean(payment.demoCheckoutEnabled, DEFAULT_COMMERCE_SETTINGS.payment.demoCheckoutEnabled),
+    },
+    updatedAt: settingsString(source.updatedAt, '', 60) || undefined,
+  }
+}
+const loadStoredCommerceSettings = (): CommerceSettings => {
+  try {
+    const raw = localStorage.getItem(COMMERCE_SETTINGS_KEY)
+    return raw ? normalizeCommerceSettings(JSON.parse(raw)) : normalizeCommerceSettings(DEFAULT_COMMERCE_SETTINGS)
+  } catch { return normalizeCommerceSettings(DEFAULT_COMMERCE_SETTINGS) }
+}
+const validateCommerceSettings = (settings: CommerceSettings): string => {
+  for (const plan of [settings.plans.starter, settings.plans.pro]) {
+    if (!plan.name.trim()) return 'Enter both plan names.'
+    if (!Number.isFinite(plan.price) || plan.price <= 0) return `${plan.name || 'Plan'} price must be above ₹0.`
+    if (!Number.isFinite(plan.validityDays) || plan.validityDays < 1) return `${plan.name || 'Plan'} validity must be at least 1 day.`
+    if (!plan.unlimited && (!Number.isFinite(plan.dailyLimit) || plan.dailyLimit < 1)) return `${plan.name || 'Plan'} daily contact limit must be at least 1.`
+    if (plan.features.map(feature => feature.trim()).filter(Boolean).length === 0) return `Add at least one benefit for ${plan.name || 'the plan'}.`
+  }
+  const payment = settings.payment
+  if (!payment.receiverName.trim()) return 'Enter the payment receiver / payee name.'
+  if (payment.upiEnabled && !/^[\w.\-]{2,}@[A-Za-z]{2,}$/.test(payment.upiId.trim())) return 'Enter a correct UPI ID, or turn UPI payment off.'
+  if (payment.paymentLinkEnabled) {
+    try {
+      const url = new URL(payment.paymentLink.trim())
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid URL')
+    } catch { return 'Enter a correct payment link, or turn Payment Link off.' }
+  }
+  if (payment.bankEnabled && !payment.bankDetails.trim()) return 'Enter bank receiving details, or turn Bank Transfer off.'
+  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled && !payment.demoCheckoutEnabled) return 'Enable at least one payment receiving method.'
+  return ''
+}
+const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+const getPaidPlanLimit = (plan: PaidPlanConfig) => plan.unlimited ? 9999 : Math.max(1, Math.round(plan.dailyLimit) || 1)
+const getActivePlanPurchase = (records: PurchaseRecord[], mobile: string, now = Date.now()): PurchaseRecord | undefined => {
+  const normalizedMobile = normalizeMobile(mobile)
+  if (!normalizedMobile) return undefined
+  const priority: Record<Tier, number> = { free: 0, starter: 1, pro: 2 }
+  return records
+    .filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizedMobile && record.status === 'paid' && record.plan !== 'free' && new Date(record.expiresAt).getTime() > now)
+    .sort((a, b) => priority[b.plan] - priority[a.plan] || new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime() || new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0]
+}
+const mergePurchaseRecords = (primary: PurchaseRecord[], secondary: PurchaseRecord[]): PurchaseRecord[] => {
+  const merged = new Map<string, PurchaseRecord>()
+  ;[...secondary, ...primary].forEach(record => {
+    const key = (record.transactionId || record.id || '').trim().toLowerCase()
+    if (key) merged.set(key, record)
+  })
+  return Array.from(merged.values()).sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
+}
+const getPlanDaysLeft = (expiresAt?: string, now = Date.now()) => {
+  if (!expiresAt) return 0
+  return Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now) / (24 * 60 * 60 * 1000)))
+}
+
 const SEEKER_AI_WELCOME = 'Hi! I’m your PharmaSales AI assistant 👋\n\nTry me:\n• “Resume for B.Pharm fresher”\n• “Interview Q&A for ASM/RSM roles”\n• “Best Hyderabad vacancies for 2 yrs exp”\n\nNeed help from Admin? Tap “Raise Support Ticket” below or type “raise support ticket”. Please give a proper reason so we can solve it quickly.'
 const RECRUITER_AI_WELCOME = 'Hi! I’m your PharmaSales Jobs recruiter assistant 👋\n\nI can help you with:\n• Writing a clear vacancy description for any role from Trainee MR to NSM\n• Interview questions for MR to NSM candidates\n• Candidate screening & shortlist checklists\n• Improving response to your vacancy\n\nJob search and subscription plans are for Job Seekers only — your Recruiter account does not need a plan. Need Admin help? Tap “Raise Support Ticket” below.'
 const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' as const, text: role === 'recruiter' ? RECRUITER_AI_WELCOME : SEEKER_AI_WELCOME }]
@@ -233,7 +402,7 @@ const USER_JOB_STATE_KEY = 'mr-user-job-state-v1'
 const FREE_DAILY_JOB_LIMIT = 3
 const FREE_EXTRA_JOB_LIMIT = 7
 const getTodayKey = () => new Date().toLocaleDateString('en-CA')
-const emptyDailyJobAccess = (): StoredDailyJobAccess => ({ date: getTodayKey(), revealed: [], dailyUnlocks: 0, extraReveals: {} })
+const emptyDailyJobAccess = (): StoredDailyJobAccess => ({ date: getTodayKey(), revealed: [], paidRevealed: [], dailyUnlocks: 0, extraReveals: {} })
 const loadDailyJobAccess = (): StoredDailyJobAccess => {
   try {
     const raw = localStorage.getItem(DAILY_JOB_ACCESS_KEY)
@@ -243,6 +412,7 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     return {
       date: getTodayKey(),
       revealed: Array.isArray(parsed.revealed) ? parsed.revealed.map(String) : [],
+      paidRevealed: Array.isArray(parsed.paidRevealed) ? parsed.paidRevealed.map(String) : [],
       dailyUnlocks: Number.isFinite(parsed.dailyUnlocks) ? Math.max(0, Math.floor(parsed.dailyUnlocks as number)) : 0,
       extraReveals: parsed.extraReveals && typeof parsed.extraReveals === 'object' && !Array.isArray(parsed.extraReveals) ? parsed.extraReveals : {},
     }
@@ -589,6 +759,7 @@ const normalizeUserJobState = (value: unknown): UserJobState => {
       ? {
           date: getTodayKey(),
           revealed: normalizeStoredIdList(daily.revealed),
+          paidRevealed: normalizeStoredIdList(daily.paidRevealed),
           dailyUnlocks: Number.isFinite(daily.dailyUnlocks) ? Math.max(0, Math.floor(daily.dailyUnlocks as number)) : 0,
           extraReveals: daily.extraReveals && typeof daily.extraReveals === 'object' && !Array.isArray(daily.extraReveals)
             ? daily.extraReveals as Record<string, ExtraJobReveals>
@@ -652,6 +823,7 @@ const mergeUserJobStates = (primary: UserJobState, secondary: UserJobState): Use
     dailyAccess: {
       date: getTodayKey(),
       revealed: [...primary.dailyAccess.revealed, ...secondary.dailyAccess.revealed],
+      paidRevealed: [...primary.dailyAccess.paidRevealed, ...secondary.dailyAccess.paidRevealed],
       dailyUnlocks: Math.max(primary.dailyAccess.dailyUnlocks, secondary.dailyAccess.dailyUnlocks),
       extraReveals: mergedExtraReveals,
     },
@@ -766,6 +938,20 @@ export default function App() {
   // App state
   const [tier, setTier] = useState<Tier>('free')
   const [purchases, setPurchases] = useState<PurchaseRecord[]>(() => loadPurchases())
+  const [commerceSettings, setCommerceSettings] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
+  const [commerceDraft, setCommerceDraft] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
+  const [commerceSettingsError, setCommerceSettingsError] = useState('')
+  const [commerceSettingsSaving, setCommerceSettingsSaving] = useState(false)
+  const [commerceAdminPassword, setCommerceAdminPassword] = useState('')
+  const [commerceQrUploading, setCommerceQrUploading] = useState(false)
+  const [checkoutPlan, setCheckoutPlan] = useState<PaidPlanId | null>(null)
+  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>('demo')
+  const [checkoutReference, setCheckoutReference] = useState('')
+  const [checkoutError, setCheckoutError] = useState('')
+  const [checkoutProcessing, setCheckoutProcessing] = useState(false)
+  const [planClock, setPlanClock] = useState(() => Date.now())
+  const [planPurchaseSyncReady, setPlanPurchaseSyncReady] = useState(() => !isSupabaseConfigured)
+  const previousTierRef = useRef<Tier>('free')
   const [search, setSearch] = useState('')
   const [location, setLocation] = useState('All India')
   const [city, setCity] = useState('All Cities')
@@ -777,6 +963,7 @@ export default function App() {
   const [saved, setSaved] = useState<Set<string>>(() => new Set(loadInitialUserJobState().saved))
   const [applied, setApplied] = useState<Set<string>>(() => new Set(loadInitialUserJobState().applied))
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadInitialUserJobState().dailyAccess.revealed))
+  const [paidRevealed, setPaidRevealed] = useState<Set<string>>(() => new Set(loadInitialUserJobState().dailyAccess.paidRevealed))
   const [dailyUnlocks, setDailyUnlocks] = useState(() => loadInitialUserJobState().dailyAccess.dailyUnlocks)
   const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadInitialUserJobState().dailyAccess.extraReveals)
   const [selected, setSelected] = useState<Job | null>(null)
@@ -811,10 +998,11 @@ export default function App() {
   const [adminForgotNew, setAdminForgotNew] = useState('')
   const [adminForgotConfirm, setAdminForgotConfirm] = useState('')
   const [adminForgotError, setAdminForgotError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plans' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
   const [showAdminMenu, setShowAdminMenu] = useState(false)
   const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
+  const [adminAccountDetail, setAdminAccountDetail] = useState<Account | null>(null)
   const [remoteAdminUsers, setRemoteAdminUsers] = useState<RemoteAccountRow[] | null>(null)
   const [remotePurchases, setRemotePurchases] = useState<PurchaseRecord[] | null>(null)
   const [adminDataLoading, setAdminDataLoading] = useState(false)
@@ -882,16 +1070,54 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(GUEST_SUPPORT_TICKET_IDS_KEY, JSON.stringify(Array.from(guestSupportTicketIds))) } catch { /* ignore */ } }, [guestSupportTicketIds])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
   useEffect(() => { try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(purchases)) } catch { /* ignore */ } }, [purchases])
-  // Restore the buyer's still-active paid plan when their account session opens.
+  useEffect(() => { try { localStorage.setItem(COMMERCE_SETTINGS_KEY, JSON.stringify(commerceSettings)) } catch { /* ignore */ } }, [commerceSettings])
+  // Re-check plan validity while the app stays open (and whenever it regains focus).
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'seeker') return
-    const activePurchase = purchases.find(p => p.mobile === currentUser.mobile && p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now())
-    if (activePurchase) setTier(activePurchase.plan)
+    const tick = () => setPlanClock(Date.now())
+    const interval = window.setInterval(tick, 30000)
+    const onVisibility = () => { if (!document.hidden) tick() }
+    window.addEventListener('focus', tick)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', tick)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+  // A paid tier exists only while a paid purchase for this Job Seeker is inside
+  // its Admin-set validity. At expiry this automatically removes paid benefits.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'seeker' || isAdmin) {
+      previousTierRef.current = 'free'
+      if (tier !== 'free') setTier('free')
+      return
+    }
+    const activePurchase = getActivePlanPurchase(purchases, currentUser.mobile, planClock)
+    const nextTier: Tier = activePurchase?.plan ?? 'free'
+    const wasPaidTier = previousTierRef.current !== 'free'
+    const shouldRemovePaidBenefits = nextTier === 'free' && (wasPaidTier || (planPurchaseSyncReady && paidRevealed.size > 0))
+    if (shouldRemovePaidBenefits) {
+      const remainingRevealed = new Set(Array.from(revealed).filter(id => !paidRevealed.has(id)))
+      setRevealed(remainingRevealed)
+      setExtraReveals(prev => Object.fromEntries(Object.entries(prev).filter(([jobId]) => !paidRevealed.has(jobId))))
+      setPaidRevealed(new Set())
+      setDailyUnlocks(jobs.slice(0, FREE_DAILY_JOB_LIMIT).filter(job => remainingRevealed.has(job.id)).length)
+      setSelected(null)
+      setShowRewarded(null)
+      setRewardProgress(0)
+      setApplyAdJob(null)
+      setApplyAdProgress(0)
+      if (wasPaidTier) setToast('Your paid plan validity has ended. Free plan is now active and paid benefits are turned off.')
+    }
+    previousTierRef.current = nextTier
+    if (tier !== nextTier) setTier(nextTier)
+    // Entitlement is recalculated from purchases + the validity clock. Revealed/job
+    // state is intentionally read only at the expiry transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser])
+  }, [currentUser?.role, currentUser?.mobile, isAdmin, purchases, planClock, planPurchaseSyncReady])
   useEffect(() => {
-    try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
-  }, [revealed, dailyUnlocks, extraReveals])
+    try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), paidRevealed: Array.from(paidRevealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
+  }, [revealed, paidRevealed, dailyUnlocks, extraReveals])
   useEffect(() => {
     if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
   }, [currentUser])
@@ -915,7 +1141,38 @@ export default function App() {
     setShowAuthConfirmPassword(false)
   }
 
-  const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
+  const limitForTier: Record<Tier, number> = {
+    free: FREE_DAILY_JOB_LIMIT,
+    starter: getPaidPlanLimit(commerceSettings.plans.starter),
+    pro: getPaidPlanLimit(commerceSettings.plans.pro),
+  }
+  const activePlanPurchase = currentUser?.role === 'seeker'
+    ? getActivePlanPurchase(purchases, currentUser.mobile, planClock)
+    : undefined
+  const latestPlanPurchase = currentUser?.role === 'seeker'
+    ? purchases.filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile) && record.status === 'paid' && record.plan !== 'free').sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0]
+    : undefined
+  const planCards = [
+    { ...TIERS[0], enabled: true, validityDays: 0 },
+    ...(['starter', 'pro'] as PaidPlanId[]).map(planId => {
+      const plan = commerceSettings.plans[planId]
+      const base = TIERS.find(item => item.id === planId) ?? TIERS[1]
+      const limitLabel = plan.unlimited ? 'Unlimited' : `${getPaidPlanLimit(plan)}/day`
+      return {
+        ...base,
+        id: planId as Tier,
+        name: plan.name,
+        price: formatINR(plan.price),
+        period: `/${plan.validityDays} days`,
+        features: [`${plan.unlimited ? 'Unlimited direct contacts' : `${getPaidPlanLimit(plan)} direct contacts/day`} — no reveal ads`, ...plan.features],
+        cta: `Buy ${plan.name} — ${formatINR(plan.price)}`,
+        popular: plan.popular,
+        limit: limitLabel,
+        enabled: plan.enabled,
+        validityDays: plan.validityDays,
+      }
+    }),
+  ]
   const isJobSeekerUser = hasAuthenticated && currentUser?.role === 'seeker' && !isAdmin
   const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
   const shouldHideJobSeekerExperience = isRecruiterUser && !isAdmin
@@ -1259,6 +1516,7 @@ export default function App() {
     setApplied(new Set(normalized.applied))
     setRequestedCandidates(new Set(normalized.requestedCandidates))
     setRevealed(new Set(normalized.dailyAccess.revealed))
+    setPaidRevealed(new Set(normalized.dailyAccess.paidRevealed))
     setDailyUnlocks(normalized.dailyAccess.dailyUnlocks)
     setExtraReveals(normalized.dailyAccess.extraReveals)
   }
@@ -1269,6 +1527,7 @@ export default function App() {
     dailyAccess: {
       date: getTodayKey(),
       revealed: Array.from(revealed),
+      paidRevealed: Array.from(paidRevealed),
       dailyUnlocks,
       extraReveals,
     },
@@ -1385,10 +1644,10 @@ export default function App() {
     purchasedAt: row.purchased_at,
     expiresAt: row.expires_at || row.purchased_at,
   })
-  const recordRemotePurchase = async (record: PurchaseRecord) => {
-    if (!supabase) return
+  const recordRemotePurchase = async (record: PurchaseRecord, throwOnError = false): Promise<boolean> => {
+    if (!supabase) return true
     try {
-      await supabase.rpc('record_app_purchase', {
+      const { data, error } = await supabase.rpc('record_app_purchase', {
         p_role: record.role,
         p_name: record.name,
         p_mobile: record.mobile,
@@ -1400,8 +1659,54 @@ export default function App() {
         p_transaction_id: record.transactionId,
         p_expires_at: record.expiresAt,
       })
-    } catch { /* local purchase record remains the fallback */ }
+      if (error) throw error
+      if (data === false) throw new Error('This payment reference has already been used. Enter the new UPI/UTR transaction reference for this payment.')
+      return true
+    } catch (error) {
+      if (throwOnError) throw error
+      return false
+    }
   }
+  const fetchRemotePurchasesForMobile = async (mobile: string): Promise<PurchaseRecord[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('list_app_purchases_for_mobile', { p_mobile: normalizeMobile(mobile) })
+    if (error) throw error
+    return ((data ?? []) as RemotePurchaseRow[]).map(purchaseFromRemoteRow)
+  }
+  useEffect(() => {
+    if (!supabase || !currentUser || currentUser.role !== 'seeker') {
+      setPlanPurchaseSyncReady(!isSupabaseConfigured)
+      return
+    }
+    let cancelled = false
+    setPlanPurchaseSyncReady(false)
+    void fetchRemotePurchasesForMobile(currentUser.mobile)
+      .then(remoteRecords => {
+        if (cancelled || !remoteRecords) return
+        setPurchases(prev => mergePurchaseRecords(remoteRecords, prev))
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setPlanPurchaseSyncReady(true) })
+    return () => { cancelled = true }
+    // Fetch this seeker's synced purchases whenever the signed-in seeker changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile])
+  const refreshCommerceSettings = async (): Promise<CommerceSettings> => {
+    if (!supabase) return commerceSettings
+    const { data, error } = await supabase.rpc('get_app_setting', { p_setting_key: 'commerce' })
+    if (error) throw error
+    const row = ((data ?? []) as RemoteAppSettingRow[])[0]
+    if (!row?.payload) return commerceSettings
+    const remoteSettings = normalizeCommerceSettings({ ...row.payload, updatedAt: row.updated_at ?? undefined })
+    setCommerceSettings(remoteSettings)
+    if (!isAdmin || adminTab !== 'plans') setCommerceDraft(remoteSettings)
+    return remoteSettings
+  }
+  useEffect(() => {
+    void refreshCommerceSettings().catch(() => undefined)
+    // Load the Admin-set plans/payment receiving source once when the app opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const fetchAdminSupabaseData = async () => {
     if (!supabase) return
     setAdminDataLoading(true)
@@ -1420,6 +1725,14 @@ export default function App() {
     if (isAdmin && page === 'admin' && ['users', 'purchases', 'payments'].includes(adminTab)) void fetchAdminSupabaseData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, page, adminTab])
+  useEffect(() => {
+    if (!isAdmin || adminTab !== 'plans') return
+    setCommerceDraft(commerceSettings)
+    setCommerceSettingsError('')
+    setCommerceAdminPassword(storedAdminPassword())
+    // Refresh the editor from the live settings each time Admin opens it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, adminTab])
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
     if (!supabase) return
     const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
@@ -2607,32 +2920,190 @@ export default function App() {
     setPassForm({ current: '', next: '', confirm: '' })
     setToast('Admin password changed successfully 🔐 Use it from next login')
   }
+  // ---- ADMIN: JOB SEEKER PLANS + PAYMENT RECEIVING SOURCE ----
+  const updateCommercePlanDraft = (planId: PaidPlanId, patch: Partial<PaidPlanConfig>) => {
+    setCommerceDraft(prev => {
+      const nextPlans = { ...prev.plans, [planId]: { ...prev.plans[planId], ...patch } }
+      if (patch.popular) {
+        const otherPlanId: PaidPlanId = planId === 'starter' ? 'pro' : 'starter'
+        nextPlans[otherPlanId] = { ...nextPlans[otherPlanId], popular: false }
+      }
+      if (patch.unlimited) nextPlans[planId] = { ...nextPlans[planId], dailyLimit: 9999 }
+      return { ...prev, plans: nextPlans }
+    })
+  }
+  const updateCommercePaymentDraft = (patch: Partial<PaymentReceivingSettings>) => {
+    setCommerceDraft(prev => ({ ...prev, payment: { ...prev.payment, ...patch } }))
+  }
+  const handlePaymentQrFile = async (file: File | undefined) => {
+    if (!file || commerceQrUploading) return
+    if (!file.type.startsWith('image/')) { setCommerceSettingsError('Please choose a JPG or PNG payment QR image.'); return }
+    if (file.size > MAX_UPLOAD_BYTES) { setCommerceSettingsError('Payment QR image is too large. Please choose an image up to 5 MB.'); return }
+    setCommerceQrUploading(true)
+    try {
+      const dataUrl = await fileToCompressedPhotoDataUrl(file, 720)
+      updateCommercePaymentDraft({ qrImageUrl: dataUrl })
+      setCommerceSettingsError('')
+      setToast('Payment QR added. Save Plans & Payments to show it to Job Seekers.')
+    } catch {
+      setCommerceSettingsError('Unable to read this QR image. Please try another JPG or PNG image.')
+    } finally {
+      setCommerceQrUploading(false)
+    }
+  }
+  const saveCommerceSettings = async () => {
+    const draftValidationError = validateCommerceSettings(commerceDraft)
+    if (draftValidationError) { setCommerceSettingsError(draftValidationError); return }
+    const normalized = normalizeCommerceSettings({ ...commerceDraft, updatedAt: new Date().toISOString() })
+    const validationError = validateCommerceSettings(normalized)
+    if (validationError) { setCommerceSettingsError(validationError); return }
+    if (supabase && !commerceAdminPassword) {
+      setCommerceSettingsError('Enter the current Admin password to securely save these payment settings to Supabase.')
+      return
+    }
+    setCommerceSettingsSaving(true)
+    setCommerceSettingsError('')
+    try {
+      if (supabase) {
+        const { data, error } = await supabase.rpc('set_app_setting_admin', {
+          p_admin_id: 'divakar',
+          p_admin_password: commerceAdminPassword,
+          p_setting_key: 'commerce',
+          p_payload: normalized,
+        })
+        if (error) throw error
+        if (data !== true) throw new Error('Admin password was not accepted. Payment settings were not saved.')
+      }
+      setCommerceSettings(normalized)
+      setCommerceDraft(normalized)
+      setToast(supabase ? 'Plans & payment receiving source saved live ✅ Job Seekers will see the new price, validity and payment details.' : 'Plans & payment receiving source saved on this device ✅')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save Plans & Payments. Please check the Admin password and try again.'
+      setCommerceSettingsError(message)
+    } finally {
+      setCommerceSettingsSaving(false)
+    }
+  }
   // ---- PLAN PURCHASE -> recorded for Admin Purchases/Payments lists (+ Supabase sync) ----
-  const handlePlanSelect = (nextTier: Tier) => {
-    if (nextTier === tier) { setToast(`${nextTier === 'free' ? 'Free' : nextTier === 'starter' ? 'Starter' : 'Pro'} plan is already active`); return }
-    if (nextTier === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock'); return }
+  const getAvailableCheckoutMethods = (settings: CommerceSettings): { id: CheckoutMethod; label: string }[] => {
+    const methods: { id: CheckoutMethod; label: string }[] = []
+    if (settings.payment.upiEnabled && settings.payment.upiId.trim()) methods.push({ id: 'upi', label: 'UPI' })
+    if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) methods.push({ id: 'payment-link', label: 'Payment Link' })
+    if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) methods.push({ id: 'bank', label: 'Bank Transfer' })
+    if (settings.payment.demoCheckoutEnabled) methods.push({ id: 'demo', label: 'Demo Checkout' })
+    return methods.length > 0 ? methods : [{ id: 'demo', label: 'Demo Checkout' }]
+  }
+  const getPlanCheckoutExpiry = (planId: PaidPlanId, validityDays: number): string => {
+    const now = Date.now()
+    const samePlanExpiry = currentUser?.role === 'seeker'
+      ? purchases
+          .filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile) && record.plan === planId && record.status === 'paid' && new Date(record.expiresAt).getTime() > now)
+          .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0]
+      : undefined
+    const baseTime = samePlanExpiry ? new Date(samePlanExpiry.expiresAt).getTime() : now
+    return new Date(baseTime + validityDays * 24 * 60 * 60 * 1000).toISOString()
+  }
+  const closePlanCheckout = () => {
+    if (checkoutProcessing) return
+    setCheckoutPlan(null)
+    setCheckoutReference('')
+    setCheckoutError('')
+  }
+  const handlePlanSelect = async (nextTier: Tier) => {
+    const latestSettings = await refreshCommerceSettings().catch(() => commerceSettings)
+    const activePurchaseNow = currentUser?.role === 'seeker' ? getActivePlanPurchase(purchases, currentUser.mobile) : undefined
+    if (nextTier === 'free') {
+      if (activePurchaseNow) {
+        setToast(`${activePurchaseNow.planName} is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Free will start automatically after expiry.`)
+      } else {
+        setTier('free')
+        setToast('Free plan is active — 3 daily full-contact unlocks, then 7 extra jobs.')
+      }
+      return
+    }
+    if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) {
+      setShowPricing(false)
+      if (isAdmin) {
+        openAdmin('plans')
+        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to test a purchase.')
+      } else {
+        setToast('Please login as a Job Seeker to purchase a plan.')
+      }
+      return
+    }
+    const planConfig = latestSettings.plans[nextTier]
+    if (!planConfig.enabled) { setToast(`${planConfig.name} is not available for purchase right now.`); return }
+    if (activePurchaseNow?.plan === 'pro' && nextTier === 'starter') {
+      setToast(`Your ${activePurchaseNow.planName} plan is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Starter can be purchased after it expires.`)
+      return
+    }
+    setCheckoutPlan(nextTier)
+    setCheckoutMethod(getAvailableCheckoutMethods(latestSettings)[0].id)
+    setCheckoutReference('')
+    setCheckoutError('')
+    setShowPricing(false)
+  }
+  const completePlanPurchase = async () => {
+    if (!checkoutPlan || checkoutProcessing) return
+    if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) { setCheckoutError('Please login as a Job Seeker to activate this plan.'); return }
+    const planConfig = commerceSettings.plans[checkoutPlan]
+    if (!planConfig.enabled) { setCheckoutError(`${planConfig.name} is not available for purchase right now.`); return }
+    const enteredReference = checkoutReference.trim().replace(/\s+/g, '')
+    if (checkoutMethod !== 'demo' && enteredReference.length < 6) {
+      setCheckoutError('Enter the UPI/UTR/transaction reference shown after payment (minimum 6 characters).')
+      return
+    }
+    if (enteredReference.length > 100) { setCheckoutError('Payment reference is too long. Please enter only the transaction/UTR reference.'); return }
+    const transactionId = checkoutMethod === 'demo'
+      ? 'TXN' + Date.now().toString(36).toUpperCase()
+      : enteredReference
+    const knownPurchases = [...purchases, ...(remotePurchases ?? [])]
+    if (knownPurchases.some(record => record.transactionId.trim().toLowerCase() === transactionId.toLowerCase())) {
+      setCheckoutError('This payment reference has already been used. Enter the new transaction/UTR reference for this payment.')
+      return
+    }
+    const methodLabel = checkoutMethod === 'upi'
+      ? 'UPI'
+      : checkoutMethod === 'payment-link'
+        ? 'Payment Link'
+        : checkoutMethod === 'bank'
+          ? 'Bank Transfer'
+          : 'In-App Checkout (Demo)'
     const now = new Date()
-    const expires = new Date(now)
-    expires.setDate(expires.getDate() + 30)
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
-      name: currentUser?.name ?? 'Guest User',
-      mobile: currentUser?.mobile ?? '',
-      email: currentUser?.email ?? '',
-      role: currentUser?.role ?? 'seeker',
-      plan: nextTier,
-      planName: nextTier === 'starter' ? 'Starter' : 'Pro',
-      amount: nextTier === 'starter' ? 99 : 499,
-      method: 'In-App Checkout (Demo)',
+      name: currentUser.name,
+      mobile: currentUser.mobile,
+      email: currentUser.email,
+      role: 'seeker',
+      plan: checkoutPlan,
+      planName: planConfig.name,
+      amount: planConfig.price,
+      method: methodLabel,
       status: 'paid',
-      transactionId: 'TXN' + Date.now().toString(36).toUpperCase(),
+      transactionId,
       purchasedAt: now.toISOString(),
-      expiresAt: expires.toISOString(),
+      expiresAt: getPlanCheckoutExpiry(checkoutPlan, planConfig.validityDays),
     }
-    setPurchases(prev => [record, ...prev])
-    setTier(nextTier)
-    void recordRemotePurchase(record)
-    setToast(`${record.planName} plan activated ✅ Payment recorded • ${record.transactionId}`)
+    setCheckoutProcessing(true)
+    setCheckoutError('')
+    try {
+      await recordRemotePurchase(record, true)
+      setPurchases(prev => mergePurchaseRecords([record], prev))
+      if (remotePurchases) setRemotePurchases(prev => mergePurchaseRecords([record], prev ?? []))
+      previousTierRef.current = checkoutPlan
+      setTier(checkoutPlan)
+      setPlanClock(Date.now())
+      setCheckoutPlan(null)
+      setCheckoutReference('')
+      setShowPricing(false)
+      setToast(`${record.planName} activated automatically ✅ Valid till ${formatAdminDate(record.expiresAt)}. After expiry, Free will activate automatically.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Payment could not be recorded. Please check the reference and try again.'
+      setCheckoutError(message)
+    } finally {
+      setCheckoutProcessing(false)
+    }
   }
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
@@ -2870,7 +3341,7 @@ export default function App() {
     }, 350)
     // Persist when the account identity or any synced job-state value changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser?.role, currentUser?.mobile, saved, applied, requestedCandidates, revealed, dailyUnlocks, extraReveals])
+  }, [currentUser?.role, currentUser?.mobile, saved, applied, requestedCandidates, revealed, paidRevealed, dailyUnlocks, extraReveals])
 
   useEffect(() => {
     if (!supabase) return
@@ -2978,6 +3449,7 @@ export default function App() {
       return
     }
     setRevealed(prev => new Set([...prev, job.id]))
+    setPaidRevealed(prev => new Set([...prev, job.id]))
     const nextUnlocks = dailyUnlocks + 1
     setDailyUnlocks(nextUnlocks)
     setToast(`Contact revealed! ${limitForTier[tier] === 9999 ? 'Unlimited unlocks' : `${limitForTier[tier] - nextUnlocks} unlocks left today`}.`)
@@ -2991,6 +3463,7 @@ export default function App() {
     if (field === 'phone' && isPhoneVisible(job)) return
     if (isAdmin || tier !== 'free') {
       markExtraReveal(job, field)
+      if (!isAdmin) setPaidRevealed(prev => new Set([...prev, job.id]))
       setToast(field === 'company' ? 'Company name revealed.' : field === 'manager' ? 'Manager name revealed.' : 'Contact number revealed.')
       return
     }
@@ -3175,7 +3648,25 @@ export default function App() {
     return a.name.toLowerCase().includes(q) || a.mobile.includes(q) || a.email.toLowerCase().includes(q)
   })
   const displayedPurchases: PurchaseRecord[] = [...(remotePurchases ?? purchases)].sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
-  const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now()
+  const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > planClock
+  const adminAccountPurchases = adminAccountDetail
+    ? displayedPurchases.filter(purchase => purchase.role === adminAccountDetail.role && normalizeMobile(purchase.mobile) === normalizeMobile(adminAccountDetail.mobile))
+    : []
+  const adminAccountActivePurchase = adminAccountDetail?.role === 'seeker'
+    ? getActivePlanPurchase(adminAccountPurchases, adminAccountDetail.mobile, planClock)
+    : undefined
+  const adminAccountSupportTickets = adminAccountDetail
+    ? supportTickets.filter(ticket => normalizeMobile(ticket.mobile) === normalizeMobile(adminAccountDetail.mobile) || ticket.email.trim().toLowerCase() === adminAccountDetail.email.trim().toLowerCase())
+    : []
+  const adminAccountDeletionRequest = adminAccountDetail?.role === 'seeker'
+    ? deletionRequests.find(request => normalizeMobile(request.mobile) === normalizeMobile(adminAccountDetail.mobile))
+    : undefined
+  const adminAccountLiveJobs = adminAccountDetail
+    ? jobs.filter(job => job.postedBy?.trim().toLowerCase() === adminAccountDetail.name.trim().toLowerCase() && job.postedByRole === adminAccountDetail.role)
+    : []
+  const adminAccountPendingJobs = adminAccountDetail
+    ? pendingJobs.filter(job => job.submittedBy.trim().toLowerCase() === adminAccountDetail.name.trim().toLowerCase() && (job.submittedByRole ?? 'recruiter') === adminAccountDetail.role)
+    : []
   const totalRevenue = displayedPurchases.filter(p => p.status === 'paid').reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const thisMonthRevenue = displayedPurchases.filter(p => { const d = new Date(p.purchasedAt); const now = new Date(); return p.status === 'paid' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest' && guestSupportTicketIds.has(ticket.id))
@@ -3625,7 +4116,7 @@ export default function App() {
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
                     { label: 'Browse Jobs', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
-                    { label: 'Subscription Plans', sub: 'Free → Starter ₹99 → Pro ₹499', icon: Crown, page: 'pricing' as const },
+                    { label: 'Subscription Plans', sub: `Free → ${commerceSettings.plans.starter.name} ${formatINR(commerceSettings.plans.starter.price)} → ${commerceSettings.plans.pro.name} ${formatINR(commerceSettings.plans.pro.price)}`, icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
                     { label: 'Post a Vacancy', sub: isJobSeekerUser ? 'Add a vacancy • Live after Admin approval' : 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
@@ -4212,6 +4703,45 @@ export default function App() {
 
               {currentUser.role === 'seeker' && (
                 <div className="mt-5 rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="flex items-center gap-2 text-base font-extrabold"><Crown className="h-5 w-5 text-violet-600" /> My Subscription</h3>
+                    <span className={`ml-auto rounded-full px-3 py-1 text-[10px] font-extrabold ${activePlanPurchase ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{activePlanPurchase ? `${activePlanPurchase.planName.toUpperCase()} ACTIVE` : 'FREE ACTIVE'}</span>
+                  </div>
+                  {activePlanPurchase ? (
+                    <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><BadgeCheck className="h-6 w-6" /></span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-lg font-extrabold text-emerald-950">{activePlanPurchase.planName} • {formatINR(activePlanPurchase.amount)}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-emerald-900">Valid till <b>{formatAdminDate(activePlanPurchase.expiresAt)}</b> • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left • {activePlanPurchase.method}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-emerald-800">Today: {Math.min(displayedDailyUnlocks, limitForTier[tier])}/{limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} direct contacts used. At expiry, Free activates automatically and paid benefits/revealed paid contacts stop.</p>
+                          <p className="mt-1 break-all font-mono text-[11px] text-emerald-700">Transaction: {activePlanPurchase.transactionId}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void handlePlanSelect(activePlanPurchase.plan)} className="rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Renew / Extend {activePlanPurchase.planName}</button>
+                        {activePlanPurchase.plan === 'starter' && commerceSettings.plans.pro.enabled && <button type="button" onClick={() => void handlePlanSelect('pro')} className="rounded-full bg-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Upgrade to {commerceSettings.plans.pro.name} — {formatINR(commerceSettings.plans.pro.price)}</button>}
+                        <button type="button" onClick={() => navigate('pricing')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">View All Plans</button>
+                      </div>
+                    </div>
+                  ) : latestPlanPurchase ? (
+                    <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="flex items-center gap-2 text-base font-extrabold text-amber-950"><Clock3 className="h-5 w-5 text-amber-700" /> {latestPlanPurchase.planName} expired • Free is active</p>
+                      <p className="mt-1 text-xs leading-relaxed text-amber-900">Your last paid plan ended on <b>{formatAdminDate(latestPlanPurchase.expiresAt)}</b>. Paid benefits are turned off. Buy again to activate a new plan immediately after payment confirmation.</p>
+                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white">Renew Subscription</button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-3xl bg-slate-50 p-4">
+                      <p className="text-base font-extrabold">Free Plan</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">3 daily full-contact unlocks, then 7 extra jobs. Current Admin-set paid plans: {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days and {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days.</p>
+                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-sky-600 px-4 py-2.5 text-xs font-extrabold text-white">View Subscription Plans</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {currentUser.role === 'seeker' && (
+                <div className="mt-5 rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h3 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Job Profile Details</h3>
@@ -4704,14 +5234,14 @@ export default function App() {
               <div className="rounded-2xl border bg-white p-4">
                 <p className="text-sm font-extrabold">Subscription</p>
                 <div className="mt-3 space-y-2">
-                  {TIERS.slice(0, 3).map(t => (
-                    <button key={t.id} onClick={() => handlePlanSelect(t.id)} className={`w-full rounded-xl border p-3 text-left ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
+                  {planCards.map(t => (
+                    <button key={t.id} onClick={() => void handlePlanSelect(t.id)} disabled={!t.enabled && tier !== t.id} className={`w-full rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
                       <div className="flex items-center gap-2">
                         <t.icon className={`h-4 w-4 ${tier === t.id ? 'text-sky-600' : 'text-slate-500'}`} />
                         <span className="text-sm font-bold">{t.name}</span>
                         <span className="ml-auto text-xs font-bold">{t.price}{t.period}</span>
                       </div>
-                      <p className="mt-1 text-xs text-slate-600">{t.limit} unlocks</p>
+                      <p className="mt-1 text-xs text-slate-600">{t.id === 'free' ? `${t.limit} unlocks` : t.enabled ? `${t.limit} unlocks • ${t.validityDays}-day validity` : 'Purchase paused by Admin'}</p>
                     </button>
                   ))}
                 </div>
@@ -4987,27 +5517,54 @@ export default function App() {
           <div className="mx-auto max-w-3xl text-center">
             <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">JOB SEEKER SUBSCRIPTION TIERS</span>
             <h2 className="mt-3 text-[28px] font-extrabold leading-tight">Choose how you unlock contacts. <br className="hidden sm:block" /><span className="text-sky-600">Free works — Pro wins faster.</span></h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">All plans include verified vacancies. Apply Now plays one sponsored ad on every plan; Starter/Pro remove browsing and contact-reveal ads.</p>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">Prices, validity and the payment receiving source are set by Admin and shown before payment. Apply Now plays one sponsored ad on every plan; paid plans remove browsing and contact-reveal ads.</p>
           </div>
 
+          {currentUser?.role === 'seeker' && activePlanPurchase && (
+            <div className="mx-auto mt-6 flex max-w-5xl flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"><BadgeCheck className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-extrabold text-emerald-950">{activePlanPurchase.planName} is active</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-emerald-800">Valid till <b>{formatAdminDate(activePlanPurchase.expiresAt)}</b> • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left. At expiry, Free activates automatically and paid benefits stop.</p>
+              </div>
+              <span className="w-fit rounded-full bg-emerald-600 px-3 py-1.5 text-[11px] font-extrabold text-white">AUTO-ACTIVE</span>
+            </div>
+          )}
+          {currentUser?.role === 'seeker' && !activePlanPurchase && latestPlanPurchase && (
+            <div className="mx-auto mt-6 flex max-w-5xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <p className="text-sm leading-relaxed text-amber-950"><b>{latestPlanPurchase.planName} expired on {formatAdminDate(latestPlanPurchase.expiresAt)}.</b> Free is active now. Purchase again to reactivate paid benefits automatically.</p>
+            </div>
+          )}
+
           <div className="mx-auto mt-8 grid max-w-5xl gap-4 md:grid-cols-3">
-            {TIERS.map(t => (
+            {planCards.map(t => (
               <div key={t.id} className={`relative rounded-2xl border p-5 ${t.popular ? 'border-sky-500 bg-sky-50 shadow-lg' : 'bg-slate-50'} ${tier === t.id ? 'ring-2 ring-sky-500' : ''}`}>
                 {t.popular && <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MOST POPULAR</span>}
                 {tier === t.id && <span className="absolute -top-3 right-4 rounded-full bg-emerald-500 px-2.5 py-1 text-xs font-bold text-white">Active</span>}
                 <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${t.id === 'free' ? 'bg-slate-900 text-white' : t.id === 'starter' ? 'bg-sky-600 text-white' : t.id === 'pro' ? 'bg-violet-600 text-white' : 'bg-amber-500 text-white'}`}>
                   <t.icon className="h-5 w-5" />
                 </div>
-                <h3 className="mt-3 text-lg font-extrabold">{t.name} {t.id === 'pro' && 'MR'}</h3>
+                <h3 className="mt-3 text-lg font-extrabold">{t.name}</h3>
                 <p className="mt-1 text-2xl font-extrabold">{t.price} <span className="text-sm font-semibold text-slate-500">{t.period}</span></p>
-                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : 'No reveal ads'}</p>
+                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : `${t.validityDays}-day validity • No reveal ads`}</p>
                 <ul className="mt-4 space-y-2">
-                  {t.features.map(f => (
-                    <li key={f} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
+                  {t.features.map((f, featureIndex) => (
+                    <li key={`${f}-${featureIndex}`} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
                   ))}
                 </ul>
-                <button onClick={() => handlePlanSelect(t.id)} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
-                  {tier === t.id ? '✓ Active' : t.cta}
+                <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
+                  {t.id === 'free'
+                    ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : '✓ Free Active')
+                    : !t.enabled
+                      ? 'Purchase Paused by Admin'
+                      : activePlanPurchase?.plan === 'pro' && t.id === 'starter'
+                        ? 'Available After Pro Expiry'
+                        : tier === t.id
+                          ? `Renew / Extend ${t.name}`
+                          : activePlanPurchase?.plan === 'starter' && t.id === 'pro'
+                            ? `Upgrade to ${t.name} — ${t.price}`
+                            : t.cta}
                 </button>
               </div>
             ))}
@@ -5700,7 +6257,7 @@ export default function App() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-extrabold tracking-widest text-slate-400">ADMIN MENU</p>
-                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', plans: 'Plans & Payments', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
                 </div>
                 <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
               </div>
@@ -5727,6 +6284,7 @@ export default function App() {
                             { id: 'users' as const, label: 'Users List', sub: 'Job Seekers • Recruiters • Admin', icon: Users, badge: displayedAdminUsers.length + 1, badgeClass: 'bg-sky-100 text-sky-700' },
                             { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Crown, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
                             { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
+                            { id: 'plans' as const, label: 'Plans & Payments', sub: 'Set price, validity, UPI & receiving source', icon: CreditCard, badge: undefined, badgeClass: '' },
                             { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
                             { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
@@ -5895,7 +6453,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remoteAdminUsers ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">All three roles in one place — <b>Job Seekers</b>, <b>Recruiters</b> and <b>Admin</b>. Accounts are created and managed in Supabase ({isSupabaseConfigured ? 'connected' : 'connect Supabase to sync every device'}).</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">All three roles in one place — <b>Job Seekers</b>, <b>Recruiters</b> and <b>Admin</b>. Accounts are created and managed in Supabase ({isSupabaseConfigured ? 'connected' : 'connect Supabase to sync every device'}). Use <b>View Account</b> to open a user’s account/profile, current plan and purchases. User passwords are never shown and there is no master-password login.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Accounts</p><p className="mt-0.5 text-2xl font-extrabold">{displayedAdminUsers.length + 1}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Job Seekers</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{adminSeekerCount}</p></div>
@@ -5922,6 +6480,7 @@ export default function App() {
                           <p className="text-xs text-sky-100">Admin ID: divakar • App Founder — PharmaSales Jobs</p>
                         </div>
                         <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-extrabold">Full Access</span>
+                        <button type="button" onClick={() => setAdminTab('settings')} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow-sm"><Eye className="h-3.5 w-3.5" /> View Account</button>
                       </div>
                     )}
                     {filteredAdminUsers.map(account => (
@@ -5932,9 +6491,10 @@ export default function App() {
                           <p className="truncate text-xs text-slate-600">+91 {account.mobile} • {account.email}</p>
                           <p className="text-[11px] text-slate-400">Joined: {formatAdminDate(account.createdAt)}</p>
                         </div>
-                        <div className="flex shrink-0 flex-wrap gap-1.5">
+                        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                           {account.role === 'seeker' && <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(account.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(account.profile) ? 'Profile Complete' : `Profile ${seekerProfileProgress(account.profile)}%`}</span>}
                           <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.hasPassword || account.passwordHash) ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>{(account.hasPassword || account.passwordHash) ? 'Password Set' : 'No Password'}</span>
+                          <button type="button" onClick={() => setAdminAccountDetail(account)} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-slate-800"><Eye className="h-3.5 w-3.5" /> View Account</button>
                         </div>
                       </div>
                     ))}
@@ -5956,12 +6516,12 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every Starter and Pro plan purchase is recorded here with its 30-day validity.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every paid plan purchase is recorded with the Admin-set price and validity used at checkout. Plans turn EXPIRED automatically at their expiry time.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Purchases</p><p className="mt-0.5 text-2xl font-extrabold">{displayedPurchases.length}</p></div>
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Active Plans</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">{displayedPurchases.filter(isPurchaseActive).length}</p></div>
-                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Starter ₹99</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{displayedPurchases.filter(p => p.plan === 'starter').length}</p></div>
-                    <div className="rounded-2xl bg-violet-50 p-3.5"><p className="text-[11px] font-bold text-violet-700">Pro ₹499</p><p className="mt-0.5 text-2xl font-extrabold text-violet-700">{displayedPurchases.filter(p => p.plan === 'pro').length}</p></div>
+                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">{commerceSettings.plans.starter.name} • Current {formatINR(commerceSettings.plans.starter.price)}</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{displayedPurchases.filter(p => p.plan === 'starter').length}</p></div>
+                    <div className="rounded-2xl bg-violet-50 p-3.5"><p className="text-[11px] font-bold text-violet-700">{commerceSettings.plans.pro.name} • Current {formatINR(commerceSettings.plans.pro.price)}</p><p className="mt-0.5 text-2xl font-extrabold text-violet-700">{displayedPurchases.filter(p => p.plan === 'pro').length}</p></div>
                   </div>
                   <div className="mt-3 space-y-2">
                     {displayedPurchases.map(purchase => (
@@ -6025,6 +6585,146 @@ export default function App() {
                         <p className="text-xs text-slate-500">Starter and Pro payments will be listed here with transaction IDs.</p>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'plans' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-2 text-base font-extrabold"><CreditCard className="h-5 w-5 text-sky-600" /> Job Seeker Plans &amp; Payment Receiving</p>
+                    <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live Settings' : 'This Device'}</span>
+                    {isSupabaseConfigured && <button type="button" onClick={() => void refreshCommerceSettings().then(settings => { setCommerceDraft(settings); setCommerceSettingsError(''); setToast('Latest live plan and payment settings loaded.') }).catch(() => setCommerceSettingsError('Unable to refresh live settings. Your current editor values were kept.'))} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Refresh</button>}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Set the Job Seeker plan price, validity, daily contact limit and benefits, plus the payment source shown during purchase. After the Job Seeker confirms payment, the plan activates automatically. At the exact expiry time, Free activates automatically and paid benefits stop.</p>
+                  {commerceSettings.updatedAt && <p className="mt-2 text-[11px] font-bold text-slate-400">Last saved: {formatAdminDate(commerceSettings.updatedAt)}</p>}
+
+                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    {(['starter', 'pro'] as PaidPlanId[]).map(planId => {
+                      const plan = commerceDraft.plans[planId]
+                      return (
+                        <div key={planId} className={`rounded-3xl border p-4 ${planId === 'starter' ? 'border-sky-200 bg-sky-50/50' : 'border-violet-200 bg-violet-50/50'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white ${planId === 'starter' ? 'bg-sky-600' : 'bg-violet-600'}`}>{planId === 'starter' ? <Zap className="h-5 w-5" /> : <Crown className="h-5 w-5" />}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-extrabold">{planId === 'starter' ? 'Starter Plan Settings' : 'Pro Plan Settings'}</p>
+                              <p className="text-[11px] font-semibold text-slate-500">Job Seekers see these details before paying.</p>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${plan.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>{plan.enabled ? 'PURCHASE ON' : 'PURCHASE OFF'}</span>
+                          </div>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Plan Name</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input value={plan.name} onChange={e => updateCommercePlanDraft(planId, { name: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder={planId === 'starter' ? 'Starter' : 'Pro'} />
+                            </div>
+                            <div>
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Price (₹)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="100000" value={plan.price} onChange={e => updateCommercePlanDraft(planId, { price: Number(e.target.value) })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" />
+                            </div>
+                            <div>
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Validity (days)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="3650" value={plan.validityDays} onChange={e => updateCommercePlanDraft(planId, { validityDays: Number(e.target.value) })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Direct Contacts Per Day</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                              <input type="number" min="1" max="10000" value={plan.unlimited ? '' : plan.dailyLimit} disabled={plan.unlimited} onChange={e => updateCommercePlanDraft(planId, { dailyLimit: Number(e.target.value) })} placeholder={plan.unlimited ? 'Unlimited' : 'Example: 15'} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-100 disabled:text-slate-400" />
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.enabled} onChange={e => updateCommercePlanDraft(planId, { enabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Purchase ON</label>
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.unlimited} onChange={e => updateCommercePlanDraft(planId, { unlimited: e.target.checked })} className="h-4 w-4 accent-sky-600" /> Unlimited contacts</label>
+                            <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={plan.popular} onChange={e => updateCommercePlanDraft(planId, { popular: e.target.checked })} className="h-4 w-4 accent-violet-600" /> Most Popular</label>
+                          </div>
+                          <div className="mt-3">
+                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Plan Benefits (one benefit per line)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                            <textarea value={plan.features.join('\n')} onChange={e => updateCommercePlanDraft(planId, { features: e.target.value.split('\n') })} rows={6} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-sky-500" placeholder={'No banner or native ads\nUnmasked phone + email'} />
+                            <p className="mt-1 text-[11px] text-slate-500">The contact limit above is added automatically as the first benefit.</p>
+                          </div>
+                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-[11px] font-bold text-slate-600">Preview: {formatINR(plan.price)} / {plan.validityDays || 0} days • {plan.unlimited ? 'Unlimited' : `${plan.dailyLimit || 0}/day`} direct contacts</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50/50 p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Wallet className="h-5 w-5" /></span>
+                      <div>
+                        <p className="text-sm font-extrabold">Payment Receiving Source</p>
+                        <p className="text-[11px] font-semibold text-slate-500">These details are shown to the Job Seeker at checkout.</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Receiver / Payee Name</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                        <input value={commerceDraft.payment.receiverName} onChange={e => updateCommercePaymentDraft({ receiverName: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="M Divakar Reddy" />
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>UPI ID</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                        <input value={commerceDraft.payment.upiId} onChange={e => updateCommercePaymentDraft({ upiId: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="yourname@upi" />
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.upiEnabled} onChange={e => updateCommercePaymentDraft({ upiEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> UPI Payment ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.paymentLinkEnabled} onChange={e => updateCommercePaymentDraft({ paymentLinkEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Payment Link ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.bankEnabled} onChange={e => updateCommercePaymentDraft({ bankEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Bank Transfer ON</label>
+                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.demoCheckoutEnabled} onChange={e => updateCommercePaymentDraft({ demoCheckoutEnabled: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Demo Checkout ON</label>
+                    </div>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+                      <div className="rounded-2xl border bg-white p-3">
+                        <p className="flex items-center gap-2 text-xs font-extrabold text-slate-700"><QrCode className="h-4 w-4 text-emerald-600" /> UPI QR Image</p>
+                        {commerceDraft.payment.qrImageUrl ? (
+                          <img src={commerceDraft.payment.qrImageUrl} alt="Admin UPI payment QR" className="mx-auto mt-3 max-h-56 w-auto rounded-xl border object-contain" />
+                        ) : (
+                          <div className="mt-3 rounded-xl bg-slate-50 px-4 py-8 text-center text-xs font-semibold text-slate-400">No QR image added</div>
+                        )}
+                        <input id="admin-payment-qr-input" type="file" accept="image/*" className="hidden" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void handlePaymentQrFile(file) }} />
+                        <div className="mt-3 flex gap-2">
+                          <label htmlFor="admin-payment-qr-input" className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-slate-900 px-3 py-2.5 text-xs font-bold text-white ${commerceQrUploading ? 'pointer-events-none opacity-60' : ''}`}><Upload className="h-3.5 w-3.5" /> {commerceQrUploading ? 'Adding QR…' : 'Upload QR'}</label>
+                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={() => updateCommercePaymentDraft({ qrImageUrl: '' })} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
+                        </div>
+                        {!commerceDraft.payment.qrImageUrl.startsWith('data:') && (
+                          <input value={commerceDraft.payment.qrImageUrl} onChange={e => updateCommercePaymentDraft({ qrImageUrl: e.target.value.trim() })} className="mt-3 w-full rounded-xl border bg-white px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500" placeholder="Or paste QR image URL (optional)" />
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Payment Link</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <input value={commerceDraft.payment.paymentLink} onChange={e => updateCommercePaymentDraft({ paymentLink: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="https://…" />
+                        </div>
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Bank Receiving Details</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <textarea value={commerceDraft.payment.bankDetails} onChange={e => updateCommercePaymentDraft({ bankDetails: e.target.value })} rows={4} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-emerald-500" placeholder={'Account Name:\nAccount Number:\nIFSC:\nBank / Branch:'} />
+                        </div>
+                        <div>
+                          <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Instructions Shown to Job Seeker</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
+                          <textarea value={commerceDraft.payment.instructions} onChange={e => updateCommercePaymentDraft({ instructions: e.target.value })} rows={4} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-emerald-500" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p><b>Manual UPI/bank payments:</b> the plan activates after the Job Seeker submits the payment/UTR reference. Always cross-check that reference in your UPI/bank app from the Payment List. Automatic bank verification/Play Billing can replace this manual confirmation during production billing setup.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-3xl border bg-slate-50 p-4">
+                    <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                      <div>
+                        {supabase && (
+                          <div className="max-w-md">
+                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Current Admin Password (required for secure Supabase save)</span><KeyRound className="h-3.5 w-3.5 text-sky-500" /></label>
+                            <input type="password" value={commerceAdminPassword} onChange={e => setCommerceAdminPassword(e.target.value)} autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder="Enter current Admin password" />
+                          </div>
+                        )}
+                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Saving updates the live plan prices, validity and payment source for Job Seekers. Existing purchases keep the price and expiry recorded at their checkout time.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') }} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
+                        <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : 'Save Plans & Payments'}</button>
+                      </div>
+                    </div>
+                    {commerceSettingsError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {commerceSettingsError}</p>}
                   </div>
                 </div>
               )}
@@ -6196,12 +6896,16 @@ export default function App() {
                       <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Password</span><span className="flex items-center gap-2"><b>••••••••</b>{renderPencilEditButton('Admin Password', () => document.getElementById('admin-current-password')?.focus())}</span></div>
                       <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><span className="flex items-center gap-2"><b>App Founder &amp; Admin</b><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
                       <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></div>
+                      <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs leading-relaxed text-sky-950"><b>All user accounts:</b> open <b>Users List → View Account</b> to review any Job Seeker/Recruiter account, profile, plan and purchases. User passwords are never shown, and no universal/master password is enabled.</div>
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-xs leading-relaxed text-emerald-950"><b>Current paid plans:</b> {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days • {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days. Receiver: {commerceSettings.payment.receiverName}.</div>
                     </div>
-                    <div className="mt-4 flex gap-2">
-                      <button onClick={handleClearAllVacancies} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={handleAdminLogout} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
+                      <button onClick={() => setAdminTab('plans')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><CreditCard className="h-3.5 w-3.5" /> Plans & Payments</button>
+                      <button onClick={handleClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
-                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly.</p>
+                    <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
                 </div>
               )}
@@ -6375,7 +7079,7 @@ export default function App() {
                   </button>
                 )}
                 <p className="mt-2 text-center text-xs text-slate-500">Reward granted only after watching full 15 sec</p>
-                <button onClick={() => closeSponsoredReveal(true)} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip reveal ads — Starter ₹99/mo (Apply ad still plays once)</button>
+                <button onClick={() => closeSponsoredReveal(true)} className="mt-2 w-full rounded-full border border-sky-600 py-2 text-xs font-bold text-sky-700">Skip reveal ads — {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days (Apply ad still plays once)</button>
               </div>
             </motion.div>
           </motion.div>
@@ -6423,6 +7127,186 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* ADMIN VIEW ACCOUNT — safe account/profile/plan view; never a user-password bypass */}
+      <AnimatePresence>
+        {isAdmin && adminAccountDetail && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setAdminAccountDetail(null)}>
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[860px] overflow-y-auto rounded-3xl bg-slate-50 shadow-2xl">
+              <div className="sticky top-0 z-10 bg-gradient-to-r from-sky-600 to-indigo-600 p-5 text-white">
+                <div className="flex items-start gap-4">
+                  <AccountAvatar name={adminAccountDetail.name} photo={adminAccountDetail.role === 'seeker' ? adminAccountDetail.profile?.profilePhoto : undefined} imgClassName="h-16 w-16 border-2 border-white shadow" fallbackClassName="flex h-16 w-16 bg-white text-xl text-sky-700 shadow" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-extrabold tracking-widest text-sky-100">ADMIN • VIEW ACCOUNT</p>
+                    <h3 className="mt-1 truncate text-2xl font-extrabold leading-tight">{adminAccountDetail.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-sky-50">{adminAccountDetail.role === 'seeker' ? 'Job Seeker Account' : 'Recruiter Account'} • +91 {adminAccountDetail.mobile}</p>
+                    <p className="truncate text-xs text-sky-100">{adminAccountDetail.email}</p>
+                  </div>
+                  <button type="button" onClick={() => setAdminAccountDetail(null)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 transition hover:bg-white/30" aria-label="Close account details"><X className="h-5 w-5" /></button>
+                </div>
+              </div>
+
+              <div className="p-5">
+                <div className="flex items-start gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-950">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
+                  <p><b>Safe Admin view:</b> you can review this account after your normal Admin login. The user’s password is protected and is never shown. This view does not log you in as the user and does not use a universal/master password.</p>
+                </div>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> Account Details</h4>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {[
+                        ['Full Name', adminAccountDetail.name],
+                        ['Account Type', adminAccountDetail.role === 'seeker' ? 'Job Seeker' : 'Recruiter'],
+                        ['Mobile Number', `+91 ${adminAccountDetail.mobile}`],
+                        ['Email ID', adminAccountDetail.email],
+                        ['Joined', formatAdminDate(adminAccountDetail.createdAt)],
+                        ['Password', (adminAccountDetail.hasPassword || adminAccountDetail.passwordHash) ? 'Password set • Protected' : 'No password set'],
+                        ...(adminAccountDetail.role === 'seeker' ? [['Job Profile', isSeekerProfileComplete(adminAccountDetail.profile) ? 'Complete' : `${seekerProfileProgress(adminAccountDetail.profile)}% complete`]] as [string, string][] : []),
+                        ...(adminAccountDeletionRequest ? [['Deletion Request', `${adminAccountDeletionRequest.status === 'pending' ? 'Pending' : 'Rejected'} • ${adminAccountDeletionRequest.reasonCategory}`]] as [string, string][] : []),
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-2xl bg-slate-50 px-3.5 py-3">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">{label.toUpperCase()}</p>
+                          <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <a href={`tel:+91${adminAccountDetail.mobile}`} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3.5 py-2 text-xs font-extrabold text-white"><Phone className="h-3.5 w-3.5" /> Call</a>
+                      <a href={`https://wa.me/91${adminAccountDetail.mobile}?text=${encodeURIComponent(`Hi ${adminAccountDetail.name}, I am M Divakar Reddy from PharmaSales Jobs regarding your account.`)}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-[#25D366] px-3.5 py-2 text-xs font-extrabold text-white"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</a>
+                      <a href={`mailto:${adminAccountDetail.email}?subject=${encodeURIComponent('PharmaSales Jobs account support')}`} className="flex items-center gap-1.5 rounded-full border bg-white px-3.5 py-2 text-xs font-extrabold"><Mail className="h-3.5 w-3.5" /> Email</a>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><Crown className="h-5 w-5 text-violet-600" /> Current Plan</h4>
+                    {adminAccountDetail.role === 'recruiter' ? (
+                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                        <p className="text-sm font-extrabold">No Recruiter plan needed</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-600">Recruiters register free, post vacancies for Admin approval and browse anonymous candidate profiles.</p>
+                      </div>
+                    ) : adminAccountActivePurchase ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                        <div className="flex items-center gap-2">
+                          <p className="flex-1 text-base font-extrabold text-emerald-950">{adminAccountActivePurchase.planName} Active</p>
+                          <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-extrabold text-white">ACTIVE</span>
+                        </div>
+                        <div className="mt-3 space-y-1.5 text-xs leading-relaxed text-emerald-900">
+                          <p><b>Amount:</b> {formatINR(adminAccountActivePurchase.amount)} • {adminAccountActivePurchase.method}</p>
+                          <p><b>Purchased:</b> {formatAdminDate(adminAccountActivePurchase.purchasedAt)}</p>
+                          <p><b>Valid till:</b> {formatAdminDate(adminAccountActivePurchase.expiresAt)} • {getPlanDaysLeft(adminAccountActivePurchase.expiresAt, planClock)} day(s) left</p>
+                          <p className="break-all"><b>Transaction:</b> {adminAccountActivePurchase.transactionId}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                        <p className="text-sm font-extrabold">Free Active</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-600">{adminAccountPurchases[0] ? `Last paid plan ${adminAccountPurchases[0].planName} expired on ${formatAdminDate(adminAccountPurchases[0].expiresAt)}.` : 'No Starter/Pro purchase recorded for this Job Seeker.'}</p>
+                      </div>
+                    )}
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountPurchases.length}</p><p className="text-[10px] font-bold text-slate-500">Purchases</p></div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountSupportTickets.length}</p><p className="text-[10px] font-bold text-slate-500">Tickets</p></div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountLiveJobs.length + adminAccountPendingJobs.length}</p><p className="text-[10px] font-bold text-slate-500">Vacancies</p></div>
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('purchases') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Crown className="h-4 w-4" /> Open Purchase List</button>
+                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('support') }} className="flex w-full items-center justify-center gap-2 rounded-full border bg-white py-2.5 text-xs font-extrabold"><MessageCircle className="h-4 w-4 text-sky-600" /> Open Support Tickets</button>
+                      {adminAccountPendingJobs.length > 0 && <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('approvals') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-2.5 text-xs font-extrabold text-white"><Clock3 className="h-4 w-4" /> Review Pending Vacancies ({adminAccountPendingJobs.length})</button>}
+                    </div>
+                  </div>
+                </div>
+
+                {adminAccountDetail.role === 'seeker' && (
+                  <div className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Job Seeker Profile</h4>
+                      <span className={`ml-auto rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(adminAccountDetail.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(adminAccountDetail.profile) ? 'PROFILE COMPLETE' : `PROFILE ${seekerProfileProgress(adminAccountDetail.profile)}%`}</span>
+                    </div>
+                    {adminAccountDetail.profile ? (
+                      <>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {([
+                            ['Fresher / Experienced', adminAccountDetail.profile.experienceType === 'fresher' ? 'Fresher' : 'Experienced'],
+                            ['Qualification', adminAccountDetail.profile.qualification],
+                            ['Role Looking For', adminAccountDetail.profile.desiredRole ? getRoleLabel(adminAccountDetail.profile.desiredRole) : ''],
+                            ...(adminAccountDetail.profile.experienceType === 'fresher'
+                              ? [['Passing Year', adminAccountDetail.profile.passingYear]] as [string, string][]
+                              : [
+                                  ['Total Experience', adminAccountDetail.profile.totalExperience],
+                                  ['Current Company', adminAccountDetail.profile.currentCompany],
+                                  ['Current Role', adminAccountDetail.profile.currentRole ? getRoleLabel(adminAccountDetail.profile.currentRole) : ''],
+                                  ['Current Package', adminAccountDetail.profile.currentPackage],
+                                ] as [string, string][]),
+                            ['Expected Package', adminAccountDetail.profile.expectedPackage],
+                            ['Current State', adminAccountDetail.profile.state],
+                            ['Current City', adminAccountDetail.profile.city],
+                            ['Current HQ', adminAccountDetail.profile.currentHq],
+                            ['Preferred HQ', adminAccountDetail.profile.preferredHq],
+                            ['Notice Period / Joining', adminAccountDetail.profile.noticePeriod],
+                            ['Two-Wheeler', adminAccountDetail.profile.twoWheeler],
+                            ['Skills', adminAccountDetail.profile.skills],
+                          ] as [string, string][]).map(([label, value]) => (
+                            <div key={label} className="rounded-2xl bg-slate-50 px-3.5 py-3">
+                              <p className="text-[10px] font-extrabold tracking-widest text-slate-400">{label.toUpperCase()}</p>
+                              <p className="mt-1 break-words text-sm font-bold leading-snug text-slate-900">{value?.trim() ? value : 'Not filled'}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-2xl bg-sky-50 px-3.5 py-3 text-xs leading-relaxed text-sky-950"><b>Profile Photo:</b> {adminAccountDetail.profile.profilePhoto ? 'Added' : 'Not added'}</div>
+                          <div className="rounded-2xl bg-sky-50 px-3.5 py-3 text-xs leading-relaxed text-sky-950"><b>Resume:</b> {adminAccountDetail.profile.resumeName ? `${adminAccountDetail.profile.resumeName}${adminAccountDetail.profile.resumeSize ? ` • ${formatFileSize(adminAccountDetail.profile.resumeSize)}` : ''}` : 'Not uploaded'}<span className="block text-sky-700">The resume file itself remains private on the Job Seeker’s device.</span></div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="mt-4 rounded-2xl bg-slate-50 p-5 text-center text-sm font-semibold text-slate-500">This Job Seeker has not filled the job profile yet.</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><IndianRupee className="h-5 w-5 text-emerald-600" /> Recent Purchases</h4>
+                    <div className="mt-3 space-y-2">
+                      {adminAccountPurchases.slice(0, 5).map(purchase => (
+                        <div key={purchase.id} className="flex items-start gap-3 rounded-2xl border px-3.5 py-3">
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white ${purchase.plan === 'pro' ? 'bg-violet-600' : 'bg-sky-600'}`}><Crown className="h-4 w-4" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-extrabold">{purchase.planName} • {formatINR(purchase.amount)}</p>
+                            <p className="break-all font-mono text-[11px] text-slate-500">{purchase.transactionId}</p>
+                            <p className="text-[11px] text-slate-400">{purchase.method} • {formatAdminDate(purchase.purchasedAt)} → {formatAdminDate(purchase.expiresAt)}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${purchase.status !== 'paid' ? 'bg-red-50 text-red-600' : isPurchaseActive(purchase) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{purchase.status !== 'paid' ? purchase.status.toUpperCase() : isPurchaseActive(purchase) ? 'ACTIVE' : 'EXPIRED'}</span>
+                        </div>
+                      ))}
+                      {adminAccountPurchases.length === 0 && <p className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">No purchases for this account.</p>}
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                    <h4 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Vacancies Submitted</h4>
+                    <div className="mt-3 space-y-2">
+                      {[...adminAccountPendingJobs.map(job => ({ job, status: 'PENDING APPROVAL' })), ...adminAccountLiveJobs.map(job => ({ job, status: 'LIVE' }))].slice(0, 6).map(({ job, status }) => (
+                        <div key={`${status}-${job.id}`} className="flex items-start gap-3 rounded-2xl border px-3.5 py-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-extrabold text-white" style={{ background: job.color }}>{job.company.slice(0, 2).toUpperCase()}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-extrabold">{job.company} • {job.title}</p>
+                            <p className="truncate text-[11px] text-slate-500">{job.hq} • {job.type} • {job.ctc}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-extrabold ${status === 'LIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{status}</span>
+                        </div>
+                      ))}
+                      {adminAccountLiveJobs.length + adminAccountPendingJobs.length === 0 && <p className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">No vacancies submitted by this account.</p>}
+                    </div>
+                    <div className="mt-4 rounded-2xl bg-slate-50 px-3.5 py-3 text-xs leading-relaxed text-slate-600"><b>Support:</b> {adminAccountSupportTickets.filter(ticket => ticket.status === 'open' || ticket.status === 'in-progress').length} open/in-progress ticket(s), {adminAccountSupportTickets.length} total.</div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* PRICING MODAL */}
       <AnimatePresence>
         {showPricing && !shouldHideJobSeekerExperience && (
@@ -6431,25 +7315,130 @@ export default function App() {
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
                 <div>
                   <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Jobs</p>
-                  <p className="text-xs text-slate-500">Free is ad-supported. Starter/Pro remove browsing and contact-reveal ads; Apply Now still plays one sponsored ad.</p>
+                  <p className="text-xs text-slate-500">Admin-set prices and validity. The payment receiving source is shown at checkout; Apply Now still plays one sponsored ad.</p>
                 </div>
                 <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
               </div>
               <div className="grid gap-4 p-6 md:grid-cols-3">
-                {TIERS.map(t => (
+                {planCards.map(t => (
                   <div key={t.id} className={`rounded-2xl border p-4 ${tier === t.id ? 'border-sky-600 bg-sky-50' : 'bg-slate-50'}`}>
-                    <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p></div>
+                    <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p>{t.popular && <span className="ml-auto rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-extrabold text-white">POPULAR</span>}</div>
                     <p className="mt-1 text-xl font-extrabold">{t.price}<span className="text-xs font-semibold text-slate-500">{t.period}</span></p>
+                    <p className="mt-0.5 text-[11px] font-bold text-slate-500">{t.limit} unlocks{t.id !== 'free' ? ` • ${t.validityDays}-day validity` : ''}</p>
                     <ul className="mt-3 space-y-1.5">
-                      {t.features.map(f => <li key={f} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
+                      {t.features.map((f, featureIndex) => <li key={`${f}-${featureIndex}`} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
                     </ul>
-                    <button onClick={() => { handlePlanSelect(t.id); setShowPricing(false) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
+                    <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{t.id === 'free' ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : 'Free Active') : !t.enabled ? 'Purchase Paused' : activePlanPurchase?.plan === 'pro' && t.id === 'starter' ? 'After Pro Expiry' : tier === t.id ? `Renew ${t.name}` : `Buy ${t.name}`}</button>
                   </div>
                 ))}
               </div>
               <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                 <p><b>Free plan:</b> 3 daily full-contact unlocks open 7 extra jobs. Extra jobs use separate sponsored ads for company, manager name and contact number.</p>
-                <p className="mt-1"><b>Starter & Pro:</b> Direct contact reveals and no browsing/native ads. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
+                <p className="mt-1"><b>Paid plans:</b> Direct contact reveals and no browsing/native ads until the shown validity ends. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PLAN CHECKOUT — Admin-set payment source; activation is automatic after confirmation */}
+      <AnimatePresence>
+        {checkoutPlan && currentUser?.role === 'seeker' && hasAuthenticated && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 p-4" onClick={closePlanCheckout}>
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-3xl bg-white shadow-2xl">
+              <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-white p-4">
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white ${checkoutPlan === 'starter' ? 'bg-sky-600' : 'bg-violet-600'}`}>{checkoutPlan === 'starter' ? <Zap className="h-5 w-5" /> : <Crown className="h-5 w-5" />}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-base font-extrabold">Buy {commerceSettings.plans[checkoutPlan].name} Plan</p>
+                  <p className="text-[11px] font-semibold text-slate-500">Payment source set by Admin • Plan activates automatically after confirmation</p>
+                </div>
+                <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="rounded-full border p-2 disabled:opacity-50" aria-label="Close checkout"><X className="h-5 w-5" /></button>
+              </div>
+
+              <div className="p-5">
+                <div className={`rounded-3xl border p-4 ${checkoutPlan === 'starter' ? 'border-sky-200 bg-sky-50' : 'border-violet-200 bg-violet-50'}`}>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="min-w-[180px] flex-1">
+                      <p className="text-[10px] font-extrabold tracking-widest text-slate-500">PLAN AMOUNT</p>
+                      <p className="mt-1 text-3xl font-extrabold">{formatINR(commerceSettings.plans[checkoutPlan].price)} <span className="text-sm font-semibold text-slate-500">/ {commerceSettings.plans[checkoutPlan].validityDays} days</span></p>
+                      <p className="mt-1 text-xs font-bold text-slate-600">{commerceSettings.plans[checkoutPlan].unlimited ? 'Unlimited' : `${getPaidPlanLimit(commerceSettings.plans[checkoutPlan])}/day`} direct contact reveals</p>
+                    </div>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold text-emerald-700 shadow-sm">AUTO-ACTIVATES</span>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">JOB SEEKER</span><b>{currentUser.name}</b><span className="block truncate text-slate-500">+91 {currentUser.mobile}</span></p>
+                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">NEW EXPIRY AFTER PAYMENT</span><b>{formatAdminDate(getPlanCheckoutExpiry(checkoutPlan, commerceSettings.plans[checkoutPlan].validityDays))}</b><span className="block text-slate-500">{activePlanPurchase?.plan === checkoutPlan ? 'Renewal extends your current validity.' : 'Free starts automatically after this time.'}</span></p>
+                  </div>
+                </div>
+
+                <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">SELECT PAYMENT METHOD</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {getAvailableCheckoutMethods(commerceSettings).map(method => (
+                    <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-extrabold transition disabled:opacity-50 ${checkoutMethod === method.id ? 'bg-slate-900 text-white shadow' : 'border bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      {method.id === 'upi' ? <QrCode className="h-3.5 w-3.5" /> : method.id === 'bank' ? <Landmark className="h-3.5 w-3.5" /> : <CreditCard className="h-3.5 w-3.5" />} {method.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50/60 p-4">
+                  <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-950"><Wallet className="h-4 w-4 text-emerald-700" /> Pay To — Admin Receiving Source</p>
+                  <p className="mt-2 text-sm"><span className="text-slate-500">Receiver:</span> <b>{commerceSettings.payment.receiverName}</b></p>
+                  <p className="text-sm"><span className="text-slate-500">Exact amount:</span> <b>{formatINR(commerceSettings.plans[checkoutPlan].price)}</b></p>
+
+                  {checkoutMethod === 'upi' && (
+                    <div className="mt-3">
+                      <div className="flex flex-col gap-2 rounded-2xl bg-white p-3 sm:flex-row sm:items-center">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-extrabold tracking-widest text-slate-400">UPI ID</p>
+                          <p className="truncate font-mono text-sm font-extrabold">{commerceSettings.payment.upiId}</p>
+                        </div>
+                        <button type="button" onClick={() => void (async () => { try { await navigator.clipboard.writeText(commerceSettings.payment.upiId); setToast('Admin UPI ID copied.') } catch { setCheckoutError('Unable to copy automatically. Please copy the UPI ID shown above.') } })()} className="flex items-center justify-center gap-1.5 rounded-full border px-3 py-2 text-xs font-bold"><Copy className="h-3.5 w-3.5" /> Copy UPI ID</button>
+                      </div>
+                      {commerceSettings.payment.qrImageUrl && <img src={commerceSettings.payment.qrImageUrl} alt="Admin UPI payment QR" className="mx-auto mt-3 max-h-64 w-auto rounded-2xl border bg-white object-contain p-2" />}
+                      <a href={`upi://pay?pa=${encodeURIComponent(commerceSettings.payment.upiId)}&pn=${encodeURIComponent(commerceSettings.payment.receiverName)}&am=${commerceSettings.plans[checkoutPlan].price}&cu=INR&tn=${encodeURIComponent(`PharmaSales Jobs ${commerceSettings.plans[checkoutPlan].name} plan for ${currentUser.mobile}`)}`} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-extrabold text-white shadow"><Smartphone className="h-4 w-4" /> Pay via UPI App</a>
+                      <p className="mt-2 text-center text-[11px] text-slate-500">If the UPI app does not open on desktop, scan the QR or pay manually using the UPI ID.</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'payment-link' && (
+                    <div className="mt-3">
+                      <a href={commerceSettings.payment.paymentLink} target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-extrabold text-white shadow"><CreditCard className="h-4 w-4" /> Open Admin Payment Link</a>
+                      <p className="mt-2 break-all rounded-xl bg-white px-3 py-2 text-[11px] font-semibold text-slate-500">{commerceSettings.payment.paymentLink}</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'bank' && (
+                    <div className="mt-3 rounded-2xl bg-white p-3">
+                      <p className="flex items-center gap-2 text-[10px] font-extrabold tracking-widest text-slate-400"><Landmark className="h-4 w-4" /> BANK RECEIVING DETAILS</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{commerceSettings.payment.bankDetails}</p>
+                    </div>
+                  )}
+
+                  {checkoutMethod === 'demo' && (
+                    <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p><b>Demo checkout:</b> no real money moves in this preview. Use it only to test automatic plan activation and expiry. Connect Play Billing or a verified payment gateway for production purchases.</p>
+                    </div>
+                  )}
+
+                  {commerceSettings.payment.instructions.trim() && checkoutMethod !== 'demo' && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
+                </div>
+
+                {checkoutMethod !== 'demo' && (
+                  <div className="mt-4">
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Payment / UTR / Transaction Reference *</label>
+                    <input value={checkoutReference} onChange={e => { setCheckoutReference(e.target.value); setCheckoutError('') }} disabled={checkoutProcessing} className="w-full rounded-xl border bg-white px-3 py-3 font-mono text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-50" placeholder="Enter reference shown after successful payment" autoComplete="off" />
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Use a new reference for every purchase/renewal. Admin can cross-check it in the Payment List.</p>
+                  </div>
+                )}
+
+                {checkoutError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {checkoutError}</p>}
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                  <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
+                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : checkoutMethod === 'demo' ? 'Complete Demo Payment — Activate Plan' : 'Payment Done — Activate Plan'}</button>
+                </div>
+                <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">After activation, this purchase appears in Admin Purchase &amp; Payment Lists. Paid benefits stop automatically at expiry.</p>
               </div>
             </motion.div>
           </motion.div>
