@@ -228,6 +228,7 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
+#variable_conflict use_column
 begin
   if not public.is_valid_app_email(p_email) then
     raise exception 'Please enter a correct email ID. Gmail IDs must end with @gmail.com.'
