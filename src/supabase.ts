@@ -53,3 +53,15 @@ export type RemotePurchaseRow = {
   purchased_at: string
   expires_at: string | null
 }
+
+export type RemoteUserStateRow = {
+  payload: Record<string, unknown>
+  updated_at?: string | null
+}
+
+export type RemoteSyncRecordRow = {
+  record_id: string
+  record_position: number
+  payload: Record<string, unknown>
+  updated_at?: string | null
+}

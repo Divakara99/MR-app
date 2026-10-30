@@ -102,9 +102,9 @@ export const PRIVACY_SECTIONS: LegalSection[] = [
   {
     title: '9. Cookies, Local Storage & Persistent Login',
     bullets: [
-      'The app uses local storage and similar browser storage to remember your session, plan, saved jobs, applications, contact reveals, daily unlocks, preferences and account-related requests on your device.',
+      'The app uses local storage and similar browser storage for your session and offline cache. When you are signed in, saved jobs, applications, contact reveals, daily unlocks and account-related requests may also sync to your account so they can be restored on another device.',
       'If you remain logged in, the app can reopen your account without asking for your password each time. After Logout, login again with either your registered mobile number or email ID and your password. Use Logout when using a shared or public device.',
-      'Clearing browser/app storage may sign you out and may remove locally stored preferences, saved activity or ticket history shown on that device.',
+      'Clearing browser/app storage may sign you out and remove the offline cache or preferences on that device. Account-synced information can be restored after you log in again.',
     ],
   },
   {

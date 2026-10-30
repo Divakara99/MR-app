@@ -10,7 +10,7 @@ import {
   Package, Upload, Camera, Download
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow } from './supabase'
+import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
@@ -24,6 +24,12 @@ type StoredDailyJobAccess = {
   revealed: string[]
   dailyUnlocks: number
   extraReveals: Record<string, ExtraJobReveals>
+}
+type UserJobState = {
+  saved: string[]
+  applied: string[]
+  requestedCandidates: string[]
+  dailyAccess: StoredDailyJobAccess
 }
 type Job = {
   id: string
@@ -154,6 +160,8 @@ type SupportTicket = {
   createdAt: string
   updatedAt: string
 }
+type RemoteSyncCollectionKey = 'jobs' | 'pending_jobs' | 'support_tickets' | 'deletion_requests'
+type SyncRecord = { id: string }
 
 // Vacancies are real only: no seeded/demo jobs are bundled with the app.
 const JOBS: Job[] = []
@@ -199,8 +207,7 @@ const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom)
 
 // ADMIN (M Divakar Reddy)
 const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
-const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in', ADMIN_REGISTERED_EMAIL]
-const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
+const ADMIN_IDS = ['divakar', 'admin', ADMIN_REGISTERED_EMAIL]
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
@@ -210,6 +217,7 @@ const SESSION_KEY = 'mr-session-v1'
 const GOOGLE_ENTRY_ROLE_KEY = 'mr-google-entry-role-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
+const GUEST_SUPPORT_TICKET_IDS_KEY = 'mr-guest-support-ticket-ids-v1'
 const PURCHASES_KEY = 'mr-purchases-v1'
 const DELETION_REASON_OPTIONS = [
   'I got a job and no longer need this account',
@@ -221,6 +229,7 @@ const DELETION_REASON_OPTIONS = [
 ]
 const CANDIDATE_INTERESTS_KEY = 'mr-candidate-interests-v1'
 const DAILY_JOB_ACCESS_KEY = 'mr-daily-job-access-v1'
+const USER_JOB_STATE_KEY = 'mr-user-job-state-v1'
 const FREE_DAILY_JOB_LIMIT = 3
 const FREE_EXTRA_JOB_LIMIT = 7
 const getTodayKey = () => new Date().toLocaleDateString('en-CA')
@@ -555,6 +564,99 @@ const loadSessionAccount = (): Account | null => {
   if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
   return account
 }
+const emptyUserJobState = (): UserJobState => ({
+  saved: [],
+  applied: [],
+  requestedCandidates: [],
+  dailyAccess: emptyDailyJobAccess(),
+})
+const normalizeStoredIdList = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? Array.from(new Set(value.map(item => String(item).trim()).filter(Boolean))).slice(0, 5000)
+    : []
+)
+const normalizeUserJobState = (value: unknown): UserJobState => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return emptyUserJobState()
+  const candidate = value as Partial<UserJobState>
+  const daily = candidate.dailyAccess && typeof candidate.dailyAccess === 'object' && !Array.isArray(candidate.dailyAccess)
+    ? candidate.dailyAccess as Partial<StoredDailyJobAccess>
+    : null
+  return {
+    saved: normalizeStoredIdList(candidate.saved),
+    applied: normalizeStoredIdList(candidate.applied),
+    requestedCandidates: normalizeStoredIdList(candidate.requestedCandidates),
+    dailyAccess: daily?.date === getTodayKey()
+      ? {
+          date: getTodayKey(),
+          revealed: normalizeStoredIdList(daily.revealed),
+          dailyUnlocks: Number.isFinite(daily.dailyUnlocks) ? Math.max(0, Math.floor(daily.dailyUnlocks as number)) : 0,
+          extraReveals: daily.extraReveals && typeof daily.extraReveals === 'object' && !Array.isArray(daily.extraReveals)
+            ? daily.extraReveals as Record<string, ExtraJobReveals>
+            : {},
+        }
+      : emptyDailyJobAccess(),
+  }
+}
+const userJobStateKey = (account: Pick<Account, 'role' | 'mobile'>) => `${account.role}:${normalizeMobile(account.mobile)}`
+const loadStoredUserJobStates = (): Record<string, UserJobState> => {
+  try {
+    const raw = localStorage.getItem(USER_JOB_STATE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, state]) => [key, normalizeUserJobState(state)]))
+  } catch { return {} }
+}
+const getStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>): UserJobState | null => (
+  loadStoredUserJobStates()[userJobStateKey(account)] ?? null
+)
+const saveStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>, state: UserJobState) => {
+  try {
+    const states = loadStoredUserJobStates()
+    states[userJobStateKey(account)] = normalizeUserJobState(state)
+    localStorage.setItem(USER_JOB_STATE_KEY, JSON.stringify(states))
+  } catch { /* ignore */ }
+}
+const deleteStoredUserJobState = (account: Pick<Account, 'role' | 'mobile'>) => {
+  try {
+    const states = loadStoredUserJobStates()
+    delete states[userJobStateKey(account)]
+    localStorage.setItem(USER_JOB_STATE_KEY, JSON.stringify(states))
+  } catch { /* ignore */ }
+}
+const loadInitialUserJobState = (): UserJobState => {
+  const sessionAccount = loadSessionAccount()
+  const stored = sessionAccount ? getStoredUserJobState(sessionAccount) : null
+  if (stored) return stored
+  let requestedCandidates: string[] = []
+  try {
+    const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY)
+    if (raw) requestedCandidates = normalizeStoredIdList(JSON.parse(raw))
+  } catch { /* ignore */ }
+  return {
+    saved: [],
+    applied: [],
+    requestedCandidates,
+    dailyAccess: loadDailyJobAccess(),
+  }
+}
+const mergeUserJobStates = (primary: UserJobState, secondary: UserJobState): UserJobState => {
+  const mergedExtraReveals: Record<string, ExtraJobReveals> = { ...secondary.dailyAccess.extraReveals }
+  Object.entries(primary.dailyAccess.extraReveals).forEach(([jobId, fields]) => {
+    mergedExtraReveals[jobId] = { ...(mergedExtraReveals[jobId] ?? {}), ...fields }
+  })
+  return normalizeUserJobState({
+    saved: [...primary.saved, ...secondary.saved],
+    applied: [...primary.applied, ...secondary.applied],
+    requestedCandidates: [...primary.requestedCandidates, ...secondary.requestedCandidates],
+    dailyAccess: {
+      date: getTodayKey(),
+      revealed: [...primary.dailyAccess.revealed, ...secondary.dailyAccess.revealed],
+      dailyUnlocks: Math.max(primary.dailyAccess.dailyUnlocks, secondary.dailyAccess.dailyUnlocks),
+      extraReveals: mergedExtraReveals,
+    },
+  })
+}
 const getAccountDestination = (account: Account): AppPage => {
   if (account.role === 'recruiter') return 'recruiters'
   return isSeekerProfileComplete(account.profile) ? 'home' : 'profile'
@@ -602,6 +704,15 @@ const loadSupportTickets = (): SupportTicket[] => {
       updatedAt: ticket.updatedAt || ticket.createdAt,
     }))
   } catch { return [] }
+}
+
+const loadGuestSupportTicketIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(GUEST_SUPPORT_TICKET_IDS_KEY)
+    if (raw) return normalizeStoredIdList(JSON.parse(raw))
+  } catch { /* ignore */ }
+  // Migrate guest tickets that were created on this device before sync existed.
+  return loadSupportTickets().filter(ticket => ticket.role === 'guest').map(ticket => ticket.id)
 }
 
 // AD COMPONENTS
@@ -663,11 +774,11 @@ export default function App() {
   const [role, setRole] = useState<typeof ROLES[number]>('All Roles')
   const [expFilter, setExpFilter] = useState<typeof EXP_OPTIONS[number]>('All Experience')
   const [verifiedOnly, setVerifiedOnly] = useState(false)
-  const [saved, setSaved] = useState<Set<string>>(new Set())
-  const [applied, setApplied] = useState<Set<string>>(new Set())
-  const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadDailyJobAccess().revealed))
-  const [dailyUnlocks, setDailyUnlocks] = useState(() => loadDailyJobAccess().dailyUnlocks)
-  const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadDailyJobAccess().extraReveals)
+  const [saved, setSaved] = useState<Set<string>>(() => new Set(loadInitialUserJobState().saved))
+  const [applied, setApplied] = useState<Set<string>>(() => new Set(loadInitialUserJobState().applied))
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set(loadInitialUserJobState().dailyAccess.revealed))
+  const [dailyUnlocks, setDailyUnlocks] = useState(() => loadInitialUserJobState().dailyAccess.dailyUnlocks)
+  const [extraReveals, setExtraReveals] = useState<Record<string, ExtraJobReveals>>(() => loadInitialUserJobState().dailyAccess.extraReveals)
   const [selected, setSelected] = useState<Job | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [showPricing, setShowPricing] = useState(false)
@@ -685,7 +796,7 @@ export default function App() {
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
   const [aiLoading, setAiLoading] = useState(false)
-  // Jobs are now state (Admin can post/delete; saved on this device)
+  // Jobs are state (Admin can post/delete; cached here and synced via Supabase)
   const [jobs, setJobs] = useState<Job[]>(() => loadInitialJobs())
   useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
   // Admin auth (M Divakar Reddy only)
@@ -741,6 +852,7 @@ export default function App() {
   const [deletionRequestError, setDeletionRequestError] = useState('')
   const [legalTab, setLegalTab] = useState<LegalTab>('privacy')
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => loadSupportTickets())
+  const [guestSupportTicketIds, setGuestSupportTicketIds] = useState<Set<string>>(() => new Set(loadGuestSupportTicketIds()))
   const [showSupportTicketModal, setShowSupportTicketModal] = useState(false)
   const [supportTicketSource, setSupportTicketSource] = useState<SupportTicketSource>('ai')
   const [supportTicketForm, setSupportTicketForm] = useState({ name: '', mobile: '', email: '', category: '', subject: '', details: '' })
@@ -758,13 +870,11 @@ export default function App() {
   const [candidateStateFilter, setCandidateStateFilter] = useState('All India')
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateProfileView | null>(null)
   const [remoteCandidateProfiles, setRemoteCandidateProfiles] = useState<CandidateProfileView[]>([])
-  const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => {
-    try { const raw = localStorage.getItem(CANDIDATE_INTERESTS_KEY); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return new Set(parsed as string[]) } } catch { /* ignore */ }
-    return new Set<string>()
-  })
+  const [requestedCandidates, setRequestedCandidates] = useState<Set<string>>(() => new Set(loadInitialUserJobState().requestedCandidates))
   useEffect(() => { try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)) } catch { /* ignore */ } }, [accounts])
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
   useEffect(() => { try { localStorage.setItem(SUPPORT_TICKETS_KEY, JSON.stringify(supportTickets)) } catch { /* ignore */ } }, [supportTickets])
+  useEffect(() => { try { localStorage.setItem(GUEST_SUPPORT_TICKET_IDS_KEY, JSON.stringify(Array.from(guestSupportTicketIds))) } catch { /* ignore */ } }, [guestSupportTicketIds])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
   useEffect(() => { try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(purchases)) } catch { /* ignore */ } }, [purchases])
   // Restore the buyer's still-active paid plan when their account session opens.
@@ -784,6 +894,12 @@ export default function App() {
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   const remoteSessionRefreshRef = useRef(false)
+  const remoteSyncLoadStartedRef = useRef(false)
+  const remoteSyncLoadedRef = useRef<Record<string, boolean>>({})
+  const remoteSyncPreviousRef = useRef<Record<string, SyncRecord[]>>({})
+  const remoteSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const remoteUserStateLoadedKeyRef = useRef('')
+  const remoteUserStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const googleAuthProcessingRef = useRef(false)
   const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -887,7 +1003,9 @@ export default function App() {
   }
 
   // ---- ADMIN: M Divakar Reddy ----
-  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
+  // No hard-coded Admin password: the local fallback exists only after a
+  // successful verified Admin login/reset has stored the current password.
+  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || '' } catch { return '' } }
   const openAdmin = (tab: typeof adminTab = 'overview') => {
     if (!isAdmin) {
       setAdminId('')
@@ -1066,6 +1184,106 @@ export default function App() {
       return next
     })
   }
+  const fetchRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey): Promise<T[] | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('list_app_sync_records', { p_collection_key: collectionKey })
+    if (error) throw error
+    return ((data ?? []) as RemoteSyncRecordRow[]).map(row => ({ ...(row.payload as Record<string, unknown>), id: row.record_id } as T))
+  }
+  const syncRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey, previous: T[], next: T[]) => {
+    if (!supabase) return
+    const previousById = new Map(previous.map((record, index) => [record.id, { index, json: JSON.stringify(record) }]))
+    const nextIds = new Set(next.map(record => record.id))
+    const operations: Promise<void>[] = []
+
+    next.forEach((record, index) => {
+      const previousRecord = previousById.get(record.id)
+      if (!previousRecord || previousRecord.index !== index || previousRecord.json !== JSON.stringify(record)) {
+        operations.push((async () => {
+          const { error } = await supabase.rpc('upsert_app_sync_record', {
+            p_collection_key: collectionKey,
+            p_record_id: record.id,
+            p_position: index,
+            p_payload: record,
+          })
+          if (error) throw error
+        })())
+      }
+    })
+
+    previous.forEach(record => {
+      if (!nextIds.has(record.id)) {
+        operations.push((async () => {
+          const { error } = await supabase.rpc('delete_app_sync_record', {
+            p_collection_key: collectionKey,
+            p_record_id: record.id,
+          })
+          if (error) throw error
+        })())
+      }
+    })
+
+    await Promise.all(operations)
+  }
+  const scheduleRemoteSyncCollection = <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey, next: T[]) => {
+    if (!supabase || !remoteSyncLoadedRef.current[collectionKey]) return
+    const existingTimer = remoteSyncTimersRef.current[collectionKey]
+    if (existingTimer) clearTimeout(existingTimer)
+    remoteSyncTimersRef.current[collectionKey] = setTimeout(() => {
+      const previous = (remoteSyncPreviousRef.current[collectionKey] ?? []) as T[]
+      remoteSyncPreviousRef.current[collectionKey] = next
+      void syncRemoteSyncCollection(collectionKey, previous, next).catch(() => {
+        // Keep the last confirmed snapshot so a later edit retries the diff.
+        remoteSyncPreviousRef.current[collectionKey] = previous
+      })
+    }, 350)
+  }
+  const mergeRemoteSyncRecords = <T extends SyncRecord>(remote: T[], local: T[]): T[] => {
+    const remoteIds = new Set(remote.map(record => record.id))
+    return [...remote, ...local.filter(record => !remoteIds.has(record.id))]
+  }
+  const applyUserJobState = (state: UserJobState) => {
+    const normalized = normalizeUserJobState(state)
+    setSaved(new Set(normalized.saved))
+    setApplied(new Set(normalized.applied))
+    setRequestedCandidates(new Set(normalized.requestedCandidates))
+    setRevealed(new Set(normalized.dailyAccess.revealed))
+    setDailyUnlocks(normalized.dailyAccess.dailyUnlocks)
+    setExtraReveals(normalized.dailyAccess.extraReveals)
+  }
+  const getCurrentUserJobState = (): UserJobState => ({
+    saved: Array.from(saved),
+    applied: Array.from(applied),
+    requestedCandidates: Array.from(requestedCandidates),
+    dailyAccess: {
+      date: getTodayKey(),
+      revealed: Array.from(revealed),
+      dailyUnlocks,
+      extraReveals,
+    },
+  })
+  const getLocalUserJobState = (account: Account): UserJobState => (
+    getStoredUserJobState(account) ?? getCurrentUserJobState()
+  )
+  const fetchRemoteUserJobState = async (account: Account): Promise<UserJobState | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('get_app_user_state', {
+      p_role: account.role,
+      p_mobile: normalizeMobile(account.mobile),
+    })
+    if (error) throw error
+    const row = ((data ?? []) as RemoteUserStateRow[])[0]
+    return row?.payload ? normalizeUserJobState(row.payload) : null
+  }
+  const saveRemoteUserJobState = async (account: Account, state: UserJobState) => {
+    if (!supabase) return
+    const { error } = await supabase.rpc('set_app_user_state', {
+      p_role: account.role,
+      p_mobile: normalizeMobile(account.mobile),
+      p_payload: normalizeUserJobState(state),
+    })
+    if (error) throw error
+  }
   const fetchRemoteAccountsByMobile = async (mobile: string): Promise<Account[] | null> => {
     if (!supabase) return null
     const { data, error } = await supabase.rpc('find_app_accounts_by_mobile', { p_mobile: mobile })
@@ -1204,6 +1422,8 @@ export default function App() {
     setApplyAdProgress(0)
     setRewardProgress(0)
     setAiMessages(getAiWelcomeMessages(account.role))
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(getStoredUserJobState(account) ?? (isNewAccount ? emptyUserJobState() : getCurrentUserJobState()))
     setCurrentUser(account)
     setHasAuthenticated(true)
     setEntryRole(account.role)
@@ -1975,6 +2195,7 @@ export default function App() {
       updatedAt: now,
     }
     setSupportTickets(prev => [ticket, ...prev])
+    if (ticket.role === 'guest') setGuestSupportTicketIds(prev => new Set(prev).add(ticket.id))
     setCreatedSupportTicket(ticket)
     setSupportTicketError('')
     if (supportTicketSource === 'ai') {
@@ -1997,6 +2218,8 @@ export default function App() {
     setApplyAdProgress(0)
     setRewardProgress(0)
     setAiMessages(getAiWelcomeMessages())
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(emptyUserJobState())
     setCurrentUser(null)
     setHasAuthenticated(false)
     setEntryRole(null)
@@ -2021,6 +2244,9 @@ export default function App() {
     }
     const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
     writeAccounts(updatedAccounts)
+    deleteStoredUserJobState(deletedAccount)
+    remoteUserStateLoadedKeyRef.current = ''
+    applyUserJobState(emptyUserJobState())
     setPendingJobs(prev => prev.filter(job => normalizeMobile(job.phone) !== deletedAccount.mobile))
     setRecruiterJob(prev => ({ ...prev, contactPerson: '', phone: '', email: '' }))
     setRecruiterSubmitted(false)
@@ -2093,6 +2319,7 @@ export default function App() {
     }
     const updatedAccounts = accounts.filter(a => !(a.role === 'seeker' && a.mobile === request.mobile))
     writeAccounts(updatedAccounts)
+    deleteStoredUserJobState({ role: 'seeker', mobile: request.mobile })
     if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
     const updatedRequests = deletionRequests.filter(r => r.id !== request.id)
     setDeletionRequests(updatedRequests)
@@ -2101,10 +2328,8 @@ export default function App() {
       setCurrentUser(null)
       setHasAuthenticated(false)
       try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-      setSaved(new Set())
-      setApplied(new Set())
-      setRevealed(new Set())
-      setDailyUnlocks(0)
+      remoteUserStateLoadedKeyRef.current = ''
+      applyUserJobState(emptyUserJobState())
       setTier('free')
       setShowDeletionRequestModal(false)
     }
@@ -2138,14 +2363,14 @@ export default function App() {
       try {
         const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
         if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
-        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.'); return }
+        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Please try again.'); return }
       } catch { /* fall through to local Admin login */ }
     }
     const idOk = ADMIN_IDS.includes(enteredId)
-    if (idOk && adminPass === storedAdminPassword()) {
+    if (idOk && adminPass && storedAdminPassword() && adminPass === storedAdminPassword()) {
       completeAdminLogin()
     } else {
-      setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.')
+      setAdminError('Wrong Admin ID/Email or Password. Please try again.')
     }
   }
   const handleAdminForgotPassword = async () => {
@@ -2205,8 +2430,8 @@ export default function App() {
     navigate(destination, { resetHistory: true })
   }
   const handlePostJob = () => {
-    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim()) { setToast('Please fill Company, CTC and Contact Phone to publish'); return }
-    const contactEmailError = newJob.email.trim() ? getEmailValidationError(newJob.email) : null
+    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
+    const contactEmailError = getEmailValidationError(newJob.email)
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = newJob.city.trim() || 'Hyderabad'
     const job: Job = {
@@ -2229,7 +2454,7 @@ export default function App() {
       desc: newJob.desc.trim() || `Urgent opening at ${newJob.company.trim()} for ${cityName} HQ. Verified personally by M Divakar Reddy. Immediate joiners preferred.`,
       contactPerson: newJob.contactPerson.trim() || 'M Divakar Reddy',
       phone: newJob.phone.trim(),
-      email: newJob.email.trim() || 'hr@mrvacancieshub.in',
+      email: newJob.email.trim(),
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
       perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
     }
@@ -2252,7 +2477,7 @@ export default function App() {
     setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
   const handleChangePassword = () => {
-    if (passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
+    if (!passForm.current || !storedAdminPassword() || passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
     if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
     if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
     const nextPassword = passForm.next
@@ -2293,8 +2518,8 @@ export default function App() {
   }
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
-    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Contact Person Name and Contact Mobile Number'); return }
-    const contactEmailError = recruiterJob.email.trim() ? getEmailValidationError(recruiterJob.email) : null
+    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim() || !recruiterJob.email.trim()) { setToast('Please fill Company, CTC, Contact Person Name, Contact Mobile Number and Contact Email'); return }
+    const contactEmailError = getEmailValidationError(recruiterJob.email)
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = recruiterJob.city.trim() || 'Hyderabad'
     const contactName = recruiterJob.contactPerson.trim().split(' - ')[0].trim()
@@ -2320,7 +2545,7 @@ export default function App() {
       desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by a ${posterRole === 'seeker' ? 'Job Seeker' : 'Recruiter'} member — under verification by M Divakar Reddy.`,
       contactPerson: `${contactName} - ${recruiterJob.contactType}`,
       phone: recruiterJob.phone.trim(),
-      email: recruiterJob.email.trim() || 'hr@mrvacancieshub.in',
+      email: recruiterJob.email.trim(),
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
       perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
       postedBy: posterName,
@@ -2426,6 +2651,108 @@ export default function App() {
     // Run once when the browser returns from Google.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!supabase || remoteSyncLoadStartedRef.current) return
+    remoteSyncLoadStartedRef.current = true
+    let cancelled = false
+
+    const loadLocalPendingJobs = (): PendingJob[] => {
+      try {
+        const raw = localStorage.getItem(PENDING_JOBS_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) return parsed as PendingJob[]
+        }
+      } catch { /* ignore */ }
+      return []
+    }
+
+    const loadCollection = async <T extends SyncRecord>(
+      collectionKey: RemoteSyncCollectionKey,
+      localRecords: T[],
+      applyRecords: (records: T[]) => void,
+      cleanRemoteRecords: (records: T[]) => T[] = records => records,
+    ) => {
+      try {
+        const remoteRecords = await fetchRemoteSyncCollection<T>(collectionKey)
+        if (cancelled || !remoteRecords) return
+        remoteSyncPreviousRef.current[collectionKey] = remoteRecords
+        remoteSyncLoadedRef.current[collectionKey] = true
+        applyRecords(mergeRemoteSyncRecords(cleanRemoteRecords(remoteRecords), localRecords))
+      } catch {
+        // Local device data remains available if Supabase is temporarily offline.
+      }
+    }
+
+    void Promise.all([
+      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))),
+      loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs(), setPendingJobs),
+      loadCollection<SupportTicket>('support_tickets', loadSupportTickets(), setSupportTickets),
+      loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests(), setDeletionRequests),
+    ])
+
+    return () => { cancelled = true }
+    // Load shared collections once; later edits are mirrored by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => { scheduleRemoteSyncCollection('jobs', jobs) }, [jobs])
+  useEffect(() => { scheduleRemoteSyncCollection('pending_jobs', pendingJobs) }, [pendingJobs])
+  useEffect(() => { scheduleRemoteSyncCollection('support_tickets', supportTickets) }, [supportTickets])
+  useEffect(() => { scheduleRemoteSyncCollection('deletion_requests', deletionRequests) }, [deletionRequests])
+
+  useEffect(() => {
+    if (!currentUser) {
+      remoteUserStateLoadedKeyRef.current = ''
+      return
+    }
+    const account = currentUser
+    const stateKey = userJobStateKey(account)
+    const localState = getLocalUserJobState(account)
+    applyUserJobState(localState)
+    saveStoredUserJobState(account, localState)
+    if (!supabase) {
+      remoteUserStateLoadedKeyRef.current = stateKey
+      return
+    }
+
+    remoteUserStateLoadedKeyRef.current = ''
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remoteState = await fetchRemoteUserJobState(account)
+        if (cancelled) return
+        if (remoteState) {
+          const mergedState = mergeUserJobStates(getStoredUserJobState(account) ?? localState, remoteState)
+          applyUserJobState(mergedState)
+          saveStoredUserJobState(account, mergedState)
+        } else {
+          await saveRemoteUserJobState(account, localState)
+        }
+        if (!cancelled) remoteUserStateLoadedKeyRef.current = stateKey
+      } catch {
+        // The per-account local copy remains available offline.
+      }
+    })()
+    return () => { cancelled = true }
+    // Reload only when the signed-in role/mobile changes, not on profile-object updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const account = currentUser
+    const state = getCurrentUserJobState()
+    saveStoredUserJobState(account, state)
+    if (!supabase || remoteUserStateLoadedKeyRef.current !== userJobStateKey(account)) return
+    if (remoteUserStateTimerRef.current) clearTimeout(remoteUserStateTimerRef.current)
+    remoteUserStateTimerRef.current = setTimeout(() => {
+      void saveRemoteUserJobState(account, state).catch(() => undefined)
+    }, 350)
+    // Persist when the account identity or any synced job-state value changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, currentUser?.mobile, saved, applied, requestedCandidates, revealed, dailyUnlocks, extraReveals])
 
   useEffect(() => {
     if (!supabase) return
@@ -2733,7 +3060,7 @@ export default function App() {
   const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now()
   const totalRevenue = displayedPurchases.filter(p => p.status === 'paid').reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const thisMonthRevenue = displayedPurchases.filter(p => { const d = new Date(p.purchasedAt); const now = new Date(); return p.status === 'paid' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
-  const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest')
+  const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest' && guestSupportTicketIds.has(ticket.id))
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
     .map((a, index) => {
@@ -4651,7 +4978,7 @@ export default function App() {
               </div>
               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <button onClick={() => navigate('postjob')} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-sky-600 py-3.5 text-[15px] font-extrabold text-white shadow-lg transition hover:bg-sky-700 active:scale-[0.99]"><Plus className="h-5 w-5" /> Post Vacancy</button>
-                <a href="https://wa.me/919999999999" target="_blank" className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#25D366] py-3 text-sm font-bold text-white"><MessageCircle className="h-4 w-4" /> WhatsApp Recruiter</a>
+                <a href={buildSupportMailto()} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-bold text-white"><Mail className="h-4 w-4" /> Email Support</a>
               </div>
             </div>
 
@@ -4766,7 +5093,7 @@ export default function App() {
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Type *</label><select value={recruiterJob.contactType} onChange={e => setRecruiterJob({ ...recruiterJob, contactType: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Manager">Manager</option><option value="RBM">RBM (Regional Business Manager)</option><option value="ZSM">ZSM (Zonal Sales Manager)</option><option value="HR">HR</option></select></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Name *</label><input value={recruiterJob.contactPerson} onChange={e => setRecruiterJob({ ...recruiterJob, contactPerson: e.target.value })} placeholder="e.g. Ramesh Reddy" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Mobile Number *</label><input value={recruiterJob.phone} onChange={e => setRecruiterJob({ ...recruiterJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email *</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                 </div>
                 <button type="submit" className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Send className="h-4 w-4" /> Submit for Admin Approval</button>
                 <p className="mt-2 text-center text-xs text-slate-500">By submitting, you confirm this is a genuine vacancy. Fake/duplicate posts are rejected by Admin.</p>
@@ -4966,7 +5293,7 @@ export default function App() {
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
                   <p className="text-xs text-slate-500">App Founder — PharmaSales Jobs • Admin</p>
                 </div>
-                <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
+                <form className="mt-5 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
                     <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
@@ -4974,7 +5301,7 @@ export default function App() {
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
                     <div className="relative">
-                      <input type={showAdminPass ? 'text' : 'password'} value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Enter admin password" autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:border-sky-500" />
+                      <input type={showAdminPass ? 'text' : 'password'} value={adminPass} onChange={e => setAdminPass(e.target.value)} name="admin-login-password" placeholder="Enter admin password" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:border-sky-500" />
                       <button type="button" onClick={() => setShowAdminPass(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-500 hover:bg-slate-100">{showAdminPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                     </div>
                   </div>
@@ -4984,10 +5311,10 @@ export default function App() {
                 <button type="button" onClick={() => { setShowAdminForgot(v => !v); setAdminForgotError('') }} className="mx-auto mt-3 block text-xs font-extrabold text-sky-700 hover:underline">Forgot Admin Password?</button>
                 {showAdminForgot && (
                   <form className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-left" onSubmit={e => { e.preventDefault(); void handleAdminForgotPassword() }}>
-                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter Admin ID <b>divakar</b> and the registered Admin email to set a new password.</p>
+                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email to set a new password.</p>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
-                      <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} placeholder="divakar" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                      <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} name="admin-forgot-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
@@ -5005,22 +5332,6 @@ export default function App() {
                     <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
                   </form>
                 )}
-                {storedAdminPassword() === DEFAULT_ADMIN_PASSWORD && (
-                  <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-slate-700">
-                    <p className="font-extrabold">First-time login (default)</p>
-                    <p>Use your private Admin ID and password.</p>
-                    <p className="text-slate-500">After login, change it in Dashboard → Settings.</p>
-                  </div>
-                )}
-              </div>
-              <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
-                <p className="text-sm font-extrabold">How to login? (3 steps)</p>
-                <ol className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-600">
-                  <li><b>1.</b> Tap the <b>logo or Divakar Reddy’s photo 5 times</b> quickly (secret — no button is shown)</li>
-                  <li><b>2.</b> Enter Admin email <b>akhildivakara@gmail.com</b> (or Admin ID <b>divakar</b>) and your password</li>
-                  <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
-                </ol>
-                <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters stay logged in until logout; after logout they login with their mobile number.</p>
               </div>
             </div>
           ) : (
@@ -5109,7 +5420,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="border-t bg-slate-50 px-3 py-3">
-                        <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
+                        <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, vacancies, tickets, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
                         <button type="button" onClick={handleAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
                       </div>
                     </motion.div>
@@ -5199,7 +5510,7 @@ export default function App() {
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Qualification</label><input value={newJob.qual} onChange={e => setNewJob({ ...newJob, qual: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person</label><input value={newJob.contactPerson} onChange={e => setNewJob({ ...newJob, contactPerson: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Phone *</label><input value={newJob.phone} onChange={e => setNewJob({ ...newJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={newJob.email} onChange={e => setNewJob({ ...newJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email *</label><input value={newJob.email} onChange={e => setNewJob({ ...newJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Job Description</label><textarea value={newJob.desc} onChange={e => setNewJob({ ...newJob, desc: e.target.value })} rows={3} placeholder="Write about the role, HQ coverage, requirements..." className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                     <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2"><input type="checkbox" checked={newJob.urgent} onChange={e => setNewJob({ ...newJob, urgent: e.target.checked })} className="h-4 w-4" /> Mark as Urgent Hiring</label>
                   </div>
