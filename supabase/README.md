@@ -10,15 +10,17 @@ is already coded to use Supabase for all three account roles:
 
 **Status: LIVE (30 Oct 2026).** Dedicated project **“Pharma sales jobs”**
 (`https://zrkkjgxgykpnzeginbpq.supabase.co`, eu-west-3). This schema was
-executed there via migrations `pharmasales_jobs_initial_schema` and
-`fix_register_variable_conflict`, then verified end-to-end: Job Seeker and
-Recruiter registration/login (mobile + email), Admin login, purchase
-recording, Admin Users/Purchase/Payment lists through the public API, and
-test-data cleanup. The preview reads the URL + publishable key from
-`.env.local` (Git-ignored); production hosting must set the same `VITE_`
-variables. Change the seeded Admin password after the first Admin login —
-Admin Settings updates the hash here too. Do not add this schema to an
-unrelated app's Supabase database.
+executed there via migrations `pharmasales_jobs_initial_schema`,
+`fix_register_variable_conflict`, and `admin_forgot_password_rpc`, then
+verified end-to-end: Job Seeker and Recruiter registration/login
+(mobile + email), Admin login by ID and registered email, Admin Forgot
+Password reset with registered details, purchase recording, Admin
+Users/Purchase/Payment lists through the public API, and test-data cleanup.
+The preview reads the URL + publishable key from `.env.local`
+(Git-ignored); production hosting must set the same `VITE_` variables. The
+owner changed the live Admin password from the seeded bootstrap value;
+never store the live Admin password in this repository. Do not add this
+schema to an unrelated app's Supabase database.
 
 ## What to send when the new account/project is ready
 

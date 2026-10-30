@@ -217,7 +217,8 @@ const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) =>
 const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
 
 // ADMIN (M Divakar Reddy)
-const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in']
+const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
+const ADMIN_IDS = ['divakar', 'admin', 'admin@mrvacancieshub.in', 'divakar@mrvacancieshub.in', ADMIN_REGISTERED_EMAIL]
 const DEFAULT_ADMIN_PASSWORD = 'Divakar@2026'
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
@@ -722,6 +723,12 @@ export default function App() {
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
   const [adminError, setAdminError] = useState('')
+  const [showAdminForgot, setShowAdminForgot] = useState(false)
+  const [adminForgotId, setAdminForgotId] = useState('')
+  const [adminForgotEmail, setAdminForgotEmail] = useState('')
+  const [adminForgotNew, setAdminForgotNew] = useState('')
+  const [adminForgotConfirm, setAdminForgotConfirm] = useState('')
+  const [adminForgotError, setAdminForgotError] = useState('')
   const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
   const [showAdminMenu, setShowAdminMenu] = useState(false)
   const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
@@ -1048,6 +1055,8 @@ export default function App() {
     setAdminError('')
     setAdminPass('')
     setShowAdminPass(false)
+    setShowAdminForgot(false)
+    setAdminForgotError('')
     navigate(hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome', { resetHistory: true })
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
@@ -2030,6 +2039,7 @@ export default function App() {
     setPageHistory([])
     try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
     setAdminError(''); setAdminPass('')
+    setShowAdminForgot(false); setAdminForgotError('')
     setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
   }
   const handleAdminLogin = async () => {
@@ -2040,15 +2050,45 @@ export default function App() {
       try {
         const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
         if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
-        if (!error && data === false) { setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.'); return }
+        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.'); return }
       } catch { /* fall through to local Admin login */ }
     }
     const idOk = ADMIN_IDS.includes(enteredId)
     if (idOk && adminPass === storedAdminPassword()) {
       completeAdminLogin()
     } else {
-      setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.')
+      setAdminError('Wrong Admin ID/Email or Password. Use akhildivakara@gmail.com — please try again.')
     }
+  }
+  const handleAdminForgotPassword = async () => {
+    const forgotId = adminForgotId.trim().toLowerCase()
+    const forgotEmail = adminForgotEmail.trim().toLowerCase()
+    if (!forgotId || !forgotEmail) { setAdminForgotError('Enter Admin ID and registered Admin email.'); return }
+    const forgotEmailError = getEmailValidationError(forgotEmail)
+    if (forgotEmailError) { setAdminForgotError(forgotEmailError); return }
+    if (adminForgotNew.length < 6) { setAdminForgotError('New password must be at least 6 characters.'); return }
+    if (adminForgotNew !== adminForgotConfirm) { setAdminForgotError('New password and confirm password do not match.'); return }
+    const localDetailsOk = (forgotId === 'divakar' || forgotId === 'admin') && forgotEmail === ADMIN_REGISTERED_EMAIL
+    const finishAdminReset = () => {
+      try { localStorage.setItem(ADMIN_PASS_KEY, adminForgotNew) } catch { /* ignore */ }
+      setAdminId(ADMIN_REGISTERED_EMAIL)
+      setAdminPass('')
+      setAdminError('')
+      setAdminForgotError('')
+      setAdminForgotNew('')
+      setAdminForgotConfirm('')
+      setShowAdminForgot(false)
+      setToast('Admin password reset successfully 🔐 Login with your new password')
+    }
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_reset_password_with_registered_details', { p_admin_id: forgotId, p_email: forgotEmail, p_new_password: adminForgotNew })
+        if (!error && data === true) { finishAdminReset(); return }
+        if (!error && data === false) { setAdminForgotError('Admin ID and registered Admin email do not match.'); return }
+      } catch { /* fall through to local Admin reset */ }
+    }
+    if (localDetailsOk) { finishAdminReset(); return }
+    setAdminForgotError('Admin ID and registered Admin email do not match.')
   }
   const handleAdminLogout = () => {
     const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
@@ -2057,6 +2097,8 @@ export default function App() {
     setAdminPass('')
     setAdminError('')
     setShowAdminPass(false)
+    setShowAdminForgot(false)
+    setAdminForgotError('')
     setSelected(null)
     setSelectedCandidate(null)
     setShowPricing(false)
@@ -4769,8 +4811,8 @@ export default function App() {
                 </div>
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
-                    <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
-                    <input value={adminId} onChange={e => setAdminId(e.target.value)} placeholder="divakar" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
@@ -4782,6 +4824,30 @@ export default function App() {
                   {adminError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminError}</p>}
                   <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> Login to Dashboard</button>
                 </form>
+                <button type="button" onClick={() => { setShowAdminForgot(v => !v); setAdminForgotError('') }} className="mx-auto mt-3 block text-xs font-extrabold text-sky-700 hover:underline">Forgot Admin Password?</button>
+                {showAdminForgot && (
+                  <form className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-left" onSubmit={e => { e.preventDefault(); void handleAdminForgotPassword() }}>
+                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter Admin ID <b>divakar</b> and the registered Admin email to set a new password.</p>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
+                      <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} placeholder="divakar" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
+                      <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="email" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">New Password</label>
+                      <input type="password" value={adminForgotNew} onChange={e => setAdminForgotNew(e.target.value)} placeholder="Minimum 6 characters" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label>
+                      <input type="password" value={adminForgotConfirm} onChange={e => setAdminForgotConfirm(e.target.value)} placeholder="Enter new password again" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    </div>
+                    {adminForgotError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminForgotError}</p>}
+                    <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
+                  </form>
+                )}
                 {storedAdminPassword() === DEFAULT_ADMIN_PASSWORD && (
                   <div className="mt-4 rounded-2xl bg-amber-50 p-3 text-center text-xs leading-relaxed text-slate-700">
                     <p className="font-extrabold">First-time login (default)</p>
@@ -4794,7 +4860,7 @@ export default function App() {
                 <p className="text-sm font-extrabold">How to login? (3 steps)</p>
                 <ol className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-600">
                   <li><b>1.</b> Tap the <b>logo or Divakar Reddy’s photo 5 times</b> quickly (secret — no button is shown)</li>
-                  <li><b>2.</b> Enter Admin ID <b>divakar</b> and your password</li>
+                  <li><b>2.</b> Enter Admin email <b>akhildivakara@gmail.com</b> (or Admin ID <b>divakar</b>) and your password</li>
                   <li><b>3.</b> Your <b>Admin Dashboard</b> opens — post &amp; manage vacancies</li>
                 </ol>
                 <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-slate-500"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Only Divakar Reddy is the Admin. Job Seekers and Recruiters stay logged in until logout; after logout they login with their mobile number.</p>

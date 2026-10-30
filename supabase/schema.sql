@@ -716,17 +716,62 @@ begin
 end;
 $$;
 
+-- Admin Forgot Password: requires BOTH the Admin ID and the registered
+-- Admin email of the same app_admins row before setting a new password.
+-- Replace this with a verified email-link/OTP flow before a large public launch.
+create or replace function public.admin_reset_password_with_registered_details(
+  p_admin_id text,
+  p_email text,
+  p_new_password text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_admin public.app_admins%rowtype;
+  v_id text := lower(trim(coalesce(p_admin_id, '')));
+  v_email text := lower(trim(coalesce(p_email, '')));
+begin
+  if char_length(coalesce(p_new_password, '')) < 6 then
+    raise exception 'New password must be at least 6 characters.' using errcode = '23514';
+  end if;
+
+  select * into v_admin
+  from public.app_admins a
+  where lower(a.email) = v_email
+    and (
+      lower(a.admin_id) = v_id
+      or (v_id = 'admin' and a.admin_id = 'divakar')
+    )
+  limit 1;
+
+  if not found then
+    return false;
+  end if;
+
+  update public.app_admins
+  set password_hash = crypt(p_new_password, gen_salt('bf', 12))
+  where id = v_admin.id;
+
+  return true;
+end;
+$$;
+
 revoke all on function public.admin_list_accounts() from public;
 revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public;
 revoke all on function public.admin_list_purchases() from public;
 revoke all on function public.admin_login(text, text) from public;
 revoke all on function public.admin_change_password(text, text, text) from public;
+revoke all on function public.admin_reset_password_with_registered_details(text, text, text) from public;
 
 grant execute on function public.admin_list_accounts() to anon, authenticated;
 grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to anon, authenticated;
 grant execute on function public.admin_list_purchases() to anon, authenticated;
 grant execute on function public.admin_login(text, text) to anon, authenticated;
 grant execute on function public.admin_change_password(text, text, text) to anon, authenticated;
+grant execute on function public.admin_reset_password_with_registered_details(text, text, text) to anon, authenticated;
 
 revoke all on function public.find_app_accounts_by_mobile(text) from public;
 revoke all on function public.find_app_accounts_by_identifier(text) from public;
