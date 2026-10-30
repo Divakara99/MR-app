@@ -2686,8 +2686,8 @@ export default function App() {
               transition={{ type: 'spring', damping: 28, stiffness: 260 }}
               className="fixed right-0 top-0 z-50 flex h-[100dvh] w-[86%] max-w-[360px] flex-col bg-white shadow-2xl lg:hidden"
             >
-              {/* Account profile first — the duplicate app-name header is not repeated inside the menu. */}
-              <div className="border-b bg-slate-50 px-4 pb-3 pt-4">
+              {/* Frozen account profile — only this top profile area stays fixed in the menu. */}
+              <div className="relative z-10 shrink-0 border-b bg-slate-50 px-4 pb-3 pt-4">
                 {currentUser && hasAuthenticated ? (
                   <div className="rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
                     <div className="flex items-start gap-2.5">
@@ -2717,30 +2717,31 @@ export default function App() {
                     </button>
                   </div>
                 )}
-
-                {shouldHideJobSeekerExperience ? (
-                  <div className="mt-2 flex items-center justify-between rounded-xl border border-sky-100 bg-white px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
-                      <span className="text-sm font-extrabold">Recruiter</span>
-                      <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">No plan needed</span>
-                    </div>
-                    <Building2 className="h-4 w-4 text-sky-600" />
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
-                      <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
-                    </div>
-                    <User className="h-4 w-4 text-slate-400" />
-                  </div>
-                )}
               </div>
 
-              {/* Nav */}
-              <div className="flex-1 overflow-y-auto px-4 py-4">
+              {/* Everything below the frozen profile — including Free/plan — scrolls. */}
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                <div className="-mx-4 -mt-3 mb-4 border-b bg-slate-50 px-4 pb-3 pt-2">
+                  {shouldHideJobSeekerExperience ? (
+                    <div className="flex items-center justify-between rounded-xl border border-sky-100 bg-white px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
+                        <span className="text-sm font-extrabold">Recruiter</span>
+                        <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">No plan needed</span>
+                      </div>
+                      <Building2 className="h-4 w-4 text-sky-600" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
+                        <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
+                      </div>
+                      <User className="h-4 w-4 text-slate-400" />
+                    </div>
+                  )}
+                </div>
                 <p className="mb-2 text-[11px] font-bold tracking-widest text-slate-400">NAVIGATION</p>
                 <div className="grid gap-2">
                   {[
