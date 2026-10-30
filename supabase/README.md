@@ -8,9 +8,13 @@ is already coded to use Supabase for all three account roles:
 - **Admin** accounts in `public.app_admins`
 - **Starter/Pro purchases and payments** in `public.app_purchases`
 
-Live Supabase activation is intentionally **pending a dedicated
-PharmaSales Jobs project**. Do not add this schema to an unrelated app's
-Supabase database.
+**Status (30 Oct 2026):** Dedicated project created —
+`https://zrkkjgxgykpnzeginbpq.supabase.co` — and the preview app is built
+with its URL + publishable key. One step remains: run `schema.sql` once in
+that project's SQL Editor (step 2 below), or reconnect the Arena Supabase
+integration with the new account so the schema can be executed and verified
+from here. Until then, remote calls safely fall back to this device's local
+data. Do not add this schema to an unrelated app's Supabase database.
 
 ## What to send when the new account/project is ready
 
