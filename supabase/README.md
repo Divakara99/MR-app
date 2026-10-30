@@ -22,12 +22,13 @@ owner changed the live Admin password from the seeded bootstrap value;
 never store the live Admin password in this repository. Do not add this
 schema to an unrelated app's Supabase database.
 
-**Google login application code is ready, but the Supabase Google provider
-still needs the project owner's Google OAuth Client ID and Client Secret.**
-Until those are entered in the Supabase Dashboard using the steps below,
-Job Seeker/Recruiter password login works, while the Google button will
-return an “not completed/provider may not be enabled” message. Admin does
-not use Google login.
+**Google login is enabled (verified 30 Oct 2026).** The Supabase Google
+provider has the owner's Google OAuth Client ID/Secret configured, and the
+public authorize endpoint successfully reaches Google's sign-in page using
+the Supabase callback, `email` + `profile` scopes, and the current preview
+return URL. Google login is only for Job Seeker/Recruiter accounts; Admin
+does not use it. A full account-by-account sign-in test still requires the
+user to choose/sign in to their own Google account in the browser.
 
 ## What to send when the new account/project is ready
 
@@ -102,7 +103,7 @@ variable in the hosting provider's environment-variable settings.
 Vite embeds these values when the frontend is built, so **rebuild and
 restart/redeploy** after adding or changing them.
 
-### Enable Google login for Job Seeker / Recruiter
+### Google login for Job Seeker / Recruiter (enabled)
 
 The app uses Supabase Auth only to verify the person's Google email. It then
 matches that email to the existing `app_accounts` record for the selected
@@ -110,9 +111,10 @@ Job Seeker or Recruiter role. First-time Google users still add a mobile
 number and create a password once, preserving mobile/email + password login.
 Admin is excluded.
 
-The project owner must complete this one-time setup directly in Google Cloud
-and Supabase. **Never paste the Google Client Secret into chat, GitHub, or a
-`VITE_` variable.**
+The project owner completed this one-time setup directly in Google Cloud
+and Supabase on 30 Oct 2026. The configuration below is retained for future
+domain changes and troubleshooting. **Never paste the Google Client Secret
+into chat, GitHub, or a `VITE_` variable.**
 
 1. In **Google Cloud Console → APIs & Services → Credentials**, create an
    **OAuth client ID** of type **Web application** (configure the OAuth
@@ -165,8 +167,7 @@ When both environment variables are present at build time, the app uses
 Supabase for:
 
 - Job Seeker and Recruiter registration
-- Google email matching for Job Seeker/Recruiter login after the owner
-  enables the Supabase Google provider
+- Google email matching for enabled Job Seeker/Recruiter Google login
 - Login by registered mobile **or** registered email
 - Password setting/reset flows implemented by the app
 - Job Seeker profile storage and updates
