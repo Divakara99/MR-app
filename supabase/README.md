@@ -169,23 +169,29 @@ After rebuilding:
 1. Open the Admin Dashboard and use the sliding **Admin Menu**.
 2. Open **Users List**, **Purchase List**, and **Payment List**. Their status
    should change from **This Device** to **Supabase Live** after data loads.
-3. Open **Plans & Payments**. Set each paid plan's name, price, validity days,
-   daily direct-contact limit, benefits and purchase on/off state. Add the
-   receiver name and enable the real receiving source Admin wants shown at
-   checkout (UPI ID/QR, payment link and/or bank details), then save with the
-   current Admin password.
+3. Open **Plan Settings** and **Payment Settings** as separate Admin Menu
+   pages. In **Plan Settings**, set each paid plan's name, price, validity
+   days, daily direct-contact limit, benefits and purchase on/off state. In
+   **Payment Settings**, add the receiver name and enable the real receiving
+   source Admin wants shown at checkout (UPI ID/QR, payment link and/or bank
+   details). Save each settings change with the current Admin password.
+   Job Seekers also have separate menu pages: **Plans & Benefits** explains
+   and compares the cards, while **Payment & My Plan** shows the current
+   plan, five payment steps, ready payment methods and payment history.
 4. Register one test Job Seeker and one test Recruiter.
 5. Confirm both test accounts appear in **Users List** from another browser
    or after clearing the first browser's local data. Use **View Account** to
    review each account/profile and current plan; passwords are not displayed.
 6. Complete the test Job Seeker profile and confirm the anonymous profile
    can appear to a Recruiter without the candidate's name, mobile, or email.
-7. Select a Starter or Pro plan with the test Job Seeker. Confirm checkout
-   shows the Admin-set amount/validity/receiving source, completion records
-   the method and transaction/UTR reference in both **Purchase List** and
+7. Select a Starter or Pro plan from **Plans & Benefits** with the test Job
+   Seeker. Confirm checkout's step cards show the Admin-set
+   amount/validity/receiving source and UTR entry, completion records the
+   method and transaction/UTR reference in both **Purchase List** and
    **Payment List**, and the account becomes paid immediately. Confirm the
-   same active plan restores on another device and returns to Free when its
-   `expires_at` time passes.
+   new purchase and active-plan expiry appear on **Payment & My Plan**, the
+   same active plan restores on another device, and it returns to Free when
+   its `expires_at` time passes.
 8. Post/approve a test vacancy, raise a test support ticket, and save/apply
    to a test job; confirm the same records/state appear after signing in on
    another browser or device.

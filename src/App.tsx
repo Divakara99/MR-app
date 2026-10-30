@@ -62,7 +62,7 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string; submittedByRole?: 'recruiter' | 'seeker' }
 type EntryRole = 'seeker' | 'recruiter'
-type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'account' | 'legal'
+type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'payment' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'account' | 'legal'
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -222,7 +222,7 @@ const getExpBucket = (exp: string): 'Fresher' | 'Below 6 months' | 'Above 6 mont
 }
 
 const TIERS = [
-  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['3 daily jobs — 15-sec ad reveals full contact', 'After 3 unlocks: 7 extra jobs open', 'Extra jobs: separate ads for company, manager & number', 'Apply Now plays a sponsored ad', 'Save vacancies', 'Standard support'], cta: 'Current Plan', popular: false, limit: '3 + 7 extra/day' },
+  { id: 'free' as Tier, name: 'Free', price: '₹0', period: '/forever', color: 'slate', icon: ShieldCheck, features: ['First 3 jobs: full hiring contact opens after a sponsored ad', 'Next 7 jobs: company, manager and phone open with separate ads', 'Total Free access: 10 jobs every day', 'Save vacancies and apply after unlocking the contact', 'Apply Now shows one sponsored ad before submission'], cta: 'Current Plan', popular: false, limit: '3 + 7 extra/day' },
   { id: 'starter' as Tier, name: 'Starter', price: '₹99', period: '/month', color: 'sky', icon: Zap, features: ['15 direct contacts/day — no reveal ads', 'No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'], cta: 'Go Starter — ₹99/mo', popular: true, limit: '15/day' },
   { id: 'pro' as Tier, name: 'Pro', price: '₹499', period: '/month', color: 'violet', icon: Crown, features: ['Unlimited direct contacts — no reveal ads', 'No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile for 30 days', 'Salary insights & negotiation tips'], cta: 'Go Pro', popular: false, limit: 'Unlimited' },
 ]
@@ -238,7 +238,7 @@ const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
       unlimited: false,
       enabled: true,
       popular: true,
-      features: ['No banner or native ads', 'Unmasked phone + email', 'Apply Now plays one sponsored ad per application', 'WhatsApp contact button', 'AI Resume builder'],
+      features: ['Hiring phone number and email open directly', 'No ads while browsing vacancies', 'No ads to reveal contacts within your daily limit', 'Call and WhatsApp buttons where the hiring contact is available', 'Apply Now still shows one sponsored ad'],
     },
     pro: {
       name: 'Pro',
@@ -248,7 +248,7 @@ const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
       unlimited: true,
       enabled: true,
       popular: false,
-      features: ['No banner or native ads', 'Apply Now plays one sponsored ad per application', 'Direct Recruiter Chat', 'Interview preparation AI', 'Featured profile during plan validity', 'Salary insights & negotiation tips'],
+      features: ['Hiring phone number and email open directly', 'No ads while browsing vacancies', 'No ads to reveal hiring contacts', 'Best choice for urgent and heavy daily job search', 'Apply Now still shows one sponsored ad'],
     },
   },
   payment: {
@@ -1052,7 +1052,7 @@ export default function App() {
   const [adminForgotNew, setAdminForgotNew] = useState('')
   const [adminForgotConfirm, setAdminForgotConfirm] = useState('')
   const [adminForgotError, setAdminForgotError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plans' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plan-settings' | 'payment-settings' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
   const [showAdminMenu, setShowAdminMenu] = useState(false)
   const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
@@ -1207,7 +1207,18 @@ export default function App() {
     ? purchases.filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile) && record.status === 'paid' && record.plan !== 'free').sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0]
     : undefined
   const planCards = [
-    { ...TIERS[0], enabled: true, validityDays: 0 },
+    {
+      ...TIERS[0],
+      enabled: true,
+      validityDays: 0,
+      bestFor: 'Best for trying PharmaSales Jobs and checking a few vacancies daily.',
+      simpleMeaning: 'You get 3 full hiring contacts first. After those 3, 7 more jobs open with separate sponsored ads for each important detail.',
+      contactAccess: '3 full contacts + 7 extra jobs/day',
+      contactDetails: 'After sponsored ads',
+      adsText: 'Browsing and contact-reveal ads apply',
+      validityText: 'No expiry — daily limit resets',
+      paymentText: 'No payment needed',
+    },
     ...(['starter', 'pro'] as PaidPlanId[]).map(planId => {
       const plan = commerceSettings.plans[planId]
       const base = TIERS.find(item => item.id === planId) ?? TIERS[1]
@@ -1224,6 +1235,17 @@ export default function App() {
         limit: limitLabel,
         enabled: plan.enabled,
         validityDays: plan.validityDays,
+        bestFor: planId === 'starter'
+          ? 'Best for regular MR to NSM job search with faster direct contacts.'
+          : 'Best for urgent job change and heavy daily applications.',
+        simpleMeaning: planId === 'starter'
+          ? `Pay once and directly open up to ${getPaidPlanLimit(plan)} hiring contacts every day during the full validity.`
+          : `Pay once and directly open ${plan.unlimited ? 'unlimited hiring contacts' : `up to ${getPaidPlanLimit(plan)} hiring contacts per day`} during the full validity.`,
+        contactAccess: plan.unlimited ? 'Unlimited direct contacts' : `${getPaidPlanLimit(plan)} direct contacts/day`,
+        contactDetails: 'Direct — no reveal ad',
+        adsText: 'No browsing/reveal ads; Apply ad still shows',
+        validityText: `${plan.validityDays} days from activation`,
+        paymentText: 'Pay once for the full validity',
       }
     }),
   ]
@@ -1362,7 +1384,7 @@ export default function App() {
   }, [aiMessages])
 
   const navigate = (p: typeof page, options: { fromBack?: boolean; resetHistory?: boolean } = {}) => {
-    const jobSeekerOnlyPages: AppPage[] = ['home', 'jobs', 'pricing', 'saved', 'profile']
+    const jobSeekerOnlyPages: AppPage[] = ['home', 'jobs', 'pricing', 'payment', 'saved', 'profile']
     let destination: AppPage = p
     let blockedToast: string | null = null
 
@@ -1452,7 +1474,7 @@ export default function App() {
     if (destination === page) return false
     if (destination === 'welcome' || destination === 'auth') return !hasAuthenticated && !isAdmin
     if (destination === 'admin') return isAdmin || !hasAuthenticated
-    if (shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved', 'profile'].includes(destination)) return false
+    if (shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'payment', 'saved', 'profile'].includes(destination)) return false
     if (destination === 'candidates') return isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
     if (destination === 'profile') return isAdmin || currentUser?.role === 'seeker'
     if (destination === 'account') return isAdmin || (hasAuthenticated && Boolean(currentUser))
@@ -1467,6 +1489,7 @@ export default function App() {
       if (hasAuthenticated && currentUser?.role === 'seeker') return 'jobs'
       return 'recruiters'
     }
+    if (page === 'payment') return 'pricing'
     if (page === 'saved' || page === 'pricing') return 'jobs'
     if (page === 'jobs') return 'home'
     if (page === 'profile') return currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'home' : 'jobs'
@@ -1825,7 +1848,7 @@ export default function App() {
     if (!row?.payload) return commerceSettings
     const remoteSettings = normalizeCommerceSettings({ ...row.payload, updatedAt: row.updated_at ?? undefined })
     setCommerceSettings(remoteSettings)
-    if (!isAdmin || adminTab !== 'plans') setCommerceDraft(remoteSettings)
+    if (!isAdmin || (adminTab !== 'plan-settings' && adminTab !== 'payment-settings')) setCommerceDraft(remoteSettings)
     return remoteSettings
   }
   useEffect(() => {
@@ -1852,7 +1875,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, page, adminTab])
   useEffect(() => {
-    if (!isAdmin || adminTab !== 'plans') return
+    if (!isAdmin || (adminTab !== 'plan-settings' && adminTab !== 'payment-settings')) return
     setCommerceDraft(commerceSettings)
     setCommerceSettingsError('')
     setCommerceAdminPassword(storedAdminPassword())
@@ -3070,7 +3093,7 @@ export default function App() {
       const dataUrl = await fileToCompressedPhotoDataUrl(file, 720)
       updateCommercePaymentDraft({ qrImageUrl: dataUrl })
       setCommerceSettingsError('')
-      setToast('Payment QR added. Save Plans & Payments to show it to Job Seekers.')
+      setToast('Payment QR added. Save Payment Settings to show it to Job Seekers.')
     } catch {
       setCommerceSettingsError('Unable to read this QR image. Please try another JPG or PNG image.')
     } finally {
@@ -3104,7 +3127,7 @@ export default function App() {
       setCommerceDraft(normalized)
       setToast(supabase ? 'Plans & payment receiving source saved live ✅ Job Seekers will see the new price, validity and payment details.' : 'Plans & payment receiving source saved on this device ✅')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save Plans & Payments. Please check the Admin password and try again.'
+      const message = error instanceof Error ? error.message : 'Unable to save these settings. Please check the Admin password and try again.'
       setCommerceSettingsError(message)
     } finally {
       setCommerceSettingsSaving(false)
@@ -3150,7 +3173,7 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) {
       setShowPricing(false)
       if (isAdmin) {
-        openAdmin('plans')
+        openAdmin('plan-settings')
         setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to test a purchase.')
       } else {
         setToast('Please login as a Job Seeker to purchase a plan.')
@@ -3774,6 +3797,9 @@ export default function App() {
     return a.name.toLowerCase().includes(q) || a.mobile.includes(q) || a.email.toLowerCase().includes(q)
   })
   const displayedPurchases: PurchaseRecord[] = [...(remotePurchases ?? purchases)].sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
+  const myPlanPurchases: PurchaseRecord[] = currentUser?.role === 'seeker'
+    ? mergePurchaseRecords(purchases, remotePurchases ?? []).filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile))
+    : []
   const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > planClock
   const adminAccountPurchases = adminAccountDetail
     ? displayedPurchases.filter(purchase => purchase.role === adminAccountDetail.role && normalizeMobile(purchase.mobile) === normalizeMobile(adminAccountDetail.mobile))
@@ -3991,6 +4017,338 @@ export default function App() {
       </div>
     </div>
   )
+  const getPlanCta = (planCard: typeof planCards[number]) => {
+    if (planCard.id === 'free') {
+      return {
+        disabled: false,
+        label: activePlanPurchase ? `${activePlanPurchase.planName} is Active` : 'Free Plan is Active',
+      }
+    }
+    if (!planCard.enabled) return { disabled: true, label: 'Purchase Paused by Admin' }
+    if (activePlanPurchase?.plan === 'pro' && planCard.id === 'starter') return { disabled: true, label: 'Available After Pro Expiry' }
+    if (tier === planCard.id) return { disabled: false, label: `Renew / Extend ${planCard.name}` }
+    if (activePlanPurchase?.plan === 'starter' && planCard.id === 'pro') return { disabled: false, label: `Upgrade to ${planCard.name} — ${planCard.price}` }
+    return { disabled: false, label: `Buy ${planCard.name} — ${planCard.price}` }
+  }
+
+  const renderPlanCard = (planCard: typeof planCards[number]) => {
+    const PlanIcon = planCard.icon
+    const cta = getPlanCta(planCard)
+    const isCurrent = tier === planCard.id
+    const headerClass = planCard.id === 'free'
+      ? 'bg-gradient-to-br from-slate-800 to-slate-950'
+      : planCard.id === 'starter'
+        ? 'bg-gradient-to-br from-sky-600 to-blue-800'
+        : 'bg-gradient-to-br from-violet-600 to-indigo-800'
+    const factItems = [
+      { label: 'Validity', value: planCard.validityText },
+      { label: 'Hiring contacts', value: planCard.contactAccess },
+      { label: 'Phone & email', value: planCard.contactDetails },
+      { label: 'Ads', value: planCard.adsText },
+    ]
+
+    return (
+      <article key={planCard.id} className={`flex h-full flex-col overflow-hidden rounded-[26px] border bg-white text-left shadow-sm ${planCard.popular ? 'border-sky-300 shadow-sky-100 ring-2 ring-sky-100' : 'border-slate-200'} ${isCurrent ? 'ring-2 ring-emerald-300' : ''}`}>
+        <div className={`${headerClass} p-5 text-white`}>
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-white shadow-inner"><PlanIcon className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-extrabold tracking-[0.14em] text-white/80">JOB SEEKER PLAN</p>
+              <h3 className="mt-0.5 truncate text-xl font-extrabold leading-tight">{planCard.name}</h3>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              {planCard.popular && <span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-extrabold text-sky-800 shadow-sm">MOST POPULAR</span>}
+              {isCurrent && <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-[9px] font-extrabold text-white shadow-sm">CURRENT PLAN</span>}
+              {!planCard.enabled && planCard.id !== 'free' && <span className="rounded-full bg-slate-900/70 px-2.5 py-1 text-[9px] font-extrabold text-white">PAUSED</span>}
+            </div>
+          </div>
+          <p className="mt-4 text-[34px] font-extrabold leading-none">{planCard.price}<span className="ml-1 text-sm font-bold text-white/85">{planCard.period}</span></p>
+          <p className="mt-1.5 text-xs font-bold text-white/90">{planCard.paymentText}</p>
+        </div>
+
+        <div className="flex flex-1 flex-col p-5">
+          <div className="rounded-2xl bg-sky-50 px-3.5 py-3">
+            <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">BEST FOR</p>
+            <p className="mt-1 text-sm font-bold leading-relaxed text-slate-900">{planCard.bestFor}</p>
+          </div>
+          <p className="mt-3 text-sm leading-relaxed text-slate-700">{planCard.simpleMeaning}</p>
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {factItems.map(item => (
+              <div key={item.label} className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.11em] text-slate-500">{item.label}</p>
+                <p className="mt-1 text-[11px] font-extrabold leading-snug text-slate-900">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-5 text-[11px] font-extrabold uppercase tracking-[0.12em] text-slate-500">You get</p>
+          <ul className="mt-2.5 space-y-2">
+            {planCard.features.map((feature, featureIndex) => (
+              <li key={`${feature}-${featureIndex}`} className="flex gap-2 text-[13px] leading-snug text-slate-700">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <span>{feature}</span>
+              </li>
+            ))}
+          </ul>
+
+          <div className={`mb-5 mt-4 rounded-2xl px-3.5 py-3 text-xs leading-relaxed ${planCard.id === 'free' ? 'bg-amber-50 text-amber-950' : 'bg-emerald-50 text-emerald-950'}`}>
+            <b>{planCard.id === 'free' ? 'Daily reset:' : 'After payment:'}</b>{' '}
+            {planCard.id === 'free'
+              ? 'Free access resets on the next day. Apply Now also shows one sponsored ad.'
+              : 'The plan activates after payment confirmation. Free returns automatically at the exact expiry time.'}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handlePlanSelect(planCard.id)}
+            disabled={cta.disabled}
+            className={`mt-auto w-full rounded-full py-3 text-sm font-extrabold text-white shadow transition disabled:cursor-not-allowed disabled:opacity-50 ${isCurrent && planCard.id !== 'free' ? 'bg-emerald-600 hover:bg-emerald-700' : planCard.id === 'starter' ? 'bg-sky-700 hover:bg-sky-800' : planCard.id === 'pro' ? 'bg-violet-700 hover:bg-violet-800' : 'bg-slate-900 hover:bg-slate-800'}`}
+          >
+            {cta.label}
+          </button>
+          <p className="mt-2 text-center text-[11px] font-semibold leading-relaxed text-slate-500">
+            {planCard.id === 'free' ? 'No card or UPI payment is needed for Free.' : 'Exact amount, receiver and expiry are shown again before payment.'}
+          </p>
+        </div>
+      </article>
+    )
+  }
+
+  const renderPaymentSteps = () => {
+    const steps = [
+      { title: 'Choose a plan', text: 'Open Plans & Benefits and select Free, Starter or Pro.', icon: Crown },
+      { title: 'Check the amount', text: 'Confirm the plan name, exact amount, validity and receiver name.', icon: Eye },
+      { title: 'Make the payment', text: 'Use the UPI, payment link, bank or demo option switched on by Admin.', icon: Wallet },
+      { title: 'Save the reference', text: 'Copy the UPI/UTR/transaction number. Use a new reference for every payment.', icon: FileText },
+      { title: 'Plan auto-activates', text: 'Tap “Payment Done”. The new expiry date will appear in Payment & My Plan.', icon: BadgeCheck },
+    ]
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {steps.map((step, index) => (
+          <div key={step.title} className="relative rounded-3xl border border-sky-100 bg-white p-4 shadow-sm">
+            <span className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full bg-sky-600 text-[11px] font-extrabold text-white">{index + 1}</span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-50 text-sky-700"><step.icon className="h-5 w-5" /></span>
+            <p className="mt-3 pr-5 text-sm font-extrabold leading-tight text-slate-900">{step.title}</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{step.text}</p>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const renderPaymentMethodCards = () => {
+    const paymentSettings = commerceSettings.payment
+    const canSeeCheckoutDetails = isAdmin || (hasAuthenticated && currentUser?.role === 'seeker')
+    const methods = [
+      {
+        id: 'upi' as CheckoutMethod,
+        title: 'UPI / QR',
+        icon: QrCode,
+        available: Boolean(paymentSettings.upiEnabled && paymentSettings.upiId.trim()),
+        summary: 'Pay with GPay, PhonePe, Paytm, BHIM or by scanning the QR shown at checkout.',
+        detail: canSeeCheckoutDetails && paymentSettings.upiId.trim()
+          ? `Receiver: ${paymentSettings.receiverName} • UPI ID: ${paymentSettings.upiId}`
+          : 'The UPI ID and QR are shown inside checkout after you choose a plan.',
+        note: 'After success, copy the UPI Reference/UTR number.',
+      },
+      {
+        id: 'payment-link' as CheckoutMethod,
+        title: 'Payment Link',
+        icon: CreditCard,
+        available: Boolean(paymentSettings.paymentLinkEnabled && paymentSettings.paymentLink.trim()),
+        summary: 'Open the Admin payment link from checkout and complete the exact plan amount.',
+        detail: `Receiver: ${paymentSettings.receiverName}. The link opens only from the plan checkout.`,
+        note: 'Save the transaction/reference number shown by the payment provider.',
+      },
+      {
+        id: 'bank' as CheckoutMethod,
+        title: 'Bank Transfer',
+        icon: Landmark,
+        available: Boolean(paymentSettings.bankEnabled && paymentSettings.bankDetails.trim()),
+        summary: 'Transfer the exact plan amount to the Admin bank account shown at checkout.',
+        detail: `Receiver: ${paymentSettings.receiverName}. Full bank details are shown after plan selection.`,
+        note: 'Enter the UTR/NEFT/IMPS reference after transfer.',
+      },
+      {
+        id: 'demo' as CheckoutMethod,
+        title: 'Demo Checkout',
+        icon: Info,
+        available: paymentSettings.demoCheckoutEnabled,
+        summary: 'Test activation only. No real money moves to any bank or UPI account.',
+        detail: 'Use this only to check how plan activation and expiry work.',
+        note: 'Do not treat a demo activation as a real payment.',
+      },
+    ]
+
+    return (
+      <div className="grid gap-3 md:grid-cols-2">
+        {methods.map(method => (
+          <article key={method.id} className={`rounded-3xl border p-4 shadow-sm ${method.available ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
+            <div className="flex items-start gap-3">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white ${method.available ? 'bg-emerald-600' : 'bg-slate-400'}`}><method.icon className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-extrabold text-slate-900">{method.title}</h4>
+                  <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold ${method.available ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{method.available ? 'READY' : 'NOT AVAILABLE'}</span>
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{method.summary}</p>
+              </div>
+            </div>
+            <p className="mt-3 break-words rounded-2xl bg-slate-50 px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-slate-700">{method.detail}</p>
+            <p className="mt-2 flex gap-1.5 text-[11px] font-semibold leading-relaxed text-sky-800"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {method.note}</p>
+          </article>
+        ))}
+      </div>
+    )
+  }
+
+  const renderCurrentPlanStatusCard = () => {
+    if (isAdmin && !currentUser) {
+      return (
+        <div className="rounded-[26px] border border-sky-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white"><Settings className="h-6 w-6" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-extrabold tracking-[0.13em] text-sky-700">ADMIN PREVIEW</p>
+              <h3 className="mt-1 text-lg font-extrabold">Manage plans and payment separately</h3>
+              <p className="mt-1 text-sm leading-relaxed text-slate-600">Plan Settings controls price, validity and benefits. Payment Settings controls the UPI/QR, payment link and bank receiver shown to Job Seekers.</p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={() => openAdmin('plan-settings')} className="rounded-full bg-sky-700 px-4 py-2.5 text-xs font-extrabold text-white">Open Plan Settings</button>
+            <button type="button" onClick={() => openAdmin('payment-settings')} className="rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white">Open Payment Settings</button>
+          </div>
+        </div>
+      )
+    }
+
+    if (!currentUser || !hasAuthenticated || currentUser.role !== 'seeker') {
+      return (
+        <div className="rounded-[26px] border border-sky-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white"><User className="h-6 w-6" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-extrabold tracking-[0.13em] text-sky-700">JOB SEEKER LOGIN NEEDED</p>
+              <h3 className="mt-1 text-lg font-extrabold">Login to buy, renew and see your payment history</h3>
+              <p className="mt-1 text-sm leading-relaxed text-slate-600">Plans are linked to your registered Job Seeker mobile number, so purchases can be restored on your account.</p>
+            </div>
+            <button type="button" onClick={() => enterAs('seeker')} className="shrink-0 rounded-full bg-slate-900 px-5 py-3 text-xs font-extrabold text-white">Job Seeker Login</button>
+          </div>
+        </div>
+      )
+    }
+
+    if (activePlanPurchase) {
+      return (
+        <div className="overflow-hidden rounded-[26px] border border-emerald-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-5 text-white">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/20"><BadgeCheck className="h-6 w-6" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-extrabold tracking-[0.13em] text-emerald-100">MY CURRENT PLAN</p>
+                <h3 className="mt-0.5 text-xl font-extrabold">{activePlanPurchase.planName} is Active</h3>
+                <p className="text-sm font-semibold text-emerald-50">Valid till {formatAdminDate(activePlanPurchase.expiresAt)} • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left</p>
+              </div>
+              <span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold text-emerald-800">ACTIVE</span>
+            </div>
+          </div>
+          <div className="grid gap-2 p-4 sm:grid-cols-3">
+            <div className="rounded-2xl bg-emerald-50 px-3 py-2.5"><p className="text-[9px] font-extrabold tracking-[0.11em] text-emerald-700">AMOUNT PAID</p><p className="mt-1 text-sm font-extrabold">{formatINR(activePlanPurchase.amount)}</p></div>
+            <div className="rounded-2xl bg-emerald-50 px-3 py-2.5"><p className="text-[9px] font-extrabold tracking-[0.11em] text-emerald-700">DIRECT CONTACTS TODAY</p><p className="mt-1 text-sm font-extrabold">{Math.min(displayedDailyUnlocks, limitForTier[tier])} / {limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} used</p></div>
+            <div className="rounded-2xl bg-emerald-50 px-3 py-2.5"><p className="text-[9px] font-extrabold tracking-[0.11em] text-emerald-700">AFTER EXPIRY</p><p className="mt-1 text-sm font-extrabold">Free starts automatically</p></div>
+          </div>
+          <div className="flex flex-wrap gap-2 px-4 pb-4">
+            <button type="button" onClick={() => void handlePlanSelect(activePlanPurchase.plan)} className="rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white">Renew / Extend {activePlanPurchase.planName}</button>
+            {activePlanPurchase.plan === 'starter' && commerceSettings.plans.pro.enabled && <button type="button" onClick={() => void handlePlanSelect('pro')} className="rounded-full bg-violet-700 px-4 py-2.5 text-xs font-extrabold text-white">Upgrade to {commerceSettings.plans.pro.name}</button>}
+            {page !== 'pricing' && <button type="button" onClick={() => navigate('pricing')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Compare Plans</button>}
+            {page !== 'payment' && <button type="button" onClick={() => navigate('payment')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Payment & History</button>}
+          </div>
+        </div>
+      )
+    }
+
+    if (latestPlanPurchase) {
+      return (
+        <div className="rounded-[26px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white"><Clock3 className="h-6 w-6" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-extrabold tracking-[0.13em] text-amber-700">PAID PLAN EXPIRED</p>
+              <h3 className="mt-1 text-lg font-extrabold text-amber-950">{latestPlanPurchase.planName} ended — Free is active now</h3>
+              <p className="mt-1 text-sm leading-relaxed text-amber-900">The paid plan expired on <b>{formatAdminDate(latestPlanPurchase.expiresAt)}</b>. Buy again whenever you want direct contact access.</p>
+            </div>
+            <button type="button" onClick={() => navigate('pricing')} className="shrink-0 rounded-full bg-slate-900 px-5 py-3 text-xs font-extrabold text-white">Renew a Plan</button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white"><ShieldCheck className="h-6 w-6" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-extrabold tracking-[0.13em] text-slate-500">MY CURRENT PLAN</p>
+            <h3 className="mt-1 text-lg font-extrabold">Free Plan is Active</h3>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">Daily Free access gives 3 full hiring contacts, then 7 extra jobs. Upgrade only if you want contacts faster without reveal ads.</p>
+          </div>
+          {page !== 'pricing' && <button type="button" onClick={() => navigate('pricing')} className="shrink-0 rounded-full bg-sky-700 px-5 py-3 text-xs font-extrabold text-white">View Plans</button>}
+        </div>
+      </div>
+    )
+  }
+
+  const renderPaymentHistoryCards = () => {
+    if (!currentUser || !hasAuthenticated || currentUser.role !== 'seeker') {
+      return (
+        <div className="rounded-3xl bg-slate-50 p-6 text-center">
+          <Wallet className="mx-auto h-9 w-9 text-slate-400" />
+          <p className="mt-2 text-sm font-extrabold">Login to see payment history</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600">Your Starter/Pro payments are shown only on your Job Seeker account.</p>
+        </div>
+      )
+    }
+    if (myPlanPurchases.length === 0) {
+      return (
+        <div className="rounded-3xl bg-slate-50 p-6 text-center">
+          <Wallet className="mx-auto h-9 w-9 text-slate-400" />
+          <p className="mt-2 text-sm font-extrabold">No paid-plan payment yet</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600">When you buy Starter or Pro, the amount, method, reference and expiry will appear here.</p>
+          <button type="button" onClick={() => navigate('pricing')} className="mt-4 rounded-full bg-sky-700 px-5 py-2.5 text-xs font-extrabold text-white">Choose a Plan</button>
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-3">
+        {myPlanPurchases.slice(0, 10).map(purchase => {
+          const isActive = isPurchaseActive(purchase)
+          const statusLabel = purchase.status !== 'paid' ? purchase.status.toUpperCase() : isActive ? 'ACTIVE' : 'EXPIRED'
+          return (
+            <article key={purchase.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white ${purchase.plan === 'pro' ? 'bg-violet-700' : 'bg-sky-700'}`}><IndianRupee className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-extrabold">{purchase.planName} Plan</p>
+                    <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold ${isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>{statusLabel}</span>
+                  </div>
+                  <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">Purchased: {formatAdminDate(purchase.purchasedAt)}<br />Expires: {formatAdminDate(purchase.expiresAt)}</p>
+                </div>
+                <p className="shrink-0 text-base font-extrabold">{formatINR(purchase.amount)}</p>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <p className="rounded-2xl bg-slate-50 px-3 py-2 text-[11px]"><span className="block font-extrabold uppercase tracking-wide text-slate-500">Payment method</span><span className="mt-0.5 block font-bold text-slate-800">{purchase.method}</span></p>
+                <p className="rounded-2xl bg-slate-50 px-3 py-2 text-[11px]"><span className="block font-extrabold uppercase tracking-wide text-slate-500">Reference</span><span className="mt-0.5 block break-all font-mono font-bold text-slate-800">{purchase.transactionId}</span></p>
+              </div>
+            </article>
+          )
+        })}
+        {myPlanPurchases.length > 10 && <p className="text-center text-[11px] font-semibold text-slate-500">Showing your latest 10 payments.</p>}
+      </div>
+    )
+  }
+
   const supportTicketStatusLabel = (status: SupportTicketStatus) => status === 'in-progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)
   const renderSupportTicketSummary = (ticket: SupportTicket) => (
     <article key={ticket.id} className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-left">
@@ -4052,7 +4410,8 @@ export default function App() {
                 <>
                   <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='home'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Home</button>
                   <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='jobs'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-sky-100 text-sky-700':'bg-white/20 text-white'}`}>{jobs.length} New</span></button>
-                  <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='pricing'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Subscription</button>
+                  <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='pricing'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Plans</button>
+                  <button onClick={() => navigate('payment')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:block ${page==='payment'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Payment</button>
                 </>
               )}
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='recruiters'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>For Recruiters</button>
@@ -4117,6 +4476,8 @@ export default function App() {
                           {currentUser.role === 'seeker' ? (
                             <>
                               <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Pencil className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
+                              <button type="button" onClick={() => navigate('pricing')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Crown className="h-4 w-4 text-violet-600" /><span className="flex-1">Plans &amp; Benefits</span><span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-extrabold capitalize text-violet-700">{tier}</span></button>
+                              <button type="button" onClick={() => navigate('payment')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-emerald-50"><CreditCard className="h-4 w-4 text-emerald-600" /><span className="flex-1">Payment &amp; My Plan</span><span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${activePlanPurchase ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{activePlanPurchase ? 'Active' : 'Free'}</span></button>
                               <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
                               <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
                               <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Account Deletion Request Pending' : 'Request Account Deletion'}</span></button>
@@ -4242,14 +4603,15 @@ export default function App() {
                   {[
                     { label: 'Home', sub: 'Overview & featured jobs', icon: Layers, page: 'home' as const },
                     { label: 'Browse Jobs', sub: `${jobs.length} verified jobs`, icon: Layers, page: 'jobs' as const },
-                    { label: 'Subscription Plans', sub: `Free → ${commerceSettings.plans.starter.name} ${formatINR(commerceSettings.plans.starter.price)} → ${commerceSettings.plans.pro.name} ${formatINR(commerceSettings.plans.pro.price)}`, icon: Crown, page: 'pricing' as const },
+                    { label: 'Plans & Benefits', sub: `Free → ${commerceSettings.plans.starter.name} ${formatINR(commerceSettings.plans.starter.price)} → ${commerceSettings.plans.pro.name} ${formatINR(commerceSettings.plans.pro.price)}`, icon: Crown, page: 'pricing' as const },
+                    { label: 'Payment & My Plan', sub: activePlanPurchase ? `${activePlanPurchase.planName} active till ${formatAdminDate(activePlanPurchase.expiresAt)}` : 'Payment steps, methods & history', icon: CreditCard, page: 'payment' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
                     { label: 'Post a Vacancy', sub: isJobSeekerUser ? 'Add a vacancy • Live after Admin approval' : 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: shouldHideJobSeekerExperience ? 'Hiring help • Support tickets' : 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Legal & Support', sub: 'Privacy • Terms • Support ticket', icon: FileText, page: 'legal' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
-                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!isJobSeekerUser || item.page !== 'recruiters') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
+                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!isJobSeekerUser || item.page !== 'recruiters') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing', 'payment'].includes(item.page))).map(item => (
                     <button
                       key={item.label}
                       onClick={() => item.page === 'admin' ? openAdmin() : navigate(item.page)}
@@ -4850,19 +5212,20 @@ export default function App() {
                         <button type="button" onClick={() => void handlePlanSelect(activePlanPurchase.plan)} className="rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Renew / Extend {activePlanPurchase.planName}</button>
                         {activePlanPurchase.plan === 'starter' && commerceSettings.plans.pro.enabled && <button type="button" onClick={() => void handlePlanSelect('pro')} className="rounded-full bg-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow">Upgrade to {commerceSettings.plans.pro.name} — {formatINR(commerceSettings.plans.pro.price)}</button>}
                         <button type="button" onClick={() => navigate('pricing')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">View All Plans</button>
+                        <button type="button" onClick={() => navigate('payment')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Payment & History</button>
                       </div>
                     </div>
                   ) : latestPlanPurchase ? (
                     <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 p-4">
                       <p className="flex items-center gap-2 text-base font-extrabold text-amber-950"><Clock3 className="h-5 w-5 text-amber-700" /> {latestPlanPurchase.planName} expired • Free is active</p>
                       <p className="mt-1 text-xs leading-relaxed text-amber-900">Your last paid plan ended on <b>{formatAdminDate(latestPlanPurchase.expiresAt)}</b>. Paid benefits are turned off. Buy again to activate a new plan immediately after payment confirmation.</p>
-                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white">Renew Subscription</button>
+                      <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => navigate('pricing')} className="rounded-full bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white">Renew Subscription</button><button type="button" onClick={() => navigate('payment')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Payment History</button></div>
                     </div>
                   ) : (
                     <div className="mt-4 rounded-3xl bg-slate-50 p-4">
                       <p className="text-base font-extrabold">Free Plan</p>
                       <p className="mt-1 text-xs leading-relaxed text-slate-600">3 daily full-contact unlocks, then 7 extra jobs. Current Admin-set paid plans: {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days and {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days.</p>
-                      <button type="button" onClick={() => navigate('pricing')} className="mt-3 rounded-full bg-sky-600 px-4 py-2.5 text-xs font-extrabold text-white">View Subscription Plans</button>
+                      <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => navigate('pricing')} className="rounded-full bg-sky-600 px-4 py-2.5 text-xs font-extrabold text-white">View Plans & Benefits</button><button type="button" onClick={() => navigate('payment')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">How Payment Works</button></div>
                     </div>
                   )}
                 </div>
@@ -5124,7 +5487,7 @@ export default function App() {
           )}
         </section>
       )}
-      {shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved'].includes(page) && (
+      {shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'payment', 'saved', 'profile'].includes(page) && (
         <section className="mx-auto max-w-[900px] px-4 py-10">
           <div className="rounded-[28px] border border-sky-100 bg-white p-6 text-center shadow-xl sm:p-8">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-sky-50 text-sky-600"><Building2 className="h-8 w-8" /></span>
@@ -5638,77 +6001,213 @@ export default function App() {
         </div>
       </section>
       )}
-      {/* PRICING PAGE */}
+      {/* PLANS & BENEFITS PAGE — plan matter is shown card-by-card in simple words */}
       {page === 'pricing' && !shouldHideJobSeekerExperience && (
-      <section id="pricing" className="border-y bg-white">
-        <div className="mx-auto max-w-[1280px] px-4 py-10">
-          <div className="mx-auto max-w-3xl text-center">
-            <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-widest text-sky-700">JOB SEEKER SUBSCRIPTION TIERS</span>
-            <h2 className="mt-3 text-[28px] font-extrabold leading-tight">Choose how you unlock contacts. <br className="hidden sm:block" /><span className="text-sky-600">Free works — Pro wins faster.</span></h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">Prices, validity and the payment receiving source are set by Admin and shown before payment. Apply Now plays one sponsored ad on every plan; paid plans remove browsing and contact-reveal ads.</p>
-          </div>
-
-          {currentUser?.role === 'seeker' && activePlanPurchase && (
-            <div className="mx-auto mt-6 flex max-w-5xl flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"><BadgeCheck className="h-5 w-5" /></span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-extrabold text-emerald-950">{activePlanPurchase.planName} is active</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-emerald-800">Valid till <b>{formatAdminDate(activePlanPurchase.expiresAt)}</b> • {getPlanDaysLeft(activePlanPurchase.expiresAt, planClock)} day(s) left. At expiry, Free activates automatically and paid benefits stop.</p>
+      <section id="pricing" className="bg-[#f0f7ff]">
+        <div className="mx-auto max-w-[1280px] px-4 py-8 sm:py-10">
+          <div className="overflow-hidden rounded-[30px] bg-gradient-to-br from-sky-800 via-sky-700 to-indigo-800 text-white shadow-xl">
+            <div className="p-6 sm:p-8">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-white px-3 py-1 text-[10px] font-extrabold tracking-[0.13em] text-sky-800">PLANS & BENEFITS</span>
+                <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-extrabold tracking-[0.13em]">JOB SEEKERS ONLY</span>
+                <button type="button" onClick={() => navigate('payment')} className="ml-auto flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-extrabold text-sky-800 shadow transition hover:bg-sky-50"><CreditCard className="h-4 w-4" /> Payment &amp; My Plan</button>
               </div>
-              <span className="w-fit rounded-full bg-emerald-600 px-3 py-1.5 text-[11px] font-extrabold text-white">AUTO-ACTIVE</span>
-            </div>
-          )}
-          {currentUser?.role === 'seeker' && !activePlanPurchase && latestPlanPurchase && (
-            <div className="mx-auto mt-6 flex max-w-5xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
-              <p className="text-sm leading-relaxed text-amber-950"><b>{latestPlanPurchase.planName} expired on {formatAdminDate(latestPlanPurchase.expiresAt)}.</b> Free is active now. Purchase again to reactivate paid benefits automatically.</p>
-            </div>
-          )}
-
-          <div className="mx-auto mt-8 grid max-w-5xl gap-4 md:grid-cols-3">
-            {planCards.map(t => (
-              <div key={t.id} className={`relative rounded-2xl border p-5 ${t.popular ? 'border-sky-500 bg-sky-50 shadow-lg' : 'bg-slate-50'} ${tier === t.id ? 'ring-2 ring-sky-500' : ''}`}>
-                {t.popular && <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">MOST POPULAR</span>}
-                {tier === t.id && <span className="absolute -top-3 right-4 rounded-full bg-emerald-500 px-2.5 py-1 text-xs font-bold text-white">Active</span>}
-                <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${t.id === 'free' ? 'bg-slate-900 text-white' : t.id === 'starter' ? 'bg-sky-600 text-white' : t.id === 'pro' ? 'bg-violet-600 text-white' : 'bg-amber-500 text-white'}`}>
-                  <t.icon className="h-5 w-5" />
+              <div className="mt-5 grid gap-6 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+                <div>
+                  <h2 className="text-[30px] font-extrabold leading-[1.08] sm:text-[38px]">Choose how fast you want to contact hiring managers.</h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-sky-50">A plan controls <b>how many hiring contacts open daily</b> and whether you watch ads to reveal them. Free is enough to start. Paid plans save time with direct contact access during the full validity.</p>
                 </div>
-                <h3 className="mt-3 text-lg font-extrabold">{t.name}</h3>
-                <p className="mt-1 text-2xl font-extrabold">{t.price} <span className="text-sm font-semibold text-slate-500">{t.period}</span></p>
-                <p className="text-xs font-bold text-slate-500">{t.limit} unlocks • {t.id === 'free' ? 'Ad-supported' : `${t.validityDays}-day validity • No reveal ads`}</p>
-                <ul className="mt-4 space-y-2">
-                  {t.features.map((f, featureIndex) => (
-                    <li key={`${f}-${featureIndex}`} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
-                  ))}
-                </ul>
-                <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
-                  {t.id === 'free'
-                    ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : '✓ Free Active')
-                    : !t.enabled
-                      ? 'Purchase Paused by Admin'
-                      : activePlanPurchase?.plan === 'pro' && t.id === 'starter'
-                        ? 'Available After Pro Expiry'
-                        : tier === t.id
-                          ? `Renew / Extend ${t.name}`
-                          : activePlanPurchase?.plan === 'starter' && t.id === 'pro'
-                            ? `Upgrade to ${t.name} — ${t.price}`
-                            : t.cta}
-                </button>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-2xl bg-white/15 px-2 py-3 backdrop-blur"><p className="text-[10px] font-extrabold tracking-widest text-sky-100">FREE</p><p className="mt-1 text-sm font-extrabold">3 + 7/day</p></div>
+                  <div className="rounded-2xl bg-white px-2 py-3 text-sky-900 shadow"><p className="truncate text-[10px] font-extrabold tracking-widest text-sky-700">{commerceSettings.plans.starter.name.toUpperCase()}</p><p className="mt-1 text-sm font-extrabold">{commerceSettings.plans.starter.unlimited ? 'Unlimited' : `${getPaidPlanLimit(commerceSettings.plans.starter)}/day`}</p></div>
+                  <div className="rounded-2xl bg-violet-500/35 px-2 py-3 backdrop-blur"><p className="truncate text-[10px] font-extrabold tracking-widest text-violet-100">{commerceSettings.plans.pro.name.toUpperCase()}</p><p className="mt-1 text-sm font-extrabold">{commerceSettings.plans.pro.unlimited ? 'Unlimited' : `${getPaidPlanLimit(commerceSettings.plans.pro)}/day`}</p></div>
+                </div>
               </div>
-            ))}
+            </div>
           </div>
 
-          <div className="mx-auto mt-5 flex max-w-5xl items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left">
-            <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-            <p className="text-sm leading-relaxed text-emerald-900"><b>Recruiter plan removed:</b> Recruiters do not need a paid subscription plan. Register free, post vacancies for Admin approval, and browse anonymous Job Seeker job profiles without names or contact details.</p>
+          <div className="mt-5">{renderCurrentPlanStatusCard()}</div>
+
+          <div className="mt-9 flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-extrabold tracking-[0.14em] text-sky-700">STEP 1 — COMPARE THE THREE CARDS</p>
+              <h3 className="mt-1 text-2xl font-extrabold leading-tight">Every plan explained in simple words</h3>
+              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Check four things on each card: <b>price</b>, <b>validity</b>, <b>contacts per day</b>, and <b>ads</b>. Prices and benefits are controlled by Admin and update automatically when Admin saves new settings.</p>
+            </div>
+            <button type="button" onClick={() => navigate('payment')} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-xs font-extrabold text-white shadow"><Wallet className="h-4 w-4" /> See How Payment Works</button>
           </div>
 
-          <div className="mt-6 grid gap-4 rounded-2xl border bg-slate-50 p-4 sm:grid-cols-3">
-            <div className="flex gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" /><p className="text-sm leading-tight"><b>Why masked?</b> Prevents spam calls to recruiters. Free users prove intent by watching a short ad.</p></div>
-            <div className="flex gap-3"><TvMinimalPlay className="h-5 w-5 shrink-0 text-sky-600" /><p className="text-sm leading-tight"><b>Sponsored video:</b> Free has 3 daily full-contact unlocks, then 7 extra jobs with separate company, manager and number ads. Starter/Pro reveal directly; Apply Now still plays one sponsored ad.</p></div>
-            <div className="flex gap-3"><BadgeCheck className="h-5 w-5 shrink-0 text-violet-600" /><p className="text-sm leading-tight"><b>Verified only:</b> Every vacancy is manually checked by M Divakar Reddy before publish.</p></div>
+          <div className="mt-5 grid items-stretch gap-4 lg:grid-cols-3">
+            {planCards.map(planCard => renderPlanCard(planCard))}
           </div>
 
+          <div className="mt-8 overflow-hidden rounded-[26px] border border-sky-100 bg-white shadow-sm">
+            <div className="border-b bg-sky-50/70 px-5 py-4">
+              <p className="text-[11px] font-extrabold tracking-[0.14em] text-sky-700">QUICK COMPARISON</p>
+              <h3 className="mt-1 text-xl font-extrabold">Difference between Free, {commerceSettings.plans.starter.name} and {commerceSettings.plans.pro.name}</h3>
+              <p className="mt-1 text-sm text-slate-600">Read one row at a time. This table uses the live Admin-set price, validity and daily limit.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[780px] text-left text-sm">
+                <thead>
+                  <tr className="border-b bg-white text-slate-900">
+                    <th className="px-5 py-3 text-xs font-extrabold uppercase tracking-wide text-slate-500">What to check</th>
+                    {planCards.map(planCard => <th key={planCard.id} className="px-4 py-3 text-sm font-extrabold">{planCard.name}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: 'Price', values: planCards.map(planCard => `${planCard.price} ${planCard.period}`) },
+                    { label: 'Validity', values: planCards.map(planCard => planCard.validityText) },
+                    { label: 'Hiring contacts', values: planCards.map(planCard => planCard.contactAccess) },
+                    { label: 'Phone & email', values: planCards.map(planCard => planCard.contactDetails) },
+                    { label: 'Ads', values: planCards.map(planCard => planCard.adsText) },
+                    { label: 'Payment', values: planCards.map(planCard => planCard.paymentText) },
+                    { label: 'Best for', values: planCards.map(planCard => planCard.bestFor) },
+                  ].map((row, rowIndex) => (
+                    <tr key={row.label} className={rowIndex % 2 === 0 ? 'bg-slate-50/70' : 'bg-white'}>
+                      <th className="px-5 py-3 text-xs font-extrabold uppercase tracking-wide text-slate-500">{row.label}</th>
+                      {row.values.map((value, valueIndex) => <td key={`${row.label}-${valueIndex}`} className="px-4 py-3 font-semibold leading-relaxed text-slate-800">{value}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-9">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-extrabold tracking-[0.14em] text-emerald-700">STEP 2 — PAYMENT IN 5 SIMPLE STEPS</p>
+                <h3 className="mt-1 text-2xl font-extrabold leading-tight">Pay only after checking the receiver and exact amount</h3>
+                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">The separate Payment page shows your current plan, available methods and payment history. The final receiver, amount and new expiry are shown again inside checkout before you confirm.</p>
+              </div>
+              <button type="button" onClick={() => navigate('payment')} className="flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-xs font-extrabold text-white shadow"><CreditCard className="h-4 w-4" /> Open Payment Page</button>
+            </div>
+            <div className="mt-4">{renderPaymentSteps()}</div>
+            <div className="mt-4">{renderPaymentMethodCards()}</div>
+          </div>
+
+          <div className="mt-9">
+            <p className="text-[11px] font-extrabold tracking-[0.14em] text-violet-700">COMMON QUESTIONS</p>
+            <h3 className="mt-1 text-2xl font-extrabold">Plan and payment doubts — clear answers</h3>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-3xl border bg-white p-4 shadow-sm"><BadgeCheck className="h-5 w-5 text-emerald-600" /><h4 className="mt-2 text-sm font-extrabold">When does my plan start?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Immediately after you complete checkout and tap <b>Payment Done — Activate Plan</b>. The expiry date appears on the Payment page and in My Account.</p></article>
+              <article className="rounded-3xl border bg-white p-4 shadow-sm"><RotateCcw className="h-5 w-5 text-sky-600" /><h4 className="mt-2 text-sm font-extrabold">Can I renew before expiry?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Yes. Renewing the <b>same plan</b> extends from your current expiry. If you upgrade, checkout shows the new plan expiry before payment confirmation.</p></article>
+              <article className="rounded-3xl border bg-white p-4 shadow-sm"><Clock3 className="h-5 w-5 text-amber-600" /><h4 className="mt-2 text-sm font-extrabold">What happens at expiry?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Paid benefits stop at the exact expiry time and <b>Free activates automatically</b>. You do not need to logout or create a new account.</p></article>
+              <article className="rounded-3xl border bg-white p-4 shadow-sm"><TvMinimalPlay className="h-5 w-5 text-violet-600" /><h4 className="mt-2 text-sm font-extrabold">Why is there an Apply ad?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Paid plans remove browsing and contact-reveal ads. For application safety and sponsorship, <b>Apply Now still shows one sponsored ad on every plan</b>.</p></article>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-3 lg:grid-cols-3">
+            <article className="flex gap-3 rounded-3xl border border-emerald-200 bg-emerald-50 p-4"><Building2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><div><h4 className="text-sm font-extrabold text-emerald-950">Recruiters: no plan needed</h4><p className="mt-1 text-xs leading-relaxed text-emerald-900">Recruiters register free, post vacancies for Admin approval and view anonymous candidate profiles. Paid plans are only for Job Seeker contact access.</p></div></article>
+            <article className="flex gap-3 rounded-3xl border bg-white p-4 shadow-sm"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" /><div><h4 className="text-sm font-extrabold">Why are contacts protected?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Masking helps reduce spam calls. Free users unlock with ads; paid users open contacts directly within their plan limit.</p></div></article>
+            <article className="flex gap-3 rounded-3xl border bg-white p-4 shadow-sm"><BadgeCheck className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" /><div><h4 className="text-sm font-extrabold">Founder-verified vacancies</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Member-submitted vacancies go live only after Admin approval by App Founder <b>M Divakar Reddy</b>.</p></div></article>
+          </div>
+        </div>
+      </section>
+      )}
+      {/* PAYMENT & MY PLAN PAGE — separate from Plans & Benefits in every menu */}
+      {page === 'payment' && !shouldHideJobSeekerExperience && (
+      <section id="payment" className="bg-[#f0f7ff]">
+        <div className="mx-auto max-w-[1280px] px-4 py-8 sm:py-10">
+          <div className="overflow-hidden rounded-[30px] bg-gradient-to-br from-emerald-700 via-teal-700 to-sky-800 text-white shadow-xl">
+            <div className="p-6 sm:p-8">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-white px-3 py-1 text-[10px] font-extrabold tracking-[0.13em] text-emerald-800">PAYMENT &amp; MY PLAN</span>
+                <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-extrabold tracking-[0.13em]">SEPARATE PAYMENT PAGE</span>
+                <button type="button" onClick={() => navigate('pricing')} className="ml-auto flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-extrabold text-emerald-800 shadow transition hover:bg-emerald-50"><Crown className="h-4 w-4" /> Plans &amp; Benefits</button>
+              </div>
+              <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+                <div>
+                  <h2 className="text-[30px] font-extrabold leading-[1.08] sm:text-[38px]">Payment steps, plan status and history — all in one place.</h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-emerald-50">First choose a plan. Before paying, check the <b>receiver name</b>, <b>exact amount</b> and <b>new expiry</b>. After payment, enter the new UTR/transaction reference to activate the plan.</p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-2xl bg-white px-2 py-3 text-emerald-900 shadow"><p className="text-[10px] font-extrabold tracking-widest text-emerald-700">RECEIVER</p><p className="mt-1 truncate text-xs font-extrabold">{commerceSettings.payment.receiverName}</p></div>
+                  <div className="rounded-2xl bg-white/15 px-2 py-3 backdrop-blur"><p className="text-[10px] font-extrabold tracking-widest text-emerald-100">METHODS READY</p><p className="mt-1 text-sm font-extrabold">{getAvailableCheckoutMethods(commerceSettings).length}</p></div>
+                  <div className="rounded-2xl bg-white/15 px-2 py-3 backdrop-blur"><p className="text-[10px] font-extrabold tracking-widest text-emerald-100">ACTIVATION</p><p className="mt-1 text-xs font-extrabold">Automatic</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5">{renderCurrentPlanStatusCard()}</div>
+
+          <div className="mt-9 grid gap-6 xl:grid-cols-[1.45fr_0.85fr]">
+            <div className="min-w-0">
+              <div>
+                <p className="text-[11px] font-extrabold tracking-[0.14em] text-emerald-700">HOW TO PAY</p>
+                <h3 className="mt-1 text-2xl font-extrabold">Follow these 5 cards in order</h3>
+                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Do not pay from an old screenshot or an old UPI ID. Always open the plan checkout so the latest Admin receiver, amount and expiry are shown for that purchase.</p>
+                <div className="mt-4">{renderPaymentSteps()}</div>
+              </div>
+
+              <div className="mt-9">
+                <p className="text-[11px] font-extrabold tracking-[0.14em] text-sky-700">PAYMENT METHODS SET BY ADMIN</p>
+                <h3 className="mt-1 text-2xl font-extrabold">Choose only a method marked “READY”</h3>
+                <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Admin can switch each method ON or OFF. A method marked <b>NOT AVAILABLE</b> will not appear as a usable checkout choice.</p>
+                <div className="mt-4">{renderPaymentMethodCards()}</div>
+              </div>
+
+              <div className="mt-6 rounded-[26px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <h3 className="flex items-center gap-2 text-base font-extrabold text-amber-950"><ShieldCheck className="h-5 w-5 text-amber-700" /> Before tapping “Payment Done”, check these 5 points</h3>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {[
+                    `Receiver name is ${commerceSettings.payment.receiverName}.`,
+                    'Amount exactly matches the selected plan price.',
+                    'Payment status in your UPI/bank app is Successful.',
+                    'Reference is the new UPI/UTR/transaction number for this payment.',
+                    'The same reference has not been used for an earlier purchase.',
+                  ].map((item, index) => (
+                    <p key={item} className={`flex gap-2 rounded-2xl bg-white px-3.5 py-3 text-xs font-semibold leading-relaxed text-amber-950 ${index === 4 ? 'sm:col-span-2' : ''}`}><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> {item}</p>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-amber-900"><b>Manual UPI/bank note:</b> PharmaSales Jobs records the reference you submit; Admin can cross-check it in the Payment List. If money was deducted but the plan did not activate, raise a support ticket with your registered mobile number and the same reference.</p>
+              </div>
+
+              {commerceSettings.payment.instructions.trim() && (
+                <div className="mt-4 rounded-[26px] border border-sky-200 bg-white p-5 shadow-sm">
+                  <h3 className="flex items-center gap-2 text-base font-extrabold"><Info className="h-5 w-5 text-sky-700" /> Admin payment instructions</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{commerceSettings.payment.instructions}</p>
+                </div>
+              )}
+            </div>
+
+            <aside className="min-w-0 space-y-4">
+              <div className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Wallet className="h-5 w-5" /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-extrabold tracking-[0.13em] text-emerald-700">MY PAYMENT HISTORY</p>
+                    <h3 className="mt-0.5 text-lg font-extrabold">Purchases on my mobile number</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600">Each card shows the plan, amount, method, reference, purchase date and expiry.</p>
+                  </div>
+                  {currentUser?.role === 'seeker' && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-extrabold text-emerald-800">{myPlanPurchases.length} record{myPlanPurchases.length === 1 ? '' : 's'}</span>}
+                </div>
+                <div className="mt-4">{renderPaymentHistoryCards()}</div>
+              </div>
+
+              <div className="rounded-[26px] border border-sky-200 bg-sky-50 p-5 shadow-sm">
+                <h3 className="flex items-center gap-2 text-base font-extrabold text-sky-950"><Clock3 className="h-5 w-5 text-sky-700" /> What happens after payment?</h3>
+                <div className="mt-3 space-y-2 text-sm leading-relaxed text-sky-950">
+                  <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Plan activates on the same Job Seeker mobile number.</p>
+                  <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Direct contacts work until the exact expiry time.</p>
+                  <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Free starts automatically after expiry; your account and profile stay safe.</p>
+                  <p className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Renewing the same plan before expiry extends its validity.</p>
+                </div>
+              </div>
+
+              <div className="rounded-[26px] border bg-white p-5 shadow-sm">
+                <h3 className="flex items-center gap-2 text-base font-extrabold"><MessageCircle className="h-5 w-5 text-violet-600" /> Payment problem?</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">Raise a support ticket with your <b>registered mobile</b>, <b>plan name</b>, <b>amount</b> and <b>UTR/transaction reference</b>. Do not share your password or bank PIN with anyone.</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => openSupportTicket('support')} className="rounded-full bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white">Raise Support Ticket</button>
+                  <button type="button" onClick={() => openLegal('support')} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Contact Support</button>
+                </div>
+              </div>
+            </aside>
+          </div>
         </div>
       </section>
       )}
@@ -6386,7 +6885,7 @@ export default function App() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-extrabold tracking-widest text-slate-400">ADMIN MENU</p>
-                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', plans: 'Plans & Payments', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', 'plan-settings': 'Plan Settings', 'payment-settings': 'Payment Settings', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
                 </div>
                 <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
               </div>
@@ -6413,7 +6912,8 @@ export default function App() {
                             { id: 'users' as const, label: 'Users List', sub: 'Job Seekers • Recruiters • Admin', icon: Users, badge: displayedAdminUsers.length + 1, badgeClass: 'bg-sky-100 text-sky-700' },
                             { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Crown, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
                             { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
-                            { id: 'plans' as const, label: 'Plans & Payments', sub: 'Set price, validity, UPI & receiving source', icon: CreditCard, badge: undefined, badgeClass: '' },
+                            { id: 'plan-settings' as const, label: 'Plan Settings', sub: 'Price • validity • contacts • benefits', icon: Crown, badge: undefined, badgeClass: '' },
+                            { id: 'payment-settings' as const, label: 'Payment Settings', sub: 'Receiver • UPI/QR • link • bank', icon: Wallet, badge: undefined, badgeClass: '' },
                             { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
                             { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
@@ -6718,16 +7218,42 @@ export default function App() {
                 </div>
               )}
 
-              {adminTab === 'plans' && (
+              {(adminTab === 'plan-settings' || adminTab === 'payment-settings') && (
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="flex items-center gap-2 text-base font-extrabold"><CreditCard className="h-5 w-5 text-sky-600" /> Job Seeker Plans &amp; Payment Receiving</p>
+                    <p className="flex items-center gap-2 text-base font-extrabold">{adminTab === 'plan-settings' ? <Crown className="h-5 w-5 text-sky-600" /> : <Wallet className="h-5 w-5 text-emerald-600" />} {adminTab === 'plan-settings' ? 'Plan Settings — price, validity, contacts and benefits' : 'Payment Settings — receiver, UPI, QR, payment link and bank'}</p>
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live Settings' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void refreshCommerceSettings().then(settings => { setCommerceDraft(settings); setCommerceSettingsError(''); setToast('Latest live plan and payment settings loaded.') }).catch(() => setCommerceSettingsError('Unable to refresh live settings. Your current editor values were kept.'))} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Set the Job Seeker plan price, validity, daily contact limit and benefits, plus the payment source shown during purchase. After the Job Seeker confirms payment, the plan activates automatically. At the exact expiry time, Free activates automatically and paid benefits stop.</p>
+                  <p className="mt-1 max-w-4xl text-xs leading-relaxed text-slate-600">{adminTab === 'plan-settings'
+                    ? 'This page controls only what a plan is: name, price, validity, daily contacts, purchase ON/OFF and the benefit lines shown on each Job Seeker plan card. Save after changing anything.'
+                    : 'This page controls only where money is received: receiver name, UPI ID/QR, payment link, bank details, instructions and which methods are ON. Job Seekers see this latest source only after you save.'}</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <button type="button" onClick={() => setAdminTab('plan-settings')} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition ${adminTab === 'plan-settings' ? 'border-sky-600 bg-sky-700 text-white shadow' : 'border-sky-100 bg-sky-50 text-sky-950 hover:border-sky-300'}`}>
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${adminTab === 'plan-settings' ? 'bg-white/20' : 'bg-white text-sky-700'}`}><Crown className="h-5 w-5" /></span>
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Plan Settings</span><span className={`mt-0.5 block text-[11px] font-semibold ${adminTab === 'plan-settings' ? 'text-sky-100' : 'text-sky-700'}`}>What the Job Seeker gets</span></span>
+                      {adminTab === 'plan-settings' && <span className="rounded-full bg-white px-2 py-1 text-[9px] font-extrabold text-sky-800">OPEN</span>}
+                    </button>
+                    <button type="button" onClick={() => setAdminTab('payment-settings')} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition ${adminTab === 'payment-settings' ? 'border-emerald-700 bg-emerald-700 text-white shadow' : 'border-emerald-100 bg-emerald-50 text-emerald-950 hover:border-emerald-300'}`}>
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${adminTab === 'payment-settings' ? 'bg-white/20' : 'bg-white text-emerald-700'}`}><Wallet className="h-5 w-5" /></span>
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Payment Settings</span><span className={`mt-0.5 block text-[11px] font-semibold ${adminTab === 'payment-settings' ? 'text-emerald-100' : 'text-emerald-700'}`}>Where the money is received</span></span>
+                      {adminTab === 'payment-settings' && <span className="rounded-full bg-white px-2 py-1 text-[9px] font-extrabold text-emerald-800">OPEN</span>}
+                    </button>
+                  </div>
                   {commerceSettings.updatedAt && <p className="mt-2 text-[11px] font-bold text-slate-400">Last saved: {formatAdminDate(commerceSettings.updatedAt)}</p>}
 
+                  {adminTab === 'plan-settings' && (
+                    <>
+                      <div className="mt-5">
+                        <p className="text-[11px] font-extrabold tracking-[0.13em] text-sky-700">HOW TO FILL EACH PLAN CARD</p>
+                        <h3 className="mt-1 text-lg font-extrabold">Four simple decisions for every paid plan</h3>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          <article className="rounded-3xl border border-sky-100 bg-sky-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-700 text-xs font-extrabold text-white">1</span><h4 className="mt-2 text-sm font-extrabold">Name + price</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">This name and exact price appear on the Job Seeker card and checkout.</p></article>
+                          <article className="rounded-3xl border border-sky-100 bg-sky-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-700 text-xs font-extrabold text-white">2</span><h4 className="mt-2 text-sm font-extrabold">Validity days</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">The plan runs for this many days. Free starts automatically at expiry.</p></article>
+                          <article className="rounded-3xl border border-sky-100 bg-sky-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-700 text-xs font-extrabold text-white">3</span><h4 className="mt-2 text-sm font-extrabold">Contacts per day</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Set a daily number, or tick Unlimited. The limit resets daily during validity.</p></article>
+                          <article className="rounded-3xl border border-sky-100 bg-sky-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-700 text-xs font-extrabold text-white">4</span><h4 className="mt-2 text-sm font-extrabold">ON/OFF + benefits</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Purchase ON allows new buying. Write one short benefit per line in simple words.</p></article>
+                        </div>
+                      </div>
                   <div className="mt-5 grid gap-4 lg:grid-cols-2">
                     {(['starter', 'pro'] as PaidPlanId[]).map(planId => {
                       const plan = commerceDraft.plans[planId]
@@ -6737,9 +7263,13 @@ export default function App() {
                             <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white ${planId === 'starter' ? 'bg-sky-600' : 'bg-violet-600'}`}>{planId === 'starter' ? <Zap className="h-5 w-5" /> : <Crown className="h-5 w-5" />}</span>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-extrabold">{planId === 'starter' ? 'Starter Plan Settings' : 'Pro Plan Settings'}</p>
-                              <p className="text-[11px] font-semibold text-slate-500">Job Seekers see these details before paying.</p>
+                              <p className="text-[11px] font-semibold text-slate-500">{planId === 'starter' ? 'Lower-cost plan for regular daily applications.' : 'Highest-access plan for serious daily job hunting.'}</p>
                             </div>
                             <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${plan.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>{plan.enabled ? 'PURCHASE ON' : 'PURCHASE OFF'}</span>
+                          </div>
+                          <div className="mt-3 rounded-2xl border border-white bg-white/90 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600 shadow-sm">
+                            <p className="font-extrabold text-slate-900">Job Seeker will read this in simple words:</p>
+                            <p className="mt-0.5">Pay <b>{formatINR(plan.price)}</b>. Use for <b>{plan.validityDays || 0} days</b>. Open <b>{plan.unlimited ? 'unlimited' : `${plan.dailyLimit || 0}`}</b> hiring contacts every day without contact-reveal ads.</p>
                           </div>
                           <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <div className="sm:col-span-2">
@@ -6767,20 +7297,48 @@ export default function App() {
                           <div className="mt-3">
                             <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Plan Benefits (one benefit per line)</span><Pencil className="h-3.5 w-3.5 text-sky-500" /></label>
                             <textarea value={plan.features.join('\n')} onChange={e => updateCommercePlanDraft(planId, { features: e.target.value.split('\n') })} rows={6} className="w-full resize-y rounded-xl border bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-sky-500" placeholder={'No banner or native ads\nUnmasked phone + email'} />
-                            <p className="mt-1 text-[11px] text-slate-500">The contact limit above is added automatically as the first benefit.</p>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Write one short, clear benefit per line. The contacts/day line is added automatically first. Do not promise a job or interview.</p>
                           </div>
-                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-[11px] font-bold text-slate-600">Preview: {formatINR(plan.price)} / {plan.validityDays || 0} days • {plan.unlimited ? 'Unlimited' : `${plan.dailyLimit || 0}/day`} direct contacts</p>
+                          <div className="mt-3 rounded-2xl bg-slate-900 px-3.5 py-3 text-white"><p className="text-[9px] font-extrabold tracking-[0.13em] text-sky-200">LIVE CARD PREVIEW AFTER SAVE</p><p className="mt-1 text-sm font-extrabold">{plan.name || (planId === 'starter' ? 'Starter' : 'Pro')} — {formatINR(plan.price)} / {plan.validityDays || 0} days</p><p className="mt-0.5 text-[11px] font-semibold text-slate-200">{plan.unlimited ? 'Unlimited' : `${plan.dailyLimit || 0}/day`} direct hiring contacts • {plan.enabled ? 'Purchase ON' : 'Purchase OFF'}{plan.popular ? ' • Most Popular' : ''}</p></div>
                         </div>
                       )
                     })}
                   </div>
 
+                    </>
+                  )}
+
+                  {adminTab === 'payment-settings' && (
+                    <>
+                      <div className="mt-5">
+                        <p className="text-[11px] font-extrabold tracking-[0.13em] text-emerald-700">HOW TO SET THE RECEIVING SOURCE</p>
+                        <h3 className="mt-1 text-lg font-extrabold">Enter one safe source, switch it ON, then save</h3>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">1</span><h4 className="mt-2 text-sm font-extrabold">Receiver name</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Enter the exact name the Job Seeker will see in the UPI/bank app.</p></article>
+                          <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">2</span><h4 className="mt-2 text-sm font-extrabold">Add payment details</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Add UPI ID/QR, a payment link, or bank details. You may offer more than one.</p></article>
+                          <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">3</span><h4 className="mt-2 text-sm font-extrabold">Switch method ON</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Only ON methods with complete details appear as usable checkout cards.</p></article>
+                          <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">4</span><h4 className="mt-2 text-sm font-extrabold">Save + cross-check</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Save with the Admin password, then match every submitted UTR in Payment List.</p></article>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          {[
+                            { label: 'UPI / QR', ready: commerceDraft.payment.upiEnabled && Boolean(commerceDraft.payment.upiId.trim()), detail: commerceDraft.payment.upiId || 'UPI ID not added' },
+                            { label: 'Payment Link', ready: commerceDraft.payment.paymentLinkEnabled && /^https?:\/\//i.test(commerceDraft.payment.paymentLink.trim()), detail: commerceDraft.payment.paymentLink || 'Payment link not added' },
+                            { label: 'Bank Transfer', ready: commerceDraft.payment.bankEnabled && Boolean(commerceDraft.payment.bankDetails.trim()), detail: commerceDraft.payment.bankDetails.trim() ? 'Bank details added' : 'Bank details not added' },
+                            { label: 'Demo Checkout', ready: commerceDraft.payment.demoCheckoutEnabled, detail: commerceDraft.payment.demoCheckoutEnabled ? 'Testing is ON — turn OFF for real money' : 'Testing is OFF' },
+                          ].map(method => (
+                            <article key={method.label} className={`rounded-3xl border p-3.5 ${method.ready ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
+                              <div className="flex items-center gap-2"><h4 className="min-w-0 flex-1 truncate text-sm font-extrabold">{method.label}</h4><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold ${method.ready ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{method.ready ? 'READY' : 'NOT READY'}</span></div>
+                              <p className="mt-1 truncate text-[11px] font-semibold text-slate-500" title={method.detail}>{method.detail}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
                   <div className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50/50 p-4">
                     <div className="flex items-center gap-2">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white"><Wallet className="h-5 w-5" /></span>
                       <div>
                         <p className="text-sm font-extrabold">Payment Receiving Source</p>
-                        <p className="text-[11px] font-semibold text-slate-500">These details are shown to the Job Seeker at checkout.</p>
+                        <p className="text-[11px] font-semibold text-slate-500">Enter the receiver first. Switch ON only payment methods you personally verified.</p>
                       </div>
                     </div>
                     <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -6799,6 +7357,9 @@ export default function App() {
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.bankEnabled} onChange={e => updateCommercePaymentDraft({ bankEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Bank Transfer ON</label>
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.demoCheckoutEnabled} onChange={e => updateCommercePaymentDraft({ demoCheckoutEnabled: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Demo Checkout ON</label>
                     </div>
+                    {commerceDraft.payment.demoCheckoutEnabled && (
+                      <p className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-100 px-3 py-2.5 text-[11px] font-bold leading-relaxed text-amber-950"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Demo Checkout is ON. Job Seekers can activate without real payment. Turn Demo OFF before collecting real money.</p>
+                    )}
                     <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                       <div className="rounded-2xl border bg-white p-3">
                         <p className="flex items-center gap-2 text-xs font-extrabold text-slate-700"><QrCode className="h-4 w-4 text-emerald-600" /> UPI QR Image</p>
@@ -6837,6 +7398,9 @@ export default function App() {
                     </div>
                   </div>
 
+                    </>
+                  )}
+
                   <div className="mt-5 rounded-3xl border bg-slate-50 p-4">
                     <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                       <div>
@@ -6846,11 +7410,13 @@ export default function App() {
                             <input type="password" value={commerceAdminPassword} onChange={e => setCommerceAdminPassword(e.target.value)} autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder="Enter current Admin password" />
                           </div>
                         )}
-                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Saving updates the live plan prices, validity and payment source for Job Seekers. Existing purchases keep the price and expiry recorded at their checkout time.</p>
+                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{adminTab === 'plan-settings'
+                          ? 'Saving updates the live plan cards (price, validity, contacts/day, ON/OFF and benefits). Existing purchases keep the price and expiry recorded at their checkout time.'
+                          : 'Saving updates the live checkout receiving source. Existing purchases and payment references are not changed.'}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') }} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
-                        <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : 'Save Plans & Payments'}</button>
+                        <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : adminTab === 'plan-settings' ? 'Save Plan Settings' : 'Save Payment Settings'}</button>
                       </div>
                     </div>
                     {commerceSettingsError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {commerceSettingsError}</p>}
@@ -7030,9 +7596,10 @@ export default function App() {
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-2">
                       <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
-                      <button onClick={() => setAdminTab('plans')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><CreditCard className="h-3.5 w-3.5" /> Plans & Payments</button>
+                      <button onClick={() => setAdminTab('plan-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><Crown className="h-3.5 w-3.5" /> Plan Settings</button>
+                      <button onClick={() => setAdminTab('payment-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-emerald-600 py-2.5 text-xs font-extrabold text-white"><Wallet className="h-3.5 w-3.5" /> Payment Settings</button>
                       <button onClick={handleClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
                     <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
@@ -7065,7 +7632,8 @@ export default function App() {
                 ) : (
                   <>
                     <li><button onClick={() => navigate('jobs')} className="hover:text-white">Browse Vacancies</button></li>
-                    <li><button onClick={() => navigate('pricing')} className="hover:text-white">Subscription</button></li>
+                    <li><button onClick={() => navigate('pricing')} className="hover:text-white">Plans &amp; Benefits</button></li>
+                    <li><button onClick={() => navigate('payment')} className="hover:text-white">Payment &amp; My Plan</button></li>
                     <li><button onClick={() => navigate('ai')} className="hover:text-white">AI Assistant</button></li>
                     <li><button onClick={() => navigate('recruiters')} className="hover:text-white">For Recruiters</button></li>
                   </>
@@ -7440,30 +8008,26 @@ export default function App() {
       <AnimatePresence>
         {showPricing && !shouldHideJobSeekerExperience && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowPricing(false)}>
-            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[90vh] w-full max-w-[980px] overflow-auto rounded-2xl bg-white">
-              <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
-                <div>
-                  <p className="text-lg font-extrabold">Job Seeker Subscription Plans — PharmaSales Jobs</p>
-                  <p className="text-xs text-slate-500">Admin-set prices and validity. The payment receiving source is shown at checkout; Apply Now still plays one sponsored ad.</p>
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }} onClick={e => e.stopPropagation()} className="max-h-[92vh] w-full max-w-[1120px] overflow-auto rounded-[28px] bg-[#f0f7ff] shadow-2xl">
+              <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-white/95 p-4 backdrop-blur">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-extrabold tracking-[0.13em] text-sky-700">PLANS & BENEFITS</p>
+                  <p className="mt-0.5 truncate text-lg font-extrabold">Compare each plan card before you pay</p>
+                  <p className="text-xs leading-relaxed text-slate-600">Price • Validity • Contacts/day • Ads — everything is written on the card. Exact payment receiver and expiry appear again at checkout.</p>
                 </div>
-                <button onClick={() => setShowPricing(false)} className="rounded-full border p-2"><X className="h-5 w-5" /></button>
+                <button type="button" onClick={() => { setShowPricing(false); navigate('payment') }} className="hidden shrink-0 items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white sm:flex"><CreditCard className="h-4 w-4" /> Payment Page</button>
+                <button onClick={() => setShowPricing(false)} className="shrink-0 rounded-full border bg-white p-2" aria-label="Close plans"><X className="h-5 w-5" /></button>
               </div>
-              <div className="grid gap-4 p-6 md:grid-cols-3">
-                {planCards.map(t => (
-                  <div key={t.id} className={`rounded-2xl border p-4 ${tier === t.id ? 'border-sky-600 bg-sky-50' : 'bg-slate-50'}`}>
-                    <div className="flex items-center gap-2"><t.icon className="h-5 w-5" /><p className="font-extrabold">{t.name}</p>{t.popular && <span className="ml-auto rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-extrabold text-white">POPULAR</span>}</div>
-                    <p className="mt-1 text-xl font-extrabold">{t.price}<span className="text-xs font-semibold text-slate-500">{t.period}</span></p>
-                    <p className="mt-0.5 text-[11px] font-bold text-slate-500">{t.limit} unlocks{t.id !== 'free' ? ` • ${t.validityDays}-day validity` : ''}</p>
-                    <ul className="mt-3 space-y-1.5">
-                      {t.features.map((f, featureIndex) => <li key={`${f}-${featureIndex}`} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
-                    </ul>
-                    <button onClick={() => void handlePlanSelect(t.id)} disabled={(!t.enabled && tier !== t.id) || (activePlanPurchase?.plan === 'pro' && t.id === 'starter')} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${tier === t.id && t.id !== 'free' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{t.id === 'free' ? (activePlanPurchase ? `${activePlanPurchase.planName} Active` : 'Free Active') : !t.enabled ? 'Purchase Paused' : activePlanPurchase?.plan === 'pro' && t.id === 'starter' ? 'After Pro Expiry' : tier === t.id ? `Renew ${t.name}` : `Buy ${t.name}`}</button>
-                  </div>
-                ))}
-              </div>
-              <div className="border-t bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                <p><b>Free plan:</b> 3 daily full-contact unlocks open 7 extra jobs. Extra jobs use separate sponsored ads for company, manager name and contact number.</p>
-                <p className="mt-1"><b>Paid plans:</b> Direct contact reveals and no browsing/native ads until the shown validity ends. <b>Apply Now:</b> one sponsored ad plays on every plan before submission.</p>
+              <div className="p-4 sm:p-6">
+                {renderCurrentPlanStatusCard()}
+                <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-3">
+                  {planCards.map(planCard => renderPlanCard(planCard))}
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <p className="rounded-3xl border bg-white p-4 text-xs leading-relaxed text-slate-700"><b className="text-slate-900">Free:</b> 3 full contacts first, then 7 extra jobs with separate detail ads.</p>
+                  <p className="rounded-3xl border bg-white p-4 text-xs leading-relaxed text-slate-700"><b className="text-slate-900">Paid:</b> Direct contacts and no browsing/reveal ads until the shown expiry.</p>
+                  <p className="rounded-3xl border bg-white p-4 text-xs leading-relaxed text-slate-700"><b className="text-slate-900">Apply Now:</b> One sponsored ad still plays before application submission on every plan.</p>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -7500,19 +8064,55 @@ export default function App() {
                   </div>
                 </div>
 
-                <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">SELECT PAYMENT METHOD</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {getAvailableCheckoutMethods(commerceSettings).map(method => (
-                    <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-extrabold transition disabled:opacity-50 ${checkoutMethod === method.id ? 'bg-slate-900 text-white shadow' : 'border bg-white text-slate-600 hover:bg-slate-50'}`}>
-                      {method.id === 'upi' ? <QrCode className="h-3.5 w-3.5" /> : method.id === 'bank' ? <Landmark className="h-3.5 w-3.5" /> : <CreditCard className="h-3.5 w-3.5" />} {method.label}
-                    </button>
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { step: '1', label: 'Check amount' },
+                    { step: '2', label: 'Make payment' },
+                    { step: '3', label: 'Enter UTR' },
+                    { step: '4', label: 'Auto-activate' },
+                  ].map(item => (
+                    <div key={item.step} className="flex items-center gap-2 rounded-2xl border border-sky-100 bg-sky-50 px-3 py-2.5">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-700 text-[11px] font-extrabold text-white">{item.step}</span>
+                      <span className="text-[11px] font-extrabold leading-tight text-sky-950">{item.label}</span>
+                    </div>
                   ))}
+                </div>
+
+                <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">STEP 2 — SELECT PAYMENT METHOD</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {getAvailableCheckoutMethods(commerceSettings).map(method => {
+                    const methodHint = method.id === 'upi'
+                      ? 'UPI app or QR scan'
+                      : method.id === 'payment-link'
+                        ? 'Open the Admin payment link'
+                        : method.id === 'bank'
+                          ? 'NEFT / IMPS bank transfer'
+                          : 'Test only — no real money'
+                    const selectedMethod = checkoutMethod === method.id
+                    return (
+                      <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition disabled:opacity-50 ${selectedMethod ? 'border-slate-900 bg-slate-900 text-white shadow' : 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}>
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${selectedMethod ? 'bg-white/20 text-white' : 'bg-sky-50 text-sky-700'}`}>
+                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : method.id === 'demo' ? <Info className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-extrabold leading-tight">{method.label}</span>
+                          <span className={`mt-0.5 block text-[11px] font-semibold leading-tight ${selectedMethod ? 'text-slate-200' : 'text-slate-500'}`}>{methodHint}</span>
+                        </span>
+                        {selectedMethod && <Check className="h-5 w-5 shrink-0" />}
+                      </button>
+                    )
+                  })}
                 </div>
 
                 <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50/60 p-4">
                   <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-950"><Wallet className="h-4 w-4 text-emerald-700" /> Pay To — Admin Receiving Source</p>
                   <p className="mt-2 text-sm"><span className="text-slate-500">Receiver:</span> <b>{commerceSettings.payment.receiverName}</b></p>
                   <p className="text-sm"><span className="text-slate-500">Exact amount:</span> <b>{formatINR(commerceSettings.plans[checkoutPlan].price)}</b></p>
+                  <div className="mt-3 grid gap-2 text-[11px] font-semibold sm:grid-cols-3">
+                    <p className="flex gap-1.5 rounded-2xl bg-white px-3 py-2"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Pay only to this receiver</p>
+                    <p className="flex gap-1.5 rounded-2xl bg-white px-3 py-2"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Pay the exact amount shown</p>
+                    <p className="flex gap-1.5 rounded-2xl bg-white px-3 py-2"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Plan links to +91 {currentUser.mobile}</p>
+                  </div>
 
                   {checkoutMethod === 'upi' && (
                     <div className="mt-3">
@@ -7554,8 +8154,9 @@ export default function App() {
                 </div>
 
                 {checkoutMethod !== 'demo' && (
-                  <div className="mt-4">
-                    <label className="mb-1 block text-xs font-bold text-slate-600">Payment / UTR / Transaction Reference *</label>
+                  <div className="mt-4 rounded-3xl border border-sky-200 bg-sky-50/60 p-4">
+                    <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">STEP 3 — AFTER SUCCESSFUL PAYMENT</p>
+                    <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">Enter Payment / UTR / Transaction Reference *</label>
                     <input value={checkoutReference} onChange={e => { setCheckoutReference(e.target.value); setCheckoutError('') }} disabled={checkoutProcessing} className="w-full rounded-xl border bg-white px-3 py-3 font-mono text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-50" placeholder="Enter reference shown after successful payment" autoComplete="off" />
                     <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Use a new reference for every purchase/renewal. Admin can cross-check it in the Payment List.</p>
                   </div>
@@ -7563,7 +8164,8 @@ export default function App() {
 
                 {checkoutError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {checkoutError}</p>}
 
-                <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                <p className="mt-5 text-center text-[10px] font-extrabold tracking-[0.12em] text-emerald-700">STEP 4 — CONFIRM • PLAN ACTIVATES AUTOMATICALLY</p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
                   <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : checkoutMethod === 'demo' ? 'Complete Demo Payment — Activate Plan' : 'Payment Done — Activate Plan'}</button>
                 </div>
@@ -7812,8 +8414,8 @@ export default function App() {
               <Plus className={`h-5 w-5 ${page==='postjob'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='postjob'?'text-white':''}`}>Post</span>
             </button>
           ) : (
-            <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
+            <button onClick={() => navigate('pricing')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='pricing' || page==='payment'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <Crown className={`h-5 w-5 ${page==='pricing' || page==='payment'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing' || page==='payment'?'text-white':''}`}>Plans</span>
             </button>
           )}
           {currentUser && hasAuthenticated ? (
