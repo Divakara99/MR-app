@@ -889,6 +889,12 @@ export default function App() {
   // ---- ADMIN: M Divakar Reddy ----
   const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || DEFAULT_ADMIN_PASSWORD } catch { return DEFAULT_ADMIN_PASSWORD } }
   const openAdmin = (tab: typeof adminTab = 'overview') => {
+    if (!isAdmin) {
+      setAdminId('')
+      setAdminPass('')
+      setAdminError('')
+      setShowAdminPass(false)
+    }
     setAdminTab(tab)
     setSelected(null)
     setSelectedCandidate(null)
@@ -1026,6 +1032,7 @@ export default function App() {
   }
   const showGlobalPageBack = canGoBack && page !== 'welcome' && page !== 'auth' && page !== 'candidates' && !isAdminLoginPage
   const handleExitAdminLogin = () => {
+    setAdminId('')
     setAdminError('')
     setAdminPass('')
     setShowAdminPass(false)
@@ -2152,7 +2159,7 @@ export default function App() {
     const localDetailsOk = (forgotId === 'divakar' || forgotId === 'admin') && forgotEmail === ADMIN_REGISTERED_EMAIL
     const finishAdminReset = () => {
       try { localStorage.setItem(ADMIN_PASS_KEY, adminForgotNew) } catch { /* ignore */ }
-      setAdminId(ADMIN_REGISTERED_EMAIL)
+      setAdminId('')
       setAdminPass('')
       setAdminError('')
       setAdminForgotError('')
@@ -2173,6 +2180,7 @@ export default function App() {
   }
   const handleAdminLogout = () => {
     const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
+    setAdminId('')
     setIsAdmin(false)
     try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminPass('')
@@ -4961,7 +4969,7 @@ export default function App() {
                 <form className="mt-5 space-y-3" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
-                    <input value={adminId} onChange={e => setAdminId(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="username" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
@@ -4983,7 +4991,7 @@ export default function App() {
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
-                      <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} placeholder="akhildivakara@gmail.com" autoCapitalize="none" autoComplete="email" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                      <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} name="admin-registered-email" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password</label>
