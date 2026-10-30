@@ -934,6 +934,59 @@ function NativeAd() {
   )
 }
 
+type HowToVideoLanguage = 'english' | 'kannada' | 'telugu'
+type HowToVideoRole = EntryRole | 'admin'
+
+const HOW_TO_VIDEOS: Record<HowToVideoLanguage, { label: string; nativeLabel: string; src: string; downloadName: string; duration: string }> = {
+  english: {
+    label: 'English',
+    nativeLabel: 'English',
+    src: '/videos/PharmaSales-Jobs-How-To-Use-English-Voice.mp4',
+    downloadName: 'PharmaSales-Jobs-How-To-Use-English-Voice.mp4',
+    duration: '1:23',
+  },
+  kannada: {
+    label: 'kannada',
+    nativeLabel: 'ಕನ್ನಡ',
+    src: '/videos/PharmaSales-Jobs-How-To-Use-kannada-Voice.mp4',
+    downloadName: 'PharmaSales-Jobs-How-To-Use-kannada-Voice.mp4',
+    duration: '1:40',
+  },
+  telugu: {
+    label: 'Telugu',
+    nativeLabel: 'తెలుగు',
+    src: '/videos/PharmaSales-Jobs-How-To-Use-Telugu-Voice.mp4',
+    downloadName: 'PharmaSales-Jobs-How-To-Use-Telugu-Voice.mp4',
+    duration: '1:36',
+  },
+}
+
+const HOW_TO_VIDEO_ROLE_CHAPTERS: Record<HowToVideoLanguage, Record<HowToVideoRole, number>> = {
+  english: { seeker: 27, recruiter: 61, admin: 73 },
+  kannada: { seeker: 34, recruiter: 74, admin: 87 },
+  telugu: { seeker: 32, recruiter: 71, admin: 84 },
+}
+
+const HOW_TO_VIDEO_ROLE_COPY: Record<HowToVideoRole, { title: string; description: string; chapterLabel: string }> = {
+  seeker: {
+    title: 'Job Seeker Login Guide',
+    description: 'Watch the App Founder highlight, then learn profile setup, job search, contact unlocks, plans and Apply.',
+    chapterLabel: 'Play Job Seeker section',
+  },
+  recruiter: {
+    title: 'Recruiter Login Guide',
+    description: 'Watch the App Founder highlight, then learn anonymous candidate search, vacancy posting and Admin approval.',
+    chapterLabel: 'Play Recruiter section',
+  },
+  admin: {
+    title: 'Admin Login Guide',
+    description: 'Watch the App Founder highlight, then learn vacancy approvals, users, plans, payments and support management.',
+    chapterLabel: 'Play Admin section',
+  },
+}
+
+const formatHowToVideoTime = (totalSeconds: number) => `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`
+
 export default function App() {
   // App state
   const [tier, setTier] = useState<Tier>('free')
@@ -979,6 +1032,7 @@ export default function App() {
   const [page, setPage] = useState<AppPage>(() => getInitialPage())
   const [pageHistory, setPageHistory] = useState<AppPage[]>([])
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
+  const [howToVideoLanguage, setHowToVideoLanguage] = useState<HowToVideoLanguage>('english')
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
@@ -1182,6 +1236,78 @@ export default function App() {
   // They must not expose the normal Jobs/Home/Recruiter navigation shell.
   const isIsolatedShellPage = page === 'welcome' || page === 'auth' || page === 'admin' || (page === 'legal' && !hasAuthenticated && !isAdmin)
   const welcomeSelectedRole: EntryRole | null = entryRole
+
+  const renderHowToVideoGuide = (guideRole: HowToVideoRole) => {
+    const video = HOW_TO_VIDEOS[howToVideoLanguage]
+    const copy = HOW_TO_VIDEO_ROLE_COPY[guideRole]
+    const chapterStart = HOW_TO_VIDEO_ROLE_CHAPTERS[howToVideoLanguage][guideRole]
+    const videoId = `howto-video-${guideRole}`
+
+    const playRoleChapter = () => {
+      const player = document.getElementById(videoId) as HTMLVideoElement | null
+      if (!player) return
+      try { player.currentTime = chapterStart } catch { /* metadata may still be loading */ }
+      void player.play().catch(() => undefined)
+    }
+
+    return (
+      <div className="mt-5 overflow-hidden rounded-3xl border border-sky-100 bg-white text-left shadow-sm" aria-label={`${copy.title} video in English, kannada and Telugu`}>
+        <div className="flex items-center gap-3 bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 p-4 text-white">
+          <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — App Founder" className="h-14 w-14 shrink-0 rounded-full border-2 border-amber-300 object-cover shadow" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-extrabold tracking-[0.14em] text-amber-200">APP FOUNDER HIGHLIGHT</p>
+            <h3 className="mt-0.5 text-base font-extrabold leading-tight">How to Use — {copy.title}</h3>
+            <p className="mt-0.5 text-[11px] font-semibold leading-snug text-sky-100">M Divakar Reddy • App Founder — PharmaSales Jobs</p>
+          </div>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow"><Play className="ml-0.5 h-5 w-5" /></span>
+        </div>
+
+        <div className="p-4">
+          <p className="text-xs leading-relaxed text-slate-600">{copy.description}</p>
+          <p className="mt-3 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">Choose video language</p>
+          <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="How to Use video language">
+            {(Object.keys(HOW_TO_VIDEOS) as HowToVideoLanguage[]).map(language => {
+              const option = HOW_TO_VIDEOS[language]
+              const active = howToVideoLanguage === language
+              return (
+                <button
+                  key={language}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setHowToVideoLanguage(language)}
+                  className={`rounded-2xl border px-2 py-2 text-center transition ${active ? 'border-sky-600 bg-sky-600 text-white shadow' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}
+                >
+                  <span className="block text-xs font-extrabold leading-tight">{option.nativeLabel}</span>
+                  <span className={`mt-0.5 block text-[10px] font-semibold leading-tight ${active ? 'text-sky-100' : 'text-slate-400'}`}>{option.label} • {option.duration}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          <video
+            key={`${guideRole}-${howToVideoLanguage}`}
+            id={videoId}
+            src={video.src}
+            poster="/videos/PharmaSales-Jobs-Founder-Highlight.jpg"
+            controls
+            playsInline
+            preload="none"
+            className="mt-3 aspect-[9/16] max-h-[430px] w-full rounded-2xl bg-slate-950 object-contain shadow"
+          />
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={playRoleChapter} className="flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white shadow hover:bg-emerald-700">
+              <Play className="h-4 w-4" /> {copy.chapterLabel} • {formatHowToVideoTime(chapterStart)}
+            </button>
+            <a href={video.src} download={video.downloadName} className="flex items-center justify-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs font-extrabold text-sky-700 hover:bg-sky-100">
+              <Download className="h-4 w-4" /> Download {video.label}
+            </a>
+          </div>
+          <p className="mt-3 text-center text-[11px] font-semibold leading-relaxed text-slate-400">All three language videos are shown on Job Seeker, Recruiter and Admin login. Every video begins with the App Founder highlight.</p>
+        </div>
+      </div>
+    )
+  }
 
   // Cascading filters: City depends on State, HQ depends on State+City, Role independent but shown after HQ
   const availableCities = (() => {
@@ -4613,6 +4739,8 @@ export default function App() {
                 </form>
               )}
 
+              {renderHowToVideoGuide(entryRole === 'recruiter' ? 'recruiter' : 'seeker')}
+
               <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
                 <span>Step 1: Login</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
               </div>
@@ -6214,6 +6342,7 @@ export default function App() {
                     <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
                   </form>
                 )}
+                {renderHowToVideoGuide('admin')}
               </div>
             </div>
           ) : (
