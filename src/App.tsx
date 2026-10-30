@@ -2938,7 +2938,7 @@ export default function App() {
                   <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-600'}`}><Building2 className="h-5 w-5" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-extrabold leading-tight">I am a Recruiter</span>
-                    <span className={`mt-0.5 block text-[11px] font-extrabold tracking-wide transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'text-sky-50' : 'text-amber-700'}`}>Hire MR to NSM Talent Faster</span>
+                    <span className={`mt-0.5 block text-[11px] font-extrabold tracking-wide transition-colors duration-300 ${welcomeSelectedRole === 'recruiter' ? 'text-sky-50' : 'text-amber-700'}`}>Build Winning Pharma Teams. Faster.</span>
                   </span>
                   {welcomeSelectedRole === 'recruiter' ? (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow" aria-label="Selected"><Check className="h-4 w-4" /></span>
