@@ -934,7 +934,7 @@ function NativeAd() {
   )
 }
 
-type HowToVideoLanguage = 'english' | 'kannada' | 'telugu'
+type HowToVideoLanguage = 'english' | 'hindi' | 'kannada' | 'telugu'
 type HowToVideoRole = EntryRole | 'admin'
 
 const HOW_TO_VIDEOS: Record<HowToVideoLanguage, { label: string; nativeLabel: string; src: string; downloadName: string; duration: string }> = {
@@ -944,6 +944,13 @@ const HOW_TO_VIDEOS: Record<HowToVideoLanguage, { label: string; nativeLabel: st
     src: '/videos/PharmaSales-Jobs-How-To-Use-English-Voice.mp4',
     downloadName: 'PharmaSales-Jobs-How-To-Use-English-Voice.mp4',
     duration: '1:23',
+  },
+  hindi: {
+    label: 'Hindi',
+    nativeLabel: 'हिन्दी',
+    src: '/videos/PharmaSales-Jobs-How-To-Use-Hindi-Voice.mp4',
+    downloadName: 'PharmaSales-Jobs-How-To-Use-Hindi-Voice.mp4',
+    duration: '1:44',
   },
   kannada: {
     label: 'kannada',
@@ -963,6 +970,7 @@ const HOW_TO_VIDEOS: Record<HowToVideoLanguage, { label: string; nativeLabel: st
 
 const HOW_TO_VIDEO_ROLE_CHAPTERS: Record<HowToVideoLanguage, Record<HowToVideoRole, number>> = {
   english: { seeker: 27, recruiter: 61, admin: 73 },
+  hindi: { seeker: 37, recruiter: 78, admin: 92 },
   kannada: { seeker: 34, recruiter: 74, admin: 87 },
   telugu: { seeker: 32, recruiter: 71, admin: 84 },
 }
@@ -1033,6 +1041,9 @@ export default function App() {
   const [pageHistory, setPageHistory] = useState<AppPage[]>([])
   const [entryRole, setEntryRole] = useState<EntryRole | null>(() => loadSessionAccount()?.role ?? null)
   const [howToVideoLanguage, setHowToVideoLanguage] = useState<HowToVideoLanguage>('english')
+  const [howToVideoRole, setHowToVideoRole] = useState<HowToVideoRole | null>(null)
+  const [howToVideoStage, setHowToVideoStage] = useState<'language' | 'player'>('language')
+  const howToVideoPlayerRef = useRef<HTMLVideoElement | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [aiInput, setAiInput] = useState('')
   const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>(() => getAiWelcomeMessages(loadSessionAccount()?.role))
@@ -1259,75 +1270,161 @@ export default function App() {
   const isIsolatedShellPage = page === 'welcome' || page === 'auth' || page === 'admin' || (page === 'legal' && !hasAuthenticated && !isAdmin)
   const welcomeSelectedRole: EntryRole | null = entryRole
 
-  const renderHowToVideoGuide = (guideRole: HowToVideoRole) => {
-    const video = HOW_TO_VIDEOS[howToVideoLanguage]
-    const copy = HOW_TO_VIDEO_ROLE_COPY[guideRole]
-    const chapterStart = HOW_TO_VIDEO_ROLE_CHAPTERS[howToVideoLanguage][guideRole]
-    const videoId = `howto-video-${guideRole}`
+  useEffect(() => {
+    if (!howToVideoRole) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [howToVideoRole])
 
-    const playRoleChapter = () => {
-      const player = document.getElementById(videoId) as HTMLVideoElement | null
-      if (!player) return
-      try { player.currentTime = chapterStart } catch { /* metadata may still be loading */ }
-      void player.play().catch(() => undefined)
-    }
+  const openHowToVideo = (guideRole: HowToVideoRole) => {
+    setHowToVideoRole(guideRole)
+    setHowToVideoStage('language')
+  }
+
+  const closeHowToVideo = () => {
+    howToVideoPlayerRef.current?.pause()
+    setHowToVideoRole(null)
+    setHowToVideoStage('language')
+  }
+
+  const selectHowToVideoLanguage = (language: HowToVideoLanguage) => {
+    setHowToVideoLanguage(language)
+    setHowToVideoStage('player')
+  }
+
+  const playHowToVideoChapter = () => {
+    const player = howToVideoPlayerRef.current
+    if (!player || !howToVideoRole) return
+    try { player.currentTime = HOW_TO_VIDEO_ROLE_CHAPTERS[howToVideoLanguage][howToVideoRole] } catch { /* metadata may still be loading */ }
+    void player.play().catch(() => undefined)
+  }
+
+  const renderHowToVideoButton = (guideRole: HowToVideoRole) => (
+    <button
+      type="button"
+      onClick={() => openHowToVideo(guideRole)}
+      aria-haspopup="dialog"
+      className="mt-3 flex w-full items-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 px-3 py-2.5 text-left text-white shadow-md transition hover:from-emerald-700 hover:to-teal-800 active:scale-[0.99]"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow">
+        <Play className="ml-0.5 h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-extrabold leading-tight">How to Use App</span>
+        <span className="mt-0.5 block truncate text-[11px] font-semibold leading-tight text-emerald-50">English • हिन्दी • ಕನ್ನಡ • Telugu</span>
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-white/90" />
+    </button>
+  )
+
+  const renderHowToVideoModal = () => {
+    const guideRole = howToVideoRole ?? 'seeker'
+    const copy = HOW_TO_VIDEO_ROLE_COPY[guideRole]
+    const video = HOW_TO_VIDEOS[howToVideoLanguage]
+    const chapterStart = HOW_TO_VIDEO_ROLE_CHAPTERS[howToVideoLanguage][guideRole]
 
     return (
-      <div className="mt-5 overflow-hidden rounded-3xl border border-sky-100 bg-white text-left shadow-sm" aria-label={`${copy.title} video in English, kannada and Telugu`}>
-        <div className="flex items-center gap-3 bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 p-4 text-white">
-          <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — App Founder" className="h-14 w-14 shrink-0 rounded-full border-2 border-amber-300 object-cover shadow" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-extrabold tracking-[0.14em] text-amber-200">APP FOUNDER HIGHLIGHT</p>
-            <h3 className="mt-0.5 text-base font-extrabold leading-tight">How to Use — {copy.title}</h3>
-            <p className="mt-0.5 text-[11px] font-semibold leading-snug text-sky-100">M Divakar Reddy • App Founder — PharmaSales Jobs</p>
-          </div>
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-sky-700 shadow"><Play className="ml-0.5 h-5 w-5" /></span>
-        </div>
-
-        <div className="p-4">
-          <p className="text-xs leading-relaxed text-slate-600">{copy.description}</p>
-          <p className="mt-3 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">Choose video language</p>
-          <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="How to Use video language">
-            {(Object.keys(HOW_TO_VIDEOS) as HowToVideoLanguage[]).map(language => {
-              const option = HOW_TO_VIDEOS[language]
-              const active = howToVideoLanguage === language
-              return (
-                <button
-                  key={language}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setHowToVideoLanguage(language)}
-                  className={`rounded-2xl border px-2 py-2 text-center transition ${active ? 'border-sky-600 bg-sky-600 text-white shadow' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}
-                >
-                  <span className="block text-xs font-extrabold leading-tight">{option.nativeLabel}</span>
-                  <span className={`mt-0.5 block text-[10px] font-semibold leading-tight ${active ? 'text-sky-100' : 'text-slate-400'}`}>{option.label} • {option.duration}</span>
+      <AnimatePresence>
+        {howToVideoRole && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={closeHowToVideo}
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/75 p-3 backdrop-blur-[2px] sm:p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 14 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 14 }}
+              transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`How to Use App — ${copy.title}`}
+              className="max-h-[94dvh] w-full max-w-[430px] overflow-hidden rounded-[26px] bg-white text-left shadow-2xl"
+            >
+              <div className="app-topbar-background flex items-center gap-3 px-4 py-3 text-white">
+                <img src="/divakar-reddy-circle-200.jpg" alt="M Divakar Reddy — App Founder" className="h-11 w-11 shrink-0 rounded-full border-2 border-amber-300 object-cover shadow" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-extrabold tracking-[0.14em] text-amber-200">APP FOUNDER HIGHLIGHT</p>
+                  <h3 className="mt-0.5 truncate text-base font-extrabold leading-tight">How to Use App</h3>
+                  <p className="truncate text-[11px] font-semibold text-sky-100">{copy.title} • M Divakar Reddy</p>
+                </div>
+                <button type="button" onClick={closeHowToVideo} aria-label="Close How to Use video" title="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 transition hover:bg-white/30 active:scale-95">
+                  <X className="h-5 w-5" />
                 </button>
-              )
-            })}
-          </div>
+              </div>
 
-          <video
-            key={`${guideRole}-${howToVideoLanguage}`}
-            id={videoId}
-            src={video.src}
-            poster="/videos/PharmaSales-Jobs-Founder-Highlight.jpg"
-            controls
-            playsInline
-            preload="none"
-            className="mt-3 aspect-[9/16] max-h-[430px] w-full rounded-2xl bg-slate-950 object-contain shadow"
-          />
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button type="button" onClick={playRoleChapter} className="flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white shadow hover:bg-emerald-700">
-              <Play className="h-4 w-4" /> {copy.chapterLabel} • {formatHowToVideoTime(chapterStart)}
-            </button>
-            <a href={video.src} download={video.downloadName} className="flex items-center justify-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs font-extrabold text-sky-700 hover:bg-sky-100">
-              <Download className="h-4 w-4" /> Download {video.label}
-            </a>
-          </div>
-          <p className="mt-3 text-center text-[11px] font-semibold leading-relaxed text-slate-400">All three language videos are shown on Job Seeker, Recruiter and Admin login. Every video begins with the App Founder highlight.</p>
-        </div>
-      </div>
+              {howToVideoStage === 'language' ? (
+                <div className="p-4">
+                  <p className="text-sm font-extrabold text-slate-900">Choose video language</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">The video will open immediately.</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Choose How to Use video language">
+                    {(Object.keys(HOW_TO_VIDEOS) as HowToVideoLanguage[]).map(language => {
+                      const option = HOW_TO_VIDEOS[language]
+                      const active = howToVideoLanguage === language
+                      return (
+                        <button
+                          key={language}
+                          type="button"
+                          onClick={() => selectHowToVideoLanguage(language)}
+                          className={`group flex min-h-[74px] items-center gap-2 rounded-3xl border px-3 py-3 text-left transition active:scale-[0.98] ${active ? 'border-sky-600 bg-sky-600 text-white shadow-md' : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-sky-300 hover:bg-sky-50'}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-base font-extrabold leading-tight">{option.nativeLabel}</span>
+                            <span className={`mt-1 block text-[11px] font-bold leading-tight ${active ? 'text-sky-100' : 'text-slate-500'}`}>{option.label} • {option.duration}</span>
+                          </span>
+                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${active ? 'bg-white text-sky-700' : 'bg-sky-600 text-white'}`}>
+                            <Play className="ml-0.5 h-3.5 w-3.5" />
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-3 text-center text-[11px] font-semibold text-slate-400">Every video starts with the App Founder highlight.</p>
+                </div>
+              ) : (
+                <div>
+                  <video
+                    key={`${guideRole}-${howToVideoLanguage}`}
+                    ref={howToVideoPlayerRef}
+                    src={video.src}
+                    poster="/videos/PharmaSales-Jobs-Founder-Highlight.jpg"
+                    controls
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    onLoadedMetadata={e => { void e.currentTarget.play().catch(() => undefined) }}
+                    className="h-[min(56dvh,540px)] w-full bg-slate-950 object-contain"
+                  />
+                  <div className="p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs font-extrabold text-slate-700">{video.nativeLabel} • {video.label} • {video.duration}</span>
+                      <button
+                        type="button"
+                        onClick={() => { howToVideoPlayerRef.current?.pause(); setHowToVideoStage('language') }}
+                        className="flex shrink-0 items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100"
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" /> Language
+                      </button>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button type="button" onClick={playHowToVideoChapter} className="flex items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2.5 text-[11px] font-extrabold text-white shadow hover:bg-emerald-700">
+                        <Play className="h-3.5 w-3.5" /> {copy.chapterLabel.replace('Play ', '')} • {formatHowToVideoTime(chapterStart)}
+                      </button>
+                      <a href={video.src} download={video.downloadName} className="flex items-center justify-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-2.5 text-[11px] font-extrabold text-sky-700 hover:bg-sky-100">
+                        <Download className="h-3.5 w-3.5" /> Download
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     )
   }
 
@@ -4862,14 +4959,11 @@ export default function App() {
                     <p className="brand-title-subtitle mt-1 whitespace-nowrap text-[9px] leading-none tracking-wide min-[420px]:text-[10px]">The MR to NSM Jobs Network</p>
                   </div>
                 </div>
-                <div className="text-center">
-                  <h1 className="mt-5 text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{authStep === 'mobile' ? 'Continue with Google, or login with your registered mobile number/email ID and password. New users continue to registration.' : authStep === 'forgot' ? 'Reset your password by matching your registered mobile number and email ID.' : 'Register once with your mobile number, correct email ID and a password of at least 6 characters.'}</p>
-                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700"><LockKeyhole className="h-3.5 w-3.5" /> Password • Minimum 6 characters</span>
-                </div>
+                <h1 className="mt-5 text-center text-[22px] font-extrabold leading-tight">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Login / Register</h1>
+                {renderHowToVideoButton(entryRole === 'recruiter' ? 'recruiter' : 'seeker')}
               </div>
 
-              <div className="relative mt-5 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
+              <div className="relative mt-4 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
                 <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-300 ease-out ${entryRole === 'recruiter' ? 'translate-x-full' : 'translate-x-0'}`} />
                 <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
                 <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
@@ -4882,7 +4976,6 @@ export default function App() {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><User className="h-4 w-4" /></span>
                     <input value={authForm.identifier} onChange={e => { setAuthForm(prev => ({ ...prev, identifier: e.target.value })); setAuthError('') }} type="text" inputMode="email" autoComplete="username" placeholder="10-digit mobile or yourname@gmail.com" className="w-full rounded-xl border bg-white py-3 pl-10 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
                   </div>
-                  <p className="mt-1 text-[11px] font-medium text-slate-400">Use either your registered mobile number or registered email ID.</p>
                   {authRecruiterBlockAccount ? (
                     <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
                       <div className="flex gap-2.5">
@@ -4913,9 +5006,7 @@ export default function App() {
                       </div>
                       <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
                     </div>
-                  ) : (
-                    <p className="mt-2 text-xs leading-relaxed text-slate-500">First time? Enter your mobile or email and create a password. Next, we will ask your <b>name</b>, <b>mobile number</b> and <b>correct email ID</b>.</p>
-                  )}
+                  ) : null}
                   <div className="mt-3">
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password *</label>
                     <div className="relative">
@@ -4927,9 +5018,7 @@ export default function App() {
                       <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
                     ) : showAuthPasswordSuccess ? (
                       <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
-                    ) : (
-                      <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters.</p>
-                    )}
+                    ) : null}
                   </div>
                   <div className="mt-2 text-right">
                     <button type="button" onClick={openForgotPassword} className="text-xs font-extrabold text-sky-700 hover:text-sky-900 hover:underline">Forgot Password?</button>
@@ -4947,7 +5036,6 @@ export default function App() {
                         <GoogleIcon />
                         {googleAuthLoading ? 'Opening Google...' : 'Continue with Google'}
                       </button>
-                      <p className="mt-2 text-center text-[11px] font-medium leading-relaxed text-slate-400">For Job Seeker &amp; Recruiter only. New Google users add a mobile number and password once.</p>
                     </>
                   )}
                 </form>
@@ -5101,12 +5189,8 @@ export default function App() {
                 </form>
               )}
 
-              {renderHowToVideoGuide(entryRole === 'recruiter' ? 'recruiter' : 'seeker')}
 
-              <div className="mt-5 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-slate-400">
-                <span>Step 1: Login</span><span>→</span><span>Step 2: Register</span><span>→</span><span>Step 3: Job Profile (Seekers)</span>
-              </div>
-              <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms &amp; Privacy</button> and <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>. Need help? <button type="button" onClick={() => openLegal('support')} className="font-extrabold text-sky-700 hover:underline">Contact Support</button></p>
+              <p className="mt-4 text-center text-[11px] font-semibold text-slate-400">By continuing, you agree to our <button type="button" onClick={() => openLegal('terms')} className="font-extrabold text-sky-700 hover:underline">Terms</button> &amp; <button type="button" onClick={() => openLegal('privacy')} className="font-extrabold text-sky-700 hover:underline">Privacy Policy</button>.</p>
             </div>
             <p className="mt-4 text-center text-[11px] font-bold text-white">PharmaSales Jobs • Since 2026 • Managed by M Divakar Reddy</p>
           </div>
@@ -6802,7 +6886,8 @@ export default function App() {
                   <p className="text-sm font-semibold text-sky-700">M Divakar Reddy</p>
                   <p className="text-xs text-slate-500">App Founder — PharmaSales Jobs • Admin</p>
                 </div>
-                <form className="mt-5 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
+                {renderHowToVideoButton('admin')}
+                <form className="mt-4 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
                     <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
@@ -6841,7 +6926,6 @@ export default function App() {
                     <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
                   </form>
                 )}
-                {renderHowToVideoGuide('admin')}
               </div>
             </div>
           ) : (
@@ -8377,6 +8461,9 @@ export default function App() {
           </>
         )}
       </AnimatePresence>
+
+      {/* HOW TO USE VIDEO — language first, then player; no long login-page scroll */}
+      {renderHowToVideoModal()}
 
       {/* TOAST */}
       <AnimatePresence>
