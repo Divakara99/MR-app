@@ -47,9 +47,12 @@ type Job = {
   email: string
   skills: string[]
   perks: string[]
+  // Who added this vacancy (shown very small in Job Details). Missing = Admin/seed.
+  postedBy?: string
+  postedByRole?: 'admin' | 'recruiter' | 'seeker'
 }
 
-type PendingJob = Job & { submittedAt: string; submittedBy: string }
+type PendingJob = Job & { submittedAt: string; submittedBy: string; submittedByRole?: 'recruiter' | 'seeker' }
 type EntryRole = 'seeker' | 'recruiter'
 type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'legal'
 type SeekerProfile = {
@@ -753,7 +756,7 @@ export default function App() {
     if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
   }, [currentUser])
   useEffect(() => {
-    if (currentUser?.role === 'recruiter') {
+    if (currentUser) {
       setRecruiterJob(prev => ({ ...prev, contactPerson: currentUser.name, phone: `+91 ${currentUser.mobile}`, email: currentUser.email }))
     }
   }, [currentUser])
@@ -923,7 +926,12 @@ export default function App() {
   const getFallbackBackDestination = (): AppPage | null => {
     if (page === 'welcome' || page === 'admin') return null
     if (page === 'auth') return 'welcome'
-    if (page === 'candidates' || page === 'postjob') return 'recruiters'
+    if (page === 'candidates') return 'recruiters'
+    if (page === 'postjob') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser?.role === 'seeker') return 'jobs'
+      return 'recruiters'
+    }
     if (page === 'saved' || page === 'pricing') return 'jobs'
     if (page === 'jobs') return 'home'
     if (page === 'profile') return currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'home' : 'jobs'
@@ -2017,6 +2025,8 @@ export default function App() {
     const contactEmailError = recruiterJob.email.trim() ? getEmailValidationError(recruiterJob.email) : null
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = recruiterJob.city.trim() || 'Hyderabad'
+    const posterName = currentUser && hasAuthenticated ? currentUser.name : recruiterJob.contactPerson.trim().split(' - ')[0].trim()
+    const posterRole: 'seeker' | 'recruiter' = currentUser?.role === 'seeker' ? 'seeker' : 'recruiter'
     const pending: PendingJob = {
       id: 'pending-' + Date.now(),
       company: recruiterJob.company.trim(),
@@ -2034,26 +2044,29 @@ export default function App() {
       verified: false,
       urgent: recruiterJob.urgent,
       hot: false,
-      desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by recruiter — under verification by M Divakar Reddy.`,
+      desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by a ${posterRole === 'seeker' ? 'Job Seeker' : 'Recruiter'} member — under verification by M Divakar Reddy.`,
       contactPerson: recruiterJob.contactPerson.trim(),
       phone: recruiterJob.phone.trim(),
       email: recruiterJob.email.trim() || 'hr@mrvacancieshub.in',
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
       perks: ['TA/DA', 'Incentives', 'Mobile Allowance'],
+      postedBy: posterName,
+      postedByRole: posterRole,
       submittedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-      submittedBy: recruiterJob.contactPerson.trim(),
+      submittedBy: posterName,
+      submittedByRole: posterRole,
     }
     setPendingJobs(prev => [pending, ...prev])
     setRecruiterSubmitted(true)
     setToast('Vacancy submitted! It will go LIVE after Admin (Divakar Reddy) approval ✅')
   }
   const resetRecruiterForm = () => {
-    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: currentUser?.role === 'recruiter' ? currentUser.name : '', phone: currentUser?.role === 'recruiter' ? `+91 ${currentUser.mobile}` : '', email: currentUser?.role === 'recruiter' ? currentUser.email : '', urgent: false })
+    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: currentUser ? currentUser.name : '', phone: currentUser ? `+91 ${currentUser.mobile}` : '', email: currentUser ? currentUser.email : '', urgent: false })
     setRecruiterSubmitted(false)
   }
   const handleApproveJob = (pend: PendingJob) => {
-    const { submittedAt, submittedBy, ...rest } = pend
-    const job: Job = { ...rest, id: 'job-' + Date.now(), posted: 'Just now', verified: true, hot: true }
+    const { submittedAt, submittedBy, submittedByRole, ...rest } = pend
+    const job: Job = { ...rest, postedBy: rest.postedBy || submittedBy, postedByRole: rest.postedByRole || submittedByRole || 'recruiter', id: 'job-' + Date.now(), posted: 'Just now', verified: true, hot: true }
     setJobs(prev => [job, ...prev])
     setPendingJobs(prev => prev.filter(x => x.id !== pend.id))
     setToast(`Approved & LIVE ✅ ${job.company} • ${job.hq} is now visible to all job seekers`)
@@ -2136,6 +2149,13 @@ export default function App() {
   const isEmailVisible = (job: Job) => isPhoneVisible(job)
   const getDisplayCompany = (job: Job) => isCompanyVisible(job) ? job.company : 'Hidden Pharma Company'
   const getCompanyInitials = (job: Job) => isCompanyVisible(job) ? job.company.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '?'
+  const getJobPostedByLabel = (job: Job) => {
+    const name = job.postedBy?.trim()
+    if (!name) return 'M Divakar Reddy • Admin'
+    if (job.postedByRole === 'seeker') return `${name} • Job Seeker`
+    if (job.postedByRole === 'admin') return `${name} • Admin`
+    return `${name} • Recruiter`
+  }
   const getSafeJobText = (job: Job, text: string) => {
     if (isCompanyVisible(job)) return text
     const firstToken = job.company.split(' ')[0] || ''
@@ -2577,7 +2597,7 @@ export default function App() {
               )}
               <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='recruiters'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>For Recruiters</button>
               {hasAuthenticated && currentUser?.role === 'recruiter' && <button onClick={openCandidateProfiles} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:inline-flex ${page==='candidates'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}><Users className="h-4 w-4" /> Candidates List</button>}
-              {shouldHideJobSeekerExperience && <button onClick={() => navigate('postjob')} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:inline-flex ${page==='postjob'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}><Plus className="h-4 w-4" /> Post Vacancy</button>}
+              {(shouldHideJobSeekerExperience || isJobSeekerUser) && <button onClick={() => navigate('postjob')} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:inline-flex ${page==='postjob'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}><Plus className="h-4 w-4" /> Post Vacancy</button>}
               <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='ai'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>AI Assistant</button>
               <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:block ${page==='legal'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Legal &amp; Support</button>
               {isAdmin && (
@@ -2632,6 +2652,7 @@ export default function App() {
                             <>
                               <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><User className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
                               <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
+                              <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
                               <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Account Deletion Request Pending' : 'Request Account Deletion'}</span></button>
                             </>
                           ) : (
@@ -2750,11 +2771,11 @@ export default function App() {
                     { label: 'Subscription Plans', sub: 'Free → Starter ₹99 → Pro ₹499', icon: Crown, page: 'pricing' as const },
                     { label: 'For Recruiters', sub: 'Managed by M Divakar Reddy', icon: Building2, page: 'recruiters' as const },
                     { label: 'Candidates List', sub: 'Recruiter only • Tap candidate for details', icon: Users, page: 'candidates' as const },
-                    { label: 'Post a Vacancy', sub: 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
+                    { label: 'Post a Vacancy', sub: isJobSeekerUser ? 'Add a vacancy • Live after Admin approval' : 'Recruiters • Live after Admin approval', icon: Plus, page: 'postjob' as const },
                     { label: 'AI Assistant', sub: shouldHideJobSeekerExperience ? 'Hiring help • Support tickets' : 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Legal & Support', sub: 'Privacy • Terms • Support ticket', icon: FileText, page: 'legal' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
-                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!isJobSeekerUser || !['recruiters', 'postjob'].includes(item.page)) && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
+                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!isJobSeekerUser || item.page !== 'recruiters') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
                     <button
                       key={item.label}
                       onClick={() => item.page === 'admin' ? openAdmin() : navigate(item.page)}
@@ -4334,9 +4355,9 @@ export default function App() {
         <section className="mx-auto max-w-[1280px] px-4 py-10">
           <div className="mx-auto max-w-3xl">
             <div className="text-center">
-              <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">FOR RECRUITERS</span>
+              <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-bold text-white">FOR JOB SEEKERS &amp; RECRUITERS</span>
               <h2 className="mt-3 text-[26px] font-extrabold leading-tight">Post a Vacancy</h2>
-              <p className="mx-auto mt-1 max-w-xl text-sm leading-relaxed text-slate-600">Free to submit. Your vacancy goes <b>LIVE only after verification &amp; approval by M Divakar Reddy (Admin)</b> — usually within 2 hours.</p>
+              <p className="mx-auto mt-1 max-w-xl text-sm leading-relaxed text-slate-600">Free to submit. Your vacancy goes <b>LIVE only after verification &amp; approval by M Divakar Reddy (Admin)</b> — usually within 2 hours. After approval, your name appears small as <b>Posted by</b> in the job details.</p>
             </div>
             <div className="mt-5 grid grid-cols-3 gap-2 text-center">
               <div className="rounded-2xl border bg-white p-3"><p className="text-lg font-extrabold text-sky-600">1</p><p className="text-xs font-bold">Fill the Form</p><p className="text-[11px] text-slate-500">Takes 2 minutes</p></div>
@@ -4767,7 +4788,7 @@ export default function App() {
                         </div>
                         <p className="mt-2 text-sm leading-relaxed text-slate-700">{job.desc}</p>
                         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-xs">
-                          <span><b>Submitted by:</b> {job.submittedBy}</span><span className="text-slate-300">|</span>
+                          <span><b>Submitted by:</b> {job.submittedBy} ({job.submittedByRole === 'seeker' ? 'Job Seeker' : 'Recruiter'})</span><span className="text-slate-300">|</span>
                           <span><b>Phone:</b> {job.phone}</span><span className="text-slate-300">|</span>
                           <span><b>Email:</b> {job.email}</span><span className="text-slate-300">|</span>
                           <span className="text-slate-500">{job.submittedAt}</span>
@@ -5034,6 +5055,7 @@ export default function App() {
                   <div>
                     <p className="text-sm font-extrabold">{getDisplayCompany(selected)} • {selected.title}</p>
                     <p className="text-xs text-slate-500">{selected.hq} • {selected.posted}</p>
+                    <p className="text-[10px] font-medium leading-tight text-slate-400">Posted by {getJobPostedByLabel(selected)}</p>
                   </div>
                 </div>
                 <button onClick={() => setSelected(null)} className="rounded-full border p-2"><X className="h-4 w-4" /></button>
