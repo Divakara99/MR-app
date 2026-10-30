@@ -34,3 +34,18 @@ export type RemoteCandidateRow = {
   candidate_code: string
   profile: Record<string, unknown>
 }
+
+export type RemotePurchaseRow = {
+  id: string
+  role: 'seeker' | 'recruiter'
+  name: string
+  mobile: string
+  email: string
+  plan: string
+  amount_inr: number | string
+  method: string
+  status: string
+  transaction_id: string
+  purchased_at: string
+  expires_at: string | null
+}

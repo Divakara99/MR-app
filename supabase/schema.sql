@@ -9,7 +9,10 @@
 -- 3) Forgot Password requires the registered mobile number and email ID to
 --    match the same selected-role account before a new password is set.
 -- The app keeps only role + mobile in its local session until the user logs out.
--- Admin does not use this user-account flow; it keeps its separate Admin login.
+-- All three roles are managed here: Job Seekers + Recruiters in
+-- public.app_accounts, Admin in public.app_admins (bcrypt), and every
+-- Starter/Pro purchase + payment in public.app_purchases for the Admin
+-- Users / Purchase / Payment lists.
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -504,6 +507,226 @@ as $$
   order by a.updated_at desc;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Admin-managed data: Purchases/Payments + Admin accounts (all three roles).
+-- Job Seeker and Recruiter accounts live in public.app_accounts above.
+-- Admin accounts live in public.app_admins with bcrypt-hashed passwords.
+-- The Admin dashboard reads these through the admin_list_* RPCs below.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.app_purchases (
+  id uuid primary key default gen_random_uuid(),
+  role text not null default 'seeker' check (role in ('seeker', 'recruiter')),
+  name text not null,
+  mobile text not null default '',
+  email text not null default '',
+  plan text not null check (plan in ('starter', 'pro')),
+  amount_inr numeric(10, 2) not null check (amount_inr >= 0),
+  method text not null default 'In-App',
+  status text not null default 'paid' check (status in ('paid', 'pending', 'failed')),
+  transaction_id text not null unique,
+  purchased_at timestamptz not null default now(),
+  expires_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists app_purchases_mobile_idx on public.app_purchases (mobile);
+create index if not exists app_purchases_recent_idx on public.app_purchases (purchased_at desc);
+
+alter table public.app_purchases enable row level security;
+revoke all on table public.app_purchases from anon, authenticated;
+
+create table if not exists public.app_admins (
+  id uuid primary key default gen_random_uuid(),
+  admin_id text not null unique,
+  name text not null,
+  email text not null default '',
+  password_hash text not null,
+  created_at timestamptz not null default now(),
+  last_login_at timestamptz
+);
+
+alter table public.app_admins enable row level security;
+revoke all on table public.app_admins from anon, authenticated;
+
+-- Default Admin account. Change this password after first login
+-- (Admin Dashboard → Settings), which updates the bcrypt hash here too.
+insert into public.app_admins (admin_id, name, email, password_hash)
+values ('divakar', 'M Divakar Reddy', 'akhildivakara@gmail.com', extensions.crypt('Divakar@2026', extensions.gen_salt('bf', 12)))
+on conflict (admin_id) do nothing;
+
+-- Admin Users List: every Job Seeker + Recruiter account (never returns hashes).
+create or replace function public.admin_list_accounts()
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select a.role, a.name, a.mobile, a.email, (a.password_hash is not null) as has_password, a.profile, a.created_at
+  from public.app_accounts a
+  order by a.created_at desc;
+$$;
+
+-- Record one Starter/Pro purchase + payment (called right after checkout).
+create or replace function public.record_app_purchase(
+  p_role text,
+  p_name text,
+  p_mobile text,
+  p_email text,
+  p_plan text,
+  p_amount numeric,
+  p_method text,
+  p_status text,
+  p_transaction_id text,
+  p_expires_at timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.app_purchases (role, name, mobile, email, plan, amount_inr, method, status, transaction_id, expires_at)
+  values (
+    coalesce(nullif(trim(p_role), ''), 'seeker'),
+    trim(p_name),
+    coalesce(p_mobile, ''),
+    coalesce(lower(trim(p_email)), ''),
+    p_plan,
+    p_amount,
+    coalesce(nullif(trim(p_method), ''), 'In-App'),
+    coalesce(nullif(trim(p_status), ''), 'paid'),
+    p_transaction_id,
+    p_expires_at
+  )
+  on conflict (transaction_id) do nothing;
+  return true;
+end;
+$$;
+
+-- Admin Purchase List + Payment List (same rows, newest first).
+create or replace function public.admin_list_purchases()
+returns table (
+  id text,
+  role text,
+  name text,
+  mobile text,
+  email text,
+  plan text,
+  amount_inr numeric,
+  method text,
+  status text,
+  transaction_id text,
+  purchased_at timestamptz,
+  expires_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
+  from public.app_purchases p
+  order by p.purchased_at desc;
+$$;
+
+-- Admin login verified against public.app_admins (bcrypt). Accepts the
+-- Admin ID, the word "admin" for the default account, or the admin email.
+create or replace function public.admin_login(
+  p_admin_id text,
+  p_password text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_admin public.app_admins%rowtype;
+  v_id text := lower(trim(coalesce(p_admin_id, '')));
+begin
+  select * into v_admin
+  from public.app_admins a
+  where lower(a.admin_id) = v_id
+     or lower(a.email) = v_id
+     or (v_id = 'admin' and a.admin_id = 'divakar')
+  limit 1;
+
+  if not found then
+    return false;
+  end if;
+
+  if v_admin.password_hash = crypt(coalesce(p_password, ''), v_admin.password_hash) then
+    update public.app_admins set last_login_at = now() where id = v_admin.id;
+    return true;
+  end if;
+
+  return false;
+end;
+$$;
+
+create or replace function public.admin_change_password(
+  p_admin_id text,
+  p_current_password text,
+  p_new_password text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_admin public.app_admins%rowtype;
+  v_id text := lower(trim(coalesce(p_admin_id, '')));
+begin
+  if char_length(coalesce(p_new_password, '')) < 6 then
+    raise exception 'New password must be at least 6 characters.' using errcode = '23514';
+  end if;
+
+  select * into v_admin
+  from public.app_admins a
+  where lower(a.admin_id) = v_id
+     or lower(a.email) = v_id
+     or (v_id in ('admin', '') and a.admin_id = 'divakar')
+  limit 1;
+
+  if not found then
+    return false;
+  end if;
+
+  if v_admin.password_hash <> crypt(coalesce(p_current_password, ''), v_admin.password_hash) then
+    return false;
+  end if;
+
+  update public.app_admins
+  set password_hash = crypt(p_new_password, gen_salt('bf', 12))
+  where id = v_admin.id;
+
+  return true;
+end;
+$$;
+
+revoke all on function public.admin_list_accounts() from public;
+revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public;
+revoke all on function public.admin_list_purchases() from public;
+revoke all on function public.admin_login(text, text) from public;
+revoke all on function public.admin_change_password(text, text, text) from public;
+
+grant execute on function public.admin_list_accounts() to anon, authenticated;
+grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to anon, authenticated;
+grant execute on function public.admin_list_purchases() to anon, authenticated;
+grant execute on function public.admin_login(text, text) to anon, authenticated;
+grant execute on function public.admin_change_password(text, text, text) to anon, authenticated;
+
 revoke all on function public.find_app_accounts_by_mobile(text) from public;
 revoke all on function public.find_app_accounts_by_identifier(text) from public;
 revoke all on function public.register_app_account(text, text, text, text, text) from public;
@@ -532,4 +755,7 @@ grant execute on function public.list_anonymous_candidate_profiles() to anon, au
 -- both registered identifiers to match because no email/OTP delivery service is
 -- connected yet. Before a large public launch, migrate login/recovery to
 -- Supabase Auth (or another verified OTP/email-link flow), add rate limiting,
--- and restrict account-lookup responses further.
+-- and restrict account-lookup responses further. The admin_list_* RPCs return
+-- every account/purchase to anon callers who know the function names (same
+-- front-end Admin-lock model as the app today) — before a large public launch,
+-- move Admin data behind an authenticated admin role or a service-role API.

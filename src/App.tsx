@@ -10,7 +10,7 @@ import {
   Package, Upload, Camera, Download
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow } from './supabase'
+import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow } from './supabase'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
 
 // TYPES
@@ -95,6 +95,21 @@ type Account = {
   passwordHash?: string
   hasPassword?: boolean
   profile?: SeekerProfile
+}
+type PurchaseRecord = {
+  id: string
+  name: string
+  mobile: string
+  email: string
+  role: EntryRole
+  plan: Tier
+  planName: string
+  amount: number
+  method: string
+  status: 'paid' | 'pending' | 'failed'
+  transactionId: string
+  purchasedAt: string
+  expiresAt: string
 }
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
@@ -213,6 +228,7 @@ const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
+const PURCHASES_KEY = 'mr-purchases-v1'
 const DELETION_REASON_OPTIONS = [
   'I got a job and no longer need this account',
   'I want to use another mobile number',
@@ -534,6 +550,20 @@ const loadAccounts = (): Account[] => {
     return (parsed as Account[]).filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
   } catch { return [] }
 }
+const loadPurchases = (): PurchaseRecord[] => {
+  try {
+    const raw = localStorage.getItem(PURCHASES_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return (parsed as PurchaseRecord[]).filter(p => p && p.id && p.plan && p.purchasedAt)
+  } catch { return [] }
+}
+const formatAdminDate = (value?: string) => {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
 const loadStoredSession = (): { role: EntryRole; mobile: string } | null => {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
@@ -652,6 +682,7 @@ function NativeAd() {
 export default function App() {
   // App state
   const [tier, setTier] = useState<Tier>('free')
+  const [purchases, setPurchases] = useState<PurchaseRecord[]>(() => loadPurchases())
   const [search, setSearch] = useState('')
   const [location, setLocation] = useState('All India')
   const [city, setCity] = useState('All Cities')
@@ -691,7 +722,13 @@ export default function App() {
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
   const [adminError, setAdminError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [showAdminMenu, setShowAdminMenu] = useState(false)
+  const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
+  const [adminUserSearch, setAdminUserSearch] = useState('')
+  const [remoteAdminUsers, setRemoteAdminUsers] = useState<RemoteAccountRow[] | null>(null)
+  const [remotePurchases, setRemotePurchases] = useState<PurchaseRecord[] | null>(null)
+  const [adminDataLoading, setAdminDataLoading] = useState(false)
   const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
   const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
   // Recruiter-submitted vacancies — LIVE only after Admin approval
@@ -749,6 +786,14 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(deletionRequests)) } catch { /* ignore */ } }, [deletionRequests])
   useEffect(() => { try { localStorage.setItem(SUPPORT_TICKETS_KEY, JSON.stringify(supportTickets)) } catch { /* ignore */ } }, [supportTickets])
   useEffect(() => { try { localStorage.setItem(CANDIDATE_INTERESTS_KEY, JSON.stringify(Array.from(requestedCandidates))) } catch { /* ignore */ } }, [requestedCandidates])
+  useEffect(() => { try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(purchases)) } catch { /* ignore */ } }, [purchases])
+  // Restore the buyer's still-active paid plan when their account session opens.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    const activePurchase = purchases.find(p => p.mobile === currentUser.mobile && p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now())
+    if (activePurchase) setTier(activePurchase.plan)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser])
   useEffect(() => {
     try { localStorage.setItem(DAILY_JOB_ACCESS_KEY, JSON.stringify({ date: getTodayKey(), revealed: Array.from(revealed), dailyUnlocks, extraReveals })) } catch { /* ignore */ }
   }, [revealed, dailyUnlocks, extraReveals])
@@ -881,6 +926,7 @@ export default function App() {
     setShowDeleteAccountConfirm(false)
     setShowAccountMenu(false)
     setShowMobileMenu(false)
+    setShowAdminMenu(false)
     navigate('admin')
   }
   // FULLY SECRET: Admin Login opens only after 5 quick taps on the Welcome
@@ -968,6 +1014,7 @@ export default function App() {
   const backDestination = getBackDestination()
   const canGoBack = Boolean(backDestination || (page === 'auth' && authStep !== 'mobile') || (page === 'admin' && isAdmin && adminTab !== 'overview'))
   const handlePageBack = () => {
+    if (showAdminMenu) { setShowAdminMenu(false); return }
     if (showMobileMenu) { setShowMobileMenu(false); return }
     if (showAccountMenu) { setShowAccountMenu(false); return }
     if (selectedCandidate) { setSelectedCandidate(null); return }
@@ -1109,6 +1156,56 @@ export default function App() {
     })
     setRemoteCandidateProfiles(mapped)
   }
+  const purchaseFromRemoteRow = (row: RemotePurchaseRow): PurchaseRecord => ({
+    id: row.id,
+    name: row.name,
+    mobile: row.mobile,
+    email: row.email,
+    role: row.role === 'recruiter' ? 'recruiter' : 'seeker',
+    plan: row.plan === 'pro' ? 'pro' : row.plan === 'starter' ? 'starter' : 'free',
+    planName: row.plan === 'pro' ? 'Pro' : row.plan === 'starter' ? 'Starter' : 'Free',
+    amount: Number(row.amount_inr) || 0,
+    method: row.method || 'In-App',
+    status: row.status === 'failed' ? 'failed' : row.status === 'pending' ? 'pending' : 'paid',
+    transactionId: row.transaction_id,
+    purchasedAt: row.purchased_at,
+    expiresAt: row.expires_at || row.purchased_at,
+  })
+  const recordRemotePurchase = async (record: PurchaseRecord) => {
+    if (!supabase) return
+    try {
+      await supabase.rpc('record_app_purchase', {
+        p_role: record.role,
+        p_name: record.name,
+        p_mobile: record.mobile,
+        p_email: record.email,
+        p_plan: record.plan,
+        p_amount: record.amount,
+        p_method: record.method,
+        p_status: record.status,
+        p_transaction_id: record.transactionId,
+        p_expires_at: record.expiresAt,
+      })
+    } catch { /* local purchase record remains the fallback */ }
+  }
+  const fetchAdminSupabaseData = async () => {
+    if (!supabase) return
+    setAdminDataLoading(true)
+    try {
+      const [usersResult, purchasesResult] = await Promise.all([
+        supabase.rpc('admin_list_accounts'),
+        supabase.rpc('admin_list_purchases'),
+      ])
+      if (!usersResult.error && Array.isArray(usersResult.data)) setRemoteAdminUsers(usersResult.data as RemoteAccountRow[])
+      if (!purchasesResult.error && Array.isArray(purchasesResult.data)) setRemotePurchases((purchasesResult.data as RemotePurchaseRow[]).map(purchaseFromRemoteRow))
+    } catch { /* Admin lists keep showing this device's records */ } finally {
+      setAdminDataLoading(false)
+    }
+  }
+  useEffect(() => {
+    if (isAdmin && page === 'admin' && ['users', 'purchases', 'payments'].includes(adminTab)) void fetchAdminSupabaseData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, page, adminTab])
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
     if (!supabase) return
     const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
@@ -1933,14 +2030,27 @@ export default function App() {
     try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
     setToast(`Deletion request rejected for ${request.name}. The Job Seeker account remains active.`)
   }
-  const handleAdminLogin = () => {
-    const idOk = ADMIN_IDS.includes(adminId.trim().toLowerCase())
+  const completeAdminLogin = () => {
+    setIsAdmin(true)
+    setPageHistory([])
+    try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
+    setAdminError(''); setAdminPass('')
+    setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
+  }
+  const handleAdminLogin = async () => {
+    const enteredId = adminId.trim().toLowerCase()
+    // When Supabase is connected, the Admin account is verified from app_admins.
+    // Any RPC/network problem falls back to this device's Admin password.
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
+        if (!error && data === true) { completeAdminLogin(); return }
+        if (!error && data === false) { setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.'); return }
+      } catch { /* fall through to local Admin login */ }
+    }
+    const idOk = ADMIN_IDS.includes(enteredId)
     if (idOk && adminPass === storedAdminPassword()) {
-      setIsAdmin(true)
-      setPageHistory([])
-      try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
-      setAdminError(''); setAdminPass('')
-      setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
+      completeAdminLogin()
     } else {
       setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.')
     }
@@ -1964,6 +2074,7 @@ export default function App() {
     setShowDeleteAccountConfirm(false)
     setShowAccountMenu(false)
     setShowMobileMenu(false)
+    setShowAdminMenu(false)
     setToast('Admin logged out. See you soon, Divakar Reddy!')
     navigate(destination, { resetHistory: true })
   }
@@ -2015,9 +2126,41 @@ export default function App() {
     if (passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
     if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
     if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
-    try { localStorage.setItem(ADMIN_PASS_KEY, passForm.next) } catch { /* ignore */ }
+    const nextPassword = passForm.next
+    const currentPassword = passForm.current
+    try { localStorage.setItem(ADMIN_PASS_KEY, nextPassword) } catch { /* ignore */ }
+    if (supabase) {
+      void supabase.rpc('admin_change_password', { p_admin_id: adminId.trim().toLowerCase() || 'divakar', p_current_password: currentPassword, p_new_password: nextPassword }).then(() => undefined, () => undefined)
+    }
     setPassForm({ current: '', next: '', confirm: '' })
     setToast('Admin password changed successfully 🔐 Use it from next login')
+  }
+  // ---- PLAN PURCHASE -> recorded for Admin Purchases/Payments lists (+ Supabase sync) ----
+  const handlePlanSelect = (nextTier: Tier) => {
+    if (nextTier === tier) { setToast(`${nextTier === 'free' ? 'Free' : nextTier === 'starter' ? 'Starter' : 'Pro'} plan is already active`); return }
+    if (nextTier === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock'); return }
+    const now = new Date()
+    const expires = new Date(now)
+    expires.setDate(expires.getDate() + 30)
+    const record: PurchaseRecord = {
+      id: 'purchase-' + Date.now(),
+      name: currentUser?.name ?? 'Guest User',
+      mobile: currentUser?.mobile ?? '',
+      email: currentUser?.email ?? '',
+      role: currentUser?.role ?? 'seeker',
+      plan: nextTier,
+      planName: nextTier === 'starter' ? 'Starter' : 'Pro',
+      amount: nextTier === 'starter' ? 99 : 499,
+      method: 'In-App Checkout (Demo)',
+      status: 'paid',
+      transactionId: 'TXN' + Date.now().toString(36).toUpperCase(),
+      purchasedAt: now.toISOString(),
+      expiresAt: expires.toISOString(),
+    }
+    setPurchases(prev => [record, ...prev])
+    setTier(nextTier)
+    void recordRemotePurchase(record)
+    setToast(`${record.planName} plan activated ✅ Payment recorded • ${record.transactionId}`)
   }
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
@@ -2403,6 +2546,22 @@ export default function App() {
   const pendingDeletionRequests = deletionRequests.filter(r => r.status === 'pending')
   const rejectedDeletionRequests = deletionRequests.filter(r => r.status === 'rejected')
   const openSupportTickets = supportTickets.filter(ticket => ticket.status === 'open' || ticket.status === 'in-progress')
+  // Admin Users / Purchases / Payments — Supabase rows when connected, else this device's records.
+  const displayedAdminUsers: Account[] = remoteAdminUsers ? remoteAdminUsers.map(accountFromRemoteRow) : accounts
+  const adminSeekerCount = displayedAdminUsers.filter(a => a.role === 'seeker').length
+  const adminRecruiterCount = displayedAdminUsers.filter(a => a.role === 'recruiter').length
+  const filteredAdminUsers = displayedAdminUsers.filter(a => {
+    if (adminUserRoleFilter === 'seeker' && a.role !== 'seeker') return false
+    if (adminUserRoleFilter === 'recruiter' && a.role !== 'recruiter') return false
+    if (adminUserRoleFilter === 'admin') return false
+    if (!adminUserSearch.trim()) return true
+    const q = adminUserSearch.trim().toLowerCase()
+    return a.name.toLowerCase().includes(q) || a.mobile.includes(q) || a.email.toLowerCase().includes(q)
+  })
+  const displayedPurchases: PurchaseRecord[] = [...(remotePurchases ?? purchases)].sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())
+  const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > Date.now()
+  const totalRevenue = displayedPurchases.filter(p => p.status === 'paid').reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
+  const thisMonthRevenue = displayedPurchases.filter(p => { const d = new Date(p.purchasedAt); const now = new Date(); return p.status === 'paid' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest')
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
@@ -2576,6 +2735,12 @@ export default function App() {
       <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-sky-700/30 bg-gradient-to-r from-sky-600 via-sky-600 to-indigo-600 text-white shadow-md`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-2">
+            {showGlobalPageBack && (
+              <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/80 bg-white text-slate-800 shadow-md transition hover:bg-sky-50 active:scale-95 sm:h-10 sm:w-10">
+                <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
+              </button>
+            )}
             <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-white/80 bg-white px-1.5 py-1.5 text-left shadow-md min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
               <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
@@ -2586,6 +2751,7 @@ export default function App() {
                 <p className="mt-0.5 whitespace-nowrap text-[7.5px] font-semibold leading-none tracking-wide text-sky-700 min-[380px]:text-[8px] sm:text-[10px]">The MR to NSM Jobs Network</p>
               </div>
             </button>
+            </div>
 
             <nav className="hidden items-center gap-1 text-white lg:flex">
               {!shouldHideJobSeekerExperience && (
@@ -2876,9 +3042,10 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Global top-left back arrow: Auth, Candidates and Admin Login place
-          the same icon-only control at the top-left of their own screens. */}
-      {showGlobalPageBack && (
+      {/* Back arrow lives inside the header bar, aligned with the brand name.
+          Only the guest Legal screen (no navbar) keeps this slim standalone row;
+          Auth, Candidates and Admin Login place the same icon on their own screens. */}
+      {showGlobalPageBack && isIsolatedShellPage && page === 'legal' && (
         <div className="mx-auto max-w-[1280px] px-4 pt-2">
           <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95">
             <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
@@ -3691,7 +3858,7 @@ export default function App() {
                 <p className="text-sm font-extrabold">Subscription</p>
                 <div className="mt-3 space-y-2">
                   {TIERS.slice(0, 3).map(t => (
-                    <button key={t.id} onClick={() => setTier(t.id)} className={`w-full rounded-xl border p-3 text-left ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
+                    <button key={t.id} onClick={() => handlePlanSelect(t.id)} className={`w-full rounded-xl border p-3 text-left ${tier === t.id ? 'border-sky-500 bg-sky-50' : 'bg-slate-50 hover:bg-white'}`}>
                       <div className="flex items-center gap-2">
                         <t.icon className={`h-4 w-4 ${tier === t.id ? 'text-sky-600' : 'text-slate-500'}`} />
                         <span className="text-sm font-bold">{t.name}</span>
@@ -3992,7 +4159,7 @@ export default function App() {
                     <li key={f} className="flex gap-2 text-sm"><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> <span className="leading-tight">{f}</span></li>
                   ))}
                 </ul>
-                <button onClick={() => { if (t.id === 'free') { setTier('free'); setToast('Free plan active — watch ads to unlock') } else { setTier(t.id); setToast(`${t.name} plan selected`) } }} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
+                <button onClick={() => handlePlanSelect(t.id)} className={`mt-5 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : t.popular ? 'bg-sky-600 text-white' : 'bg-slate-900 text-white'}`}>
                   {tier === t.id ? '✓ Active' : t.cta}
                 </button>
               </div>
@@ -4638,6 +4805,11 @@ export default function App() {
           ) : (
             <div>
               <div className="mb-4 flex flex-wrap items-center gap-3">
+                {canGoBack && (
+                  <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-100 bg-white text-slate-800 shadow-sm transition hover:bg-sky-50 active:scale-95">
+                    <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
+                  </button>
+                )}
                 <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="flex min-w-0 items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-2 text-left shadow-sm">
                   <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-11 w-11 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow" />
                   <span className="min-w-0">
@@ -4664,15 +4836,65 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-5 flex gap-2 overflow-x-auto pb-1">
-                <button onClick={() => setAdminTab('overview')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='overview' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><LayoutDashboard className="h-4 w-4" /> Overview</button>
-                <button onClick={() => setAdminTab('post')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='post' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Plus className="h-4 w-4" /> Post Vacancy</button>
-                <button onClick={() => setAdminTab('approvals')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='approvals' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Clock3 className="h-4 w-4" /> Approvals{pendingJobs.length > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length}</span>}</button>
-                <button onClick={() => setAdminTab('accounts')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='accounts' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><FileText className="h-4 w-4" /> Account Requests{pendingDeletionRequests.length > 0 && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">{pendingDeletionRequests.length}</span>}</button>
-                <button onClick={() => setAdminTab('support')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='support' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><MessageCircle className="h-4 w-4" /> Support Tickets{openSupportTickets.length > 0 && <span className="rounded-full bg-sky-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">{openSupportTickets.length}</span>}</button>
-                <button onClick={() => setAdminTab('manage')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='manage' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Briefcase className="h-4 w-4" /> Manage Vacancies ({jobs.length})</button>
-                <button onClick={() => setAdminTab('settings')} className={`flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold ${adminTab==='settings' ? 'bg-slate-900 text-white' : 'border bg-white'}`}><Settings className="h-4 w-4" /> Settings</button>
+              {/* Admin options live in the sliding Admin Menu — no scrolling pill row. */}
+              <div className="mt-5 flex items-center gap-3 rounded-2xl border bg-white px-3 py-2.5 shadow-sm">
+                <button type="button" onClick={() => setShowAdminMenu(true)} aria-label="Open Admin Menu" title="Admin Menu" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white shadow transition hover:bg-slate-800 active:scale-95">
+                  <Menu className="h-5 w-5" />
+                </button>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-extrabold tracking-widest text-slate-400">ADMIN MENU</p>
+                  <p className="truncate text-sm font-extrabold leading-tight">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                </div>
+                <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
               </div>
+
+              <AnimatePresence>
+                {showAdminMenu && (
+                  <>
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} onClick={() => setShowAdminMenu(false)} className="fixed inset-0 z-[55] bg-black/50 backdrop-blur-sm" />
+                    <motion.div initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'spring', damping: 28, stiffness: 260 }} className="fixed left-0 top-0 z-[60] flex h-[100dvh] w-[86%] max-w-[340px] flex-col bg-white shadow-2xl">
+                      <div className="flex items-center gap-3 bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
+                        <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy — Admin" className="h-11 w-11 shrink-0 select-none aspect-square rounded-full border-2 border-white object-cover object-center shadow" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-extrabold leading-tight">M Divakar Reddy</p>
+                          <p className="text-[11px] font-bold text-sky-100">Admin Menu • PharmaSales Jobs</p>
+                        </div>
+                        <button type="button" onClick={() => setShowAdminMenu(false)} aria-label="Close Admin Menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur transition hover:bg-white/30 active:scale-95"><X className="h-5 w-5" /></button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto px-3 py-3">
+                        <div className="grid gap-1.5">
+                          {[
+                            { id: 'overview' as const, label: 'Overview', sub: 'Dashboard summary', icon: LayoutDashboard, badge: undefined as number | undefined, badgeClass: '' },
+                            { id: 'post' as const, label: 'Post Vacancy', sub: 'Publish instantly as Admin', icon: Plus, badge: undefined, badgeClass: '' },
+                            { id: 'approvals' as const, label: 'Approvals', sub: 'Vacancies waiting for approval', icon: Clock3, badge: pendingJobs.length, badgeClass: 'bg-amber-400 text-slate-900' },
+                            { id: 'users' as const, label: 'Users List', sub: 'Job Seekers • Recruiters • Admin', icon: Users, badge: displayedAdminUsers.length + 1, badgeClass: 'bg-sky-100 text-sky-700' },
+                            { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Crown, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
+                            { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
+                            { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
+                            { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
+                            { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
+                            { id: 'settings' as const, label: 'Settings', sub: 'Admin password & account', icon: Settings, badge: undefined, badgeClass: '' },
+                          ].map(item => (
+                            <button key={item.id} type="button" onClick={() => { setAdminTab(item.id); setShowAdminMenu(false) }} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.98] ${adminTab === item.id ? 'bg-slate-900 text-white shadow' : 'hover:bg-slate-50'}`}>
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${adminTab === item.id ? 'bg-white/15 text-white' : 'bg-sky-50 text-sky-600'}`}><item.icon className="h-5 w-5" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-extrabold leading-tight">{item.label}</span>
+                                <span className={`block truncate text-[11px] leading-tight ${adminTab === item.id ? 'text-slate-300' : 'text-slate-500'}`}>{item.sub}</span>
+                              </span>
+                              {typeof item.badge === 'number' && item.badge > 0 && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${item.badgeClass}`}>{item.badge}</span>}
+                              <ChevronRight className={`h-4 w-4 shrink-0 ${adminTab === item.id ? 'text-slate-300' : 'text-slate-400'}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="border-t bg-slate-50 px-3 py-3">
+                        <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
+                        <button type="button" onClick={handleAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
 
               {adminTab === 'overview' && (
                 <div>
@@ -4806,6 +5028,147 @@ export default function App() {
                     ))}
                   </div>
                   <p className="mt-3 text-xs leading-relaxed text-slate-400">Review every recruiter submission carefully before approval.</p>
+                </div>
+              )}
+
+              {adminTab === 'users' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-2 text-base font-extrabold"><Users className="h-5 w-5 text-sky-600" /> Users List ({displayedAdminUsers.length + 1})</p>
+                    <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remoteAdminUsers ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
+                    {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">All three roles in one place — <b>Job Seekers</b>, <b>Recruiters</b> and <b>Admin</b>. Accounts are created and managed in Supabase ({isSupabaseConfigured ? 'connected' : 'connect Supabase to sync every device'}).</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Accounts</p><p className="mt-0.5 text-2xl font-extrabold">{displayedAdminUsers.length + 1}</p></div>
+                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Job Seekers</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{adminSeekerCount}</p></div>
+                    <div className="rounded-2xl bg-amber-50 p-3.5"><p className="text-[11px] font-bold text-amber-700">Recruiters</p><p className="mt-0.5 text-2xl font-extrabold text-amber-700">{adminRecruiterCount}</p></div>
+                    <div className="rounded-2xl bg-slate-900 p-3.5 text-white"><p className="text-[11px] font-bold text-slate-300">Admin</p><p className="mt-0.5 text-2xl font-extrabold">1</p></div>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="flex flex-wrap gap-1.5">
+                      {([['all', 'All Roles'], ['seeker', 'Job Seekers'], ['recruiter', 'Recruiters'], ['admin', 'Admin']] as const).map(([value, label]) => (
+                        <button key={value} type="button" onClick={() => setAdminUserRoleFilter(value)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold transition ${adminUserRoleFilter === value ? 'bg-slate-900 text-white shadow' : 'border bg-white text-slate-600 hover:bg-slate-50'}`}>{label}</button>
+                      ))}
+                    </div>
+                    <div className="relative sm:ml-auto sm:w-[260px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input value={adminUserSearch} onChange={e => setAdminUserSearch(e.target.value)} placeholder="Search name, mobile, email" className="w-full rounded-full border bg-white py-2 pl-9 pr-3 text-xs font-semibold outline-none focus:border-sky-500" />
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(adminUserRoleFilter === 'all' || adminUserRoleFilter === 'admin') && (
+                      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-900/10 bg-gradient-to-r from-sky-600 to-indigo-600 px-3.5 py-3 text-white shadow-sm">
+                        <img src="/divakar-reddy-circle-100.jpg" alt="M Divakar Reddy — Admin" className="h-10 w-10 shrink-0 select-none aspect-square rounded-full border-2 border-white object-cover object-center shadow" />
+                        <div className="min-w-[200px] flex-1">
+                          <p className="text-sm font-extrabold leading-tight">M Divakar Reddy <span className="ml-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-extrabold text-slate-900">👑 ADMIN</span></p>
+                          <p className="text-xs text-sky-100">Admin ID: divakar • App Founder — PharmaSales Jobs</p>
+                        </div>
+                        <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-extrabold">Full Access</span>
+                      </div>
+                    )}
+                    {filteredAdminUsers.map(account => (
+                      <div key={`${account.role}-${account.mobile}`} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-white px-3.5 py-3">
+                        <AccountAvatar name={account.name} photo={account.role === 'seeker' ? account.profile?.profilePhoto : undefined} imgClassName="h-10 w-10 border border-sky-100" fallbackClassName={`flex h-10 w-10 text-sm text-white ${account.role === 'seeker' ? 'bg-sky-600' : 'bg-amber-500'}`} />
+                        <div className="min-w-[200px] flex-1">
+                          <p className="truncate text-sm font-extrabold leading-tight">{account.name} <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${account.role === 'seeker' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{account.role === 'seeker' ? 'JOB SEEKER' : 'RECRUITER'}</span></p>
+                          <p className="truncate text-xs text-slate-600">+91 {account.mobile} • {account.email}</p>
+                          <p className="text-[11px] text-slate-400">Joined: {formatAdminDate(account.createdAt)}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-1.5">
+                          {account.role === 'seeker' && <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(account.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(account.profile) ? 'Profile Complete' : `Profile ${seekerProfileProgress(account.profile)}%`}</span>}
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.hasPassword || account.passwordHash) ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>{(account.hasPassword || account.passwordHash) ? 'Password Set' : 'No Password'}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {filteredAdminUsers.length === 0 && adminUserRoleFilter !== 'admin' && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <Users className="mx-auto h-9 w-9 text-slate-300" />
+                        <p className="mt-2 text-sm font-bold">No users found</p>
+                        <p className="text-xs text-slate-500">{displayedAdminUsers.length === 0 ? 'When Job Seekers and Recruiters register, their accounts appear here.' : 'Try a different search or role filter.'}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'purchases' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-2 text-base font-extrabold"><Crown className="h-5 w-5 text-violet-600" /> Purchase List ({displayedPurchases.length})</p>
+                    <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
+                    {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every Starter and Pro plan purchase is recorded here with its 30-day validity.</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Total Purchases</p><p className="mt-0.5 text-2xl font-extrabold">{displayedPurchases.length}</p></div>
+                    <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Active Plans</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">{displayedPurchases.filter(isPurchaseActive).length}</p></div>
+                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">Starter ₹99</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">{displayedPurchases.filter(p => p.plan === 'starter').length}</p></div>
+                    <div className="rounded-2xl bg-violet-50 p-3.5"><p className="text-[11px] font-bold text-violet-700">Pro ₹499</p><p className="mt-0.5 text-2xl font-extrabold text-violet-700">{displayedPurchases.filter(p => p.plan === 'pro').length}</p></div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {displayedPurchases.map(purchase => (
+                      <div key={purchase.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-white px-3.5 py-3">
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white ${purchase.plan === 'pro' ? 'bg-violet-600' : 'bg-sky-600'}`}><Crown className="h-5 w-5" /></span>
+                        <div className="min-w-[200px] flex-1">
+                          <p className="truncate text-sm font-extrabold leading-tight">{purchase.name} <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${purchase.plan === 'pro' ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700'}`}>{purchase.planName.toUpperCase()}</span></p>
+                          <p className="truncate text-xs text-slate-600">{purchase.mobile ? `+91 ${purchase.mobile} • ` : ''}{purchase.email}</p>
+                          <p className="text-[11px] text-slate-400">Purchased: {formatAdminDate(purchase.purchasedAt)} • Valid till: {formatAdminDate(purchase.expiresAt)}</p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-extrabold">₹{Number(purchase.amount) || 0}</p>
+                          <span className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${purchase.status !== 'paid' ? 'bg-red-50 text-red-600' : isPurchaseActive(purchase) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{purchase.status !== 'paid' ? purchase.status.toUpperCase() : isPurchaseActive(purchase) ? 'ACTIVE' : 'EXPIRED'}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {displayedPurchases.length === 0 && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <Crown className="mx-auto h-9 w-9 text-slate-300" />
+                        <p className="mt-2 text-sm font-bold">No purchases yet</p>
+                        <p className="text-xs text-slate-500">When a Job Seeker buys Starter or Pro, the purchase appears here instantly.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {adminTab === 'payments' && (
+                <div className="mt-4 rounded-2xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-2 text-base font-extrabold"><IndianRupee className="h-5 w-5 text-emerald-600" /> Payment List ({displayedPurchases.length})</p>
+                    <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
+                    {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Preview currently uses demo in-app checkout — Google Play Billing replaces it before Play Store release, and payments sync to Supabase when connected.</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Total Collected</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">₹{totalRevenue.toLocaleString('en-IN')}</p></div>
+                    <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">This Month</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">₹{thisMonthRevenue.toLocaleString('en-IN')}</p></div>
+                    <div className="rounded-2xl bg-slate-50 p-3.5"><p className="text-[11px] font-bold text-slate-500">Successful</p><p className="mt-0.5 text-2xl font-extrabold">{displayedPurchases.filter(p => p.status === 'paid').length}</p></div>
+                    <div className="rounded-2xl bg-red-50 p-3.5"><p className="text-[11px] font-bold text-red-600">Failed / Pending</p><p className="mt-0.5 text-2xl font-extrabold text-red-600">{displayedPurchases.filter(p => p.status !== 'paid').length}</p></div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {displayedPurchases.map(purchase => (
+                      <div key={purchase.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-white px-3.5 py-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white"><IndianRupee className="h-5 w-5" /></span>
+                        <div className="min-w-[200px] flex-1">
+                          <p className="truncate font-mono text-xs font-extrabold leading-tight text-slate-800">{purchase.transactionId}</p>
+                          <p className="truncate text-xs text-slate-600">{purchase.name} • {purchase.planName} Plan{purchase.mobile ? ` • +91 ${purchase.mobile}` : ''}</p>
+                          <p className="text-[11px] text-slate-400">{purchase.method} • {formatAdminDate(purchase.purchasedAt)}</p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-extrabold">₹{Number(purchase.amount) || 0}</p>
+                          <span className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${purchase.status === 'paid' ? 'bg-emerald-500 text-white' : purchase.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-500 text-white'}`}>{purchase.status === 'paid' ? 'PAID' : purchase.status.toUpperCase()}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {displayedPurchases.length === 0 && (
+                      <div className="rounded-xl bg-slate-50 p-8 text-center">
+                        <IndianRupee className="mx-auto h-9 w-9 text-slate-300" />
+                        <p className="mt-2 text-sm font-bold">No payments yet</p>
+                        <p className="text-xs text-slate-500">Starter and Pro payments will be listed here with transaction IDs.</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -5220,7 +5583,7 @@ export default function App() {
                     <ul className="mt-3 space-y-1.5">
                       {t.features.map(f => <li key={f} className="flex gap-2 text-xs"><Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />{f}</li>)}
                     </ul>
-                    <button onClick={() => { setTier(t.id); setShowPricing(false); setToast(`${t.name} plan selected`) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
+                    <button onClick={() => { handlePlanSelect(t.id); setShowPricing(false) }} className={`mt-4 w-full rounded-full py-2.5 text-sm font-bold ${tier === t.id ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white'}`}>{tier === t.id ? 'Active' : 'Select'}</button>
                   </div>
                 ))}
               </div>
