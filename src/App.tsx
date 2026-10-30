@@ -2553,10 +2553,10 @@ export default function App() {
 
       {/* NAVBAR */}
       {!isIsolatedShellPage && (
-      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-sky-100 bg-[#f0f7ff]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f0f7ff]/90`}>
+      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-sky-700/30 bg-gradient-to-r from-sky-600 via-sky-600 to-indigo-600 text-white shadow-md`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-white px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
+            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-white/80 bg-white px-1.5 py-1.5 text-left shadow-md min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
               <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -2567,19 +2567,19 @@ export default function App() {
               </div>
             </button>
 
-            <nav className="hidden items-center gap-1 lg:flex">
+            <nav className="hidden items-center gap-1 text-white lg:flex">
               {!shouldHideJobSeekerExperience && (
                 <>
-                  <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='home'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Home</button>
-                  <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='jobs'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-white text-slate-900':'bg-sky-100 text-sky-700'}`}>{jobs.length} New</span></button>
-                  <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='pricing'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Subscription</button>
+                  <button onClick={() => navigate('home')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='home'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Home</button>
+                  <button onClick={() => navigate('jobs')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='jobs'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Jobs <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${page==='jobs'?'bg-sky-100 text-sky-700':'bg-white/20 text-white'}`}>{jobs.length} New</span></button>
+                  <button onClick={() => navigate('pricing')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='pricing'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Subscription</button>
                 </>
               )}
-              <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='recruiters'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>For Recruiters</button>
-              {hasAuthenticated && currentUser?.role === 'recruiter' && <button onClick={openCandidateProfiles} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:inline-flex ${page==='candidates'?'bg-slate-900 text-white hover:bg-slate-800':''}`}><Users className="h-4 w-4" /> Candidates List</button>}
-              {shouldHideJobSeekerExperience && <button onClick={() => navigate('postjob')} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:inline-flex ${page==='postjob'?'bg-slate-900 text-white hover:bg-slate-800':''}`}><Plus className="h-4 w-4" /> Post Vacancy</button>}
-              <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 ${page==='ai'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>AI Assistant</button>
-              <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-slate-100 xl:block ${page==='legal'?'bg-slate-900 text-white hover:bg-slate-800':''}`}>Legal &amp; Support</button>
+              <button onClick={() => navigate('recruiters')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='recruiters'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>For Recruiters</button>
+              {hasAuthenticated && currentUser?.role === 'recruiter' && <button onClick={openCandidateProfiles} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:inline-flex ${page==='candidates'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}><Users className="h-4 w-4" /> Candidates List</button>}
+              {shouldHideJobSeekerExperience && <button onClick={() => navigate('postjob')} className={`hidden items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:inline-flex ${page==='postjob'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}><Plus className="h-4 w-4" /> Post Vacancy</button>}
+              <button onClick={() => navigate('ai')} className={`rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 ${page==='ai'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>AI Assistant</button>
+              <button onClick={() => openLegal('support')} className={`hidden rounded-full px-3 py-2 text-sm font-semibold hover:bg-white/15 xl:block ${page==='legal'?'bg-white text-sky-700 shadow-sm hover:bg-sky-50':''}`}>Legal &amp; Support</button>
               {isAdmin && (
               <button onClick={() => openAdmin()} className="ml-1 flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800">
                 <LayoutDashboard className="h-4 w-4" /> Dashboard <span className="h-2 w-2 rounded-full bg-emerald-400" />{(pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length) > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">{pendingJobs.length + pendingDeletionRequests.length + openSupportTickets.length} pending</span>}
@@ -2658,7 +2658,7 @@ export default function App() {
                   )}
                 </div>
               )}
-              <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-sky-100 bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
+              <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/80 bg-white text-slate-800 shadow-md lg:hidden"><Menu className="h-5 w-5" /></button>
             </div>
           </div>
         </div>
@@ -2858,7 +2858,7 @@ export default function App() {
       {/* Global top-left back arrow: Auth, Candidates and Admin Login place
           the same icon-only control at the top-left of their own screens. */}
       {showGlobalPageBack && (
-        <div className="mx-auto max-w-[1280px] px-4 pt-3">
+        <div className="mx-auto max-w-[1280px] px-4 pt-2">
           <button type="button" onClick={handlePageBack} aria-label="Go back" title="Go back" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition hover:bg-slate-50 active:scale-95">
             <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
           </button>
@@ -3221,7 +3221,7 @@ export default function App() {
       )}
       {/* JOB SEEKER PROFILE — required job data; Recruiters see it anonymously */}
       {page === 'profile' && (
-        <section className="mx-auto max-w-[1120px] px-4 py-8">
+        <section className="mx-auto max-w-[1120px] px-4 pb-8 pt-2">
           {!currentUser || !hasAuthenticated ? (
             <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
               <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><User className="h-7 w-7" /></span>
