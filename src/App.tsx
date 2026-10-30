@@ -2537,7 +2537,7 @@ export default function App() {
     <div className="min-h-screen bg-[#f0f7ff] text-slate-900">
       {/* Sponsored banner — hidden for ad-free plans */}
       {!isIsolatedShellPage && !isAdFree && (
-      <div className="sticky top-0 z-40 border-b border-sky-200 bg-white/95 backdrop-blur">
+      <div className="sticky top-0 z-40 border-b border-sky-200 bg-[#f0f7ff]/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-3 py-2">
           <div className="flex items-center gap-2 text-[11px]">
             <span className="rounded bg-amber-400 px-2 py-1 font-bold tracking-widest">AD</span>
@@ -2553,10 +2553,10 @@ export default function App() {
 
       {/* NAVBAR */}
       {!isIsolatedShellPage && (
-      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80`}>
+      <header className={`sticky ${isAdFree ? 'top-0' : 'top-[37px]'} z-30 border-b border-sky-100 bg-[#f0f7ff]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f0f7ff]/90`}>
         <div className="mx-auto max-w-[1280px] px-4">
           <div className="flex h-[64px] items-center justify-between gap-4">
-            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
+            <button onClick={handleBrandLogoClick} aria-label="PharmaSales Jobs — The MR to NSM Jobs Network" className="flex min-w-0 select-none items-center gap-1.5 rounded-2xl border border-sky-100 bg-white px-1.5 py-1.5 text-left shadow-sm min-[380px]:gap-2 min-[380px]:px-2 sm:gap-2.5 sm:px-2.5">
               <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-8 w-8 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow-md min-[380px]:h-9 min-[380px]:w-9 sm:h-10 sm:w-10" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -2658,7 +2658,7 @@ export default function App() {
                   )}
                 </div>
               )}
-              <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
+              <button onClick={() => setShowMobileMenu(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-sky-100 bg-white shadow-sm lg:hidden"><Menu className="h-5 w-5" /></button>
             </div>
           </div>
         </div>
