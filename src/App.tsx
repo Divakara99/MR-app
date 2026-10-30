@@ -771,6 +771,7 @@ export default function App() {
   }
 
   const limitForTier: Record<Tier, number> = { free: FREE_DAILY_JOB_LIMIT, starter: 15, pro: 9999 }
+  const isJobSeekerUser = hasAuthenticated && currentUser?.role === 'seeker' && !isAdmin
   const isRecruiterUser = hasAuthenticated && currentUser?.role === 'recruiter'
   const shouldHideJobSeekerExperience = isRecruiterUser && !isAdmin
   const isAdFree = isAdmin || isRecruiterUser || tier !== 'free' // Admin/Recruiter/paid: no Job Seeker browsing or contact-reveal ads. Apply ad is Job Seeker-only.
@@ -2685,25 +2686,40 @@ export default function App() {
               transition={{ type: 'spring', damping: 28, stiffness: 260 }}
               className="fixed right-0 top-0 z-50 flex h-[100dvh] w-[86%] max-w-[360px] flex-col bg-white shadow-2xl lg:hidden"
             >
-              {/* Header */}
-              <div className="flex items-center justify-between gap-3 border-b bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-4 text-white">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur min-[380px]:gap-3 min-[380px]:px-3">
-                  <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-10 w-10 shrink-0 rounded-[22%] bg-white ring-1 ring-sky-100 object-cover shadow min-[380px]:h-11 min-[380px]:w-11" />
-                  <div className="min-w-0">
-                    <p className="truncate text-[16px] font-extrabold leading-none min-[380px]:text-[17px]">PharmaSales Jobs</p>
-                    <p className="mt-1 truncate text-[8.5px] font-semibold leading-none tracking-wide text-sky-50 min-[380px]:text-[9px]">The MR to NSM Jobs Network</p>
+              {/* Account profile first — the duplicate app-name header is not repeated inside the menu. */}
+              <div className="border-b bg-slate-50 px-4 pb-3 pt-4">
+                {currentUser && hasAuthenticated ? (
+                  <div className="rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
+                    <div className="flex items-start gap-2.5">
+                      <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-10 w-10 border border-sky-100" fallbackClassName="flex h-10 w-10 bg-sky-600 text-sm text-white" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-extrabold leading-tight">{currentUser.name}</p>
+                        <p className="text-[11px] font-bold text-sky-700">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
+                        <p className="truncate text-[11px] text-slate-500">{currentUser.email}</p>
+                      </div>
+                      <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                    {currentUser.role === 'seeker' && (
+                      <button onClick={openSeekerProfile} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
+                    )}
                   </div>
-                </div>
-                <button onClick={() => setShowMobileMenu(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur hover:bg-white/30">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
+                ) : (
+                  <div className="flex items-center gap-2.5 rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white"><User className="h-5 w-5" /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-extrabold leading-tight">{isAdmin ? 'M Divakar Reddy' : 'My Account'}</p>
+                      <p className="text-[11px] font-bold text-sky-700">{isAdmin ? 'Admin' : 'Account details'}</p>
+                    </div>
+                    <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                )}
 
-              {/* User tier/account card — account actions stay in the menu */}
-              <div className="border-b bg-slate-50 px-4 py-3">
-                <p className="mb-2 text-[10px] font-extrabold tracking-widest text-slate-400">{shouldHideJobSeekerExperience ? 'MY RECRUITER ACCOUNT' : 'MY ACCOUNT & PLAN'}</p>
                 {shouldHideJobSeekerExperience ? (
-                  <div className="flex items-center justify-between rounded-xl border border-sky-100 bg-white px-3 py-2.5">
+                  <div className="mt-2 flex items-center justify-between rounded-xl border border-sky-100 bg-white px-3 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
                       <span className="text-sm font-extrabold">Recruiter</span>
@@ -2712,28 +2728,13 @@ export default function App() {
                     <Building2 className="h-4 w-4 text-sky-600" />
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
+                  <div className="mt-2 flex items-center justify-between rounded-xl border bg-white px-3 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className={`h-2.5 w-2.5 rounded-full ${tier === 'free' ? 'bg-slate-400' : tier === 'starter' ? 'bg-sky-500' : tier === 'pro' ? 'bg-violet-500' : 'bg-amber-500'}`} />
                       <span className="text-sm font-extrabold capitalize">{isAdmin ? '👑 Admin' : tier}</span>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
                     </div>
                     <User className="h-4 w-4 text-slate-400" />
-                  </div>
-                )}
-                {currentUser && hasAuthenticated && (
-                  <div className="mt-2 rounded-xl border border-sky-100 bg-white px-3 py-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-9 w-9 border border-sky-100" fallbackClassName="flex h-9 w-9 bg-sky-600 text-sm text-white" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-extrabold leading-tight">{currentUser.name}</p>
-                        <p className="text-[11px] font-bold text-sky-700">{currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker'} • +91 {currentUser.mobile}</p>
-                        <p className="truncate text-[11px] text-slate-500">{currentUser.email}</p>
-                      </div>
-                    </div>
-                    {currentUser.role === 'seeker' && (
-                      <button onClick={openSeekerProfile} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
-                    )}
                   </div>
                 )}
               </div>
@@ -2752,7 +2753,7 @@ export default function App() {
                     { label: 'AI Assistant', sub: shouldHideJobSeekerExperience ? 'Hiring help • Support tickets' : 'Resume • Interview • RCPA', icon: Sparkles, page: 'ai' as const },
                     { label: 'Legal & Support', sub: 'Privacy • Terms • Support ticket', icon: FileText, page: 'legal' as const },
                     { label: 'Admin Dashboard', sub: 'Only for M Divakar Reddy (Admin)', icon: LayoutDashboard, page: 'admin' as const },
-                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
+                  ].filter(item => (isAdmin || item.page !== 'admin') && (canViewCandidateProfiles || item.page !== 'candidates') && (!isJobSeekerUser || !['recruiters', 'postjob'].includes(item.page)) && (!shouldHideJobSeekerExperience || !['home', 'jobs', 'pricing'].includes(item.page))).map(item => (
                     <button
                       key={item.label}
                       onClick={() => item.page === 'admin' ? openAdmin() : navigate(item.page)}
