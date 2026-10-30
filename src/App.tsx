@@ -7,7 +7,7 @@ import {
   GraduationCap, Layers, Siren, Megaphone, Quote,
   LockKeyhole, Unlock, TvMinimalPlay, BadgeIndianRupee, Check,
   Settings, User, LogOut, LogIn, Plus, SearchX, Info, AlertTriangle, Gift, Trash2, LayoutDashboard, KeyRound, RotateCcw,
-  Package, Upload, Camera, Download
+  Package, Upload, Camera, Download, Pencil
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
@@ -61,7 +61,7 @@ type Job = {
 
 type PendingJob = Job & { submittedAt: string; submittedBy: string; submittedByRole?: 'recruiter' | 'seeker' }
 type EntryRole = 'seeker' | 'recruiter'
-type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'legal'
+type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'account' | 'legal'
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -864,6 +864,11 @@ export default function App() {
   const resumeInputRef = useRef<HTMLInputElement>(null)
   const [seekerProfileError, setSeekerProfileError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
+  const [profileEditField, setProfileEditField] = useState<keyof SeekerProfile | ''>('')
+  const [accountEditField, setAccountEditField] = useState<'name' | 'email' | ''>('')
+  const [accountEditValue, setAccountEditValue] = useState('')
+  const [accountEditError, setAccountEditError] = useState('')
+  const [accountSaving, setAccountSaving] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
   const [candidateRoleFilter, setCandidateRoleFilter] = useState('All Roles')
   const [candidateExperienceFilter, setCandidateExperienceFilter] = useState('All Candidates')
@@ -1067,6 +1072,7 @@ export default function App() {
     if (shouldHideJobSeekerExperience && ['home', 'jobs', 'pricing', 'saved', 'profile'].includes(destination)) return false
     if (destination === 'candidates') return isAdmin || (hasAuthenticated && currentUser?.role === 'recruiter')
     if (destination === 'profile') return isAdmin || currentUser?.role === 'seeker'
+    if (destination === 'account') return isAdmin || (hasAuthenticated && Boolean(currentUser))
     return true
   }
   const getFallbackBackDestination = (): AppPage | null => {
@@ -1081,6 +1087,11 @@ export default function App() {
     if (page === 'saved' || page === 'pricing') return 'jobs'
     if (page === 'jobs') return 'home'
     if (page === 'profile') return currentUser?.role === 'seeker' && isSeekerProfileComplete(currentUser.profile) ? 'home' : 'jobs'
+    if (page === 'account') {
+      if (isAdmin) return 'admin'
+      if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
+      return 'welcome'
+    }
     if (page === 'legal') {
       if (isAdmin) return 'admin'
       if (hasAuthenticated && currentUser) return getAccountDestination(currentUser)
@@ -1932,9 +1943,106 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker') return
     setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
     setSeekerProfileError('')
+    setProfileEditField('')
     setShowMobileMenu(false)
     setShowAccountMenu(false)
     navigate('profile')
+  }
+  const openSeekerProfileField = (field: keyof SeekerProfile) => {
+    if (!currentUser || currentUser.role !== 'seeker') return
+    setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setSeekerProfileError('')
+    setProfileEditField(field)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('profile')
+  }
+  const openMyAccount = () => {
+    setAccountEditField('')
+    setAccountEditValue('')
+    setAccountEditError('')
+    if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('account')
+  }
+  const startAccountFieldEdit = (field: 'name' | 'email') => {
+    if (!currentUser) return
+    setAccountEditField(field)
+    setAccountEditValue(currentUser[field])
+    setAccountEditError('')
+  }
+  const openMyAccountField = (field: 'name' | 'email') => {
+    if (!currentUser) return
+    setAccountEditField(field)
+    setAccountEditValue(currentUser[field])
+    setAccountEditError('')
+    if (currentUser.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
+    navigate('account')
+  }
+  const cancelAccountFieldEdit = () => {
+    setAccountEditField('')
+    setAccountEditValue('')
+    setAccountEditError('')
+  }
+  const saveAccountField = async () => {
+    if (!currentUser || !accountEditField || accountSaving) return
+    const field = accountEditField
+    const nextValue = field === 'email'
+      ? accountEditValue.trim().toLowerCase()
+      : accountEditValue.trim().replace(/\s+/g, ' ')
+
+    if (field === 'name' && nextValue.length < 3) {
+      setAccountEditError('Please enter your full name (at least 3 characters).')
+      return
+    }
+    if (field === 'email') {
+      const emailError = getEmailValidationError(nextValue)
+      if (emailError) { setAccountEditError(emailError); return }
+      const emailAlreadyUsed = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile) && account.email.trim().toLowerCase() === nextValue)
+      if (emailAlreadyUsed) {
+        setAccountEditError('This email is already used by another account in this role.')
+        return
+      }
+    }
+    if (nextValue === currentUser[field]) {
+      cancelAccountFieldEdit()
+      return
+    }
+
+    setAccountSaving(true)
+    setAccountEditError('')
+    try {
+      let updatedAccount: Account = { ...currentUser, [field]: nextValue }
+      if (supabase) {
+        const { data, error } = await supabase.rpc('update_app_account_email', {
+          p_role: currentUser.role,
+          p_name: updatedAccount.name,
+          p_mobile: currentUser.mobile,
+          p_email: updatedAccount.email,
+        })
+        if (error) throw error
+        const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+        if (!remoteAccount) throw new Error('Updated account was not returned')
+        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
+          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
+          : remoteAccount
+      }
+      const hasLocalAccount = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+      const nextAccounts = hasLocalAccount
+        ? accounts.map(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile) ? updatedAccount : account)
+        : [...accounts, updatedAccount]
+      writeAccounts(nextAccounts)
+      setCurrentUser(updatedAccount)
+      cancelAccountFieldEdit()
+      setToast(`${field === 'name' ? 'Name' : 'Email'} updated in My Account ✅`)
+    } catch {
+      setAccountEditError('Unable to save this detail right now. Please check it and try again.')
+    } finally {
+      setAccountSaving(false)
+    }
   }
   const updateSeekerProfileField = (field: keyof SeekerProfile, value: string) => {
     setSeekerProfileForm(prev => {
@@ -1944,6 +2052,15 @@ export default function App() {
     })
     setSeekerProfileError('')
   }
+  useEffect(() => {
+    if (page !== 'profile' || !profileEditField) return
+    const timer = window.setTimeout(() => {
+      const element = document.querySelector(`[data-profile-field="${profileEditField}"]`) as HTMLElement | null
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element?.focus({ preventScroll: true })
+    }, 140)
+    return () => window.clearTimeout(timer)
+  }, [page, profileEditField, seekerProfileForm.experienceType])
   // Uploads save to the Job Seeker account immediately (with the current form
   // draft) so the photo/resume stay in the account even before "Save Profile".
   const persistSeekerProfilePatch = (patch: Partial<SeekerProfile>) => {
@@ -2112,6 +2229,7 @@ export default function App() {
       setCurrentUser(updatedAccount)
       setSeekerProfileForm(updatedAccount.profile ?? profile)
       setSeekerProfileError('')
+      setProfileEditField('')
       if (supabase) void fetchRemoteCandidateProfiles().catch(() => undefined)
       setToast('Job Seeker profile saved ✅ You can now apply for jobs.')
       navigate('jobs')
@@ -3061,6 +3179,7 @@ export default function App() {
   const totalRevenue = displayedPurchases.filter(p => p.status === 'paid').reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const thisMonthRevenue = displayedPurchases.filter(p => { const d = new Date(p.purchasedAt); const now = new Date(); return p.status === 'paid' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const mySupportTickets = isAdmin ? supportTickets : currentUser ? supportTickets.filter(ticket => ticket.mobile === currentUser.mobile) : supportTickets.filter(ticket => ticket.role === 'guest' && guestSupportTicketIds.has(ticket.id))
+  const accountSeekerProfile: SeekerProfile = currentUser?.role === 'seeker' ? currentUser.profile ?? EMPTY_SEEKER_PROFILE : EMPTY_SEEKER_PROFILE
   const localRegisteredCandidateProfiles: CandidateProfileView[] = accounts
     .filter(a => a.role === 'seeker' && isSeekerProfileComplete(a.profile))
     .map((a, index) => {
@@ -3194,6 +3313,67 @@ export default function App() {
     )
   }
 
+  const renderPencilEditButton = (label: string, onClick: () => void) => (
+    <button type="button" onClick={onClick} aria-label={`Edit ${label}`} title={`Edit ${label}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition hover:bg-sky-100 hover:text-sky-900 active:scale-95">
+      <Pencil className="h-4 w-4" />
+    </button>
+  )
+  const renderEditableAccountField = (field: 'name' | 'email', label: string, value: string) => {
+    const isEditing = accountEditField === field
+    return (
+      <div key={field} className={`rounded-2xl border p-3.5 ${isEditing ? 'border-sky-300 bg-sky-50/70 ring-2 ring-sky-100' : 'border-slate-200 bg-white'}`}>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}<Pencil className="h-3 w-3 text-sky-500" /></p>
+            {!isEditing && <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || 'Not added'}</p>}
+          </div>
+          {!isEditing && renderPencilEditButton(label, () => startAccountFieldEdit(field))}
+        </div>
+        {isEditing && (
+          <div className="mt-2">
+            <input
+              autoFocus
+              value={accountEditValue}
+              onChange={e => { setAccountEditValue(e.target.value); setAccountEditError('') }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void saveAccountField() } if (e.key === 'Escape') cancelAccountFieldEdit() }}
+              type={field === 'email' ? 'email' : 'text'}
+              inputMode={field === 'email' ? 'email' : 'text'}
+              autoComplete={field === 'email' ? 'email' : 'name'}
+              className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500"
+            />
+            {accountEditError && <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{accountEditError}</p>}
+            <div className="mt-2 flex gap-2">
+              <button type="button" disabled={accountSaving} onClick={() => void saveAccountField()} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-sky-600 px-3 py-2 text-xs font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><Check className="h-3.5 w-3.5" /> {accountSaving ? 'Saving…' : 'Save'}</button>
+              <button type="button" disabled={accountSaving} onClick={cancelAccountFieldEdit} className="flex items-center justify-center gap-1.5 rounded-full border bg-white px-3 py-2 text-xs font-extrabold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><X className="h-3.5 w-3.5" /> Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+  const renderLockedAccountField = (label: string, value: string, note: string) => (
+    <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}</p>
+          <p className="mt-1 break-words text-sm font-extrabold leading-snug text-slate-900">{value || 'Not added'}</p>
+          <p className="mt-1 text-[11px] font-semibold leading-snug text-slate-500">{note}</p>
+        </div>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400" title="Locked for account safety"><LockKeyhole className="h-4 w-4" /></span>
+      </div>
+    </div>
+  )
+  const renderSeekerProfileEditRow = (field: keyof SeekerProfile, label: string, value: string | undefined, required = false) => (
+    <div key={field} className="rounded-2xl border border-slate-200 bg-white p-3.5">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{label}{required && <span className="text-red-500">*</span>}<Pencil className="h-3 w-3 text-sky-500" /></p>
+          <p className={`mt-1 break-words text-sm font-extrabold leading-snug ${value ? 'text-slate-900' : 'text-slate-400'}`}>{value || 'Not added'}</p>
+        </div>
+        {renderPencilEditButton(label, () => openSeekerProfileField(field))}
+      </div>
+    </div>
+  )
   const supportTicketStatusLabel = (status: SupportTicketStatus) => status === 'in-progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)
   const renderSupportTicketSummary = (ticket: SupportTicket) => (
     <article key={ticket.id} className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-left">
@@ -3284,6 +3464,11 @@ export default function App() {
                   <span className="text-xs text-slate-500">{isAdmin ? 'Unlimited access' : `${Math.min(displayedDailyUnlocks, limitForTier[tier])}/${limitForTier[tier] === 9999 ? '∞' : limitForTier[tier]} unlocks`}</span>
                 </div>
               )}
+              {isAdmin && !currentUser && (
+                <button type="button" onClick={() => openAdmin('settings')} title="Admin My Account & Settings" className="hidden items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-extrabold text-sky-800 shadow-sm transition hover:bg-sky-100 lg:flex">
+                  <Pencil className="h-4 w-4" /> My Account
+                </button>
+              )}
               {currentUser && hasAuthenticated && (
                 <div className="relative hidden lg:block">
                   <button type="button" onClick={() => setShowAccountMenu(prev => !prev)} aria-expanded={showAccountMenu} title="My Account" className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 py-1 pl-1 pr-2 shadow-sm transition hover:bg-sky-100">
@@ -3311,9 +3496,10 @@ export default function App() {
                           </div>
                         </div>
                         <div className="space-y-1 p-2">
+                          <button type="button" onClick={openMyAccount} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-50 px-3 py-2.5 text-left text-sm font-extrabold text-sky-800 hover:bg-sky-100"><Pencil className="h-4 w-4 text-sky-600" /><span className="flex-1">My Account</span><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-extrabold text-sky-700 shadow-sm">Edit details</span></button>
                           {currentUser.role === 'seeker' ? (
                             <>
-                              <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><User className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
+                              <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Pencil className="h-4 w-4 text-sky-600" /><span className="flex-1">{isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile' : 'Complete Job Profile'}</span>{!isSeekerProfileComplete(currentUser.profile) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{seekerProfileProgress(currentUser.profile)}%</span>}</button>
                               <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
                               <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
                               <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Account Deletion Request Pending' : 'Request Account Deletion'}</span></button>
@@ -3385,20 +3571,28 @@ export default function App() {
                         <X className="h-5 w-5" />
                       </button>
                     </div>
-                    {currentUser.role === 'seeker' && (
-                      <button onClick={openSeekerProfile} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><User className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'My Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
-                    )}
+                    <div className="mt-2.5 grid gap-2">
+                      <button onClick={openMyAccount} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> My Account • Edit Details</button>
+                      {currentUser.role === 'seeker' && (
+                        <button onClick={openSeekerProfile} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> {isSeekerProfileComplete(currentUser.profile) ? 'Edit Job Profile • Complete' : `Complete Job Profile • ${seekerProfileProgress(currentUser.profile)}%`}</button>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2.5 rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white"><User className="h-5 w-5" /></span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-extrabold leading-tight">{isAdmin ? 'M Divakar Reddy' : 'My Account'}</p>
-                      <p className="text-[11px] font-bold text-sky-700">{isAdmin ? 'Admin' : 'Account details'}</p>
+                  <div className="rounded-2xl border border-sky-100 bg-white px-3 py-3 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white"><User className="h-5 w-5" /></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-extrabold leading-tight">{isAdmin ? 'M Divakar Reddy' : 'My Account'}</p>
+                        <p className="text-[11px] font-bold text-sky-700">{isAdmin ? 'Admin • Admin ID: divakar' : 'Account details'}</p>
+                      </div>
+                      <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
+                        <X className="h-5 w-5" />
+                      </button>
                     </div>
-                    <button type="button" onClick={() => setShowMobileMenu(false)} aria-label="Close menu" title="Close menu" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-95">
-                      <X className="h-5 w-5" />
-                    </button>
+                    {isAdmin && (
+                      <button onClick={() => openAdmin('settings')} className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2 text-[11px] font-extrabold text-white"><Pencil className="h-3.5 w-3.5" /> My Account &amp; Settings</button>
+                    )}
                   </div>
                 )}
               </div>
@@ -3456,8 +3650,16 @@ export default function App() {
 
                 {currentUser && hasAuthenticated && (
                   <>
-                    <p className="mb-2 mt-5 text-[11px] font-bold tracking-widest text-slate-400">ACCOUNT ACTIONS</p>
+                    <p className="mb-2 mt-5 text-[11px] font-bold tracking-widest text-slate-400">MY ACCOUNT</p>
                     <div className="grid gap-2">
+                      <button type="button" onClick={openMyAccount} className="flex w-full items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-left transition hover:bg-sky-100/70 active:scale-[0.98]">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-sky-700 shadow-sm"><Pencil className="h-5 w-5" /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-bold leading-tight text-sky-900">My Account</span>
+                          <span className="block text-xs text-sky-700">Edit name, email{currentUser.role === 'seeker' ? ' and job profile' : ''}</span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-sky-500" />
+                      </button>
                       {currentUser.role === 'seeker' ? (
                         <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-left transition hover:bg-amber-100/70 active:scale-[0.98]">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700 shadow-sm"><FileText className="h-5 w-5" /></span>
@@ -3929,6 +4131,129 @@ export default function App() {
           </div>
         </section>
       )}
+      {/* MY ACCOUNT — available to every signed-in Job Seeker and Recruiter */}
+      {page === 'account' && (
+        <section className="mx-auto max-w-[1120px] px-4 pb-8 pt-2">
+          {!currentUser || !hasAuthenticated ? (
+            isAdmin ? (
+              <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+                <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-900 text-white"><Settings className="h-7 w-7" /></span>
+                <h2 className="mt-3 text-xl font-extrabold">My Account — Admin</h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">Admin ID <b className="text-slate-900">divakar</b> is correct. Admin account and password settings are inside the Admin Dashboard.</p>
+                <button onClick={() => openAdmin('settings')} className="mt-5 rounded-full bg-slate-900 px-6 py-3 text-sm font-bold text-white">Open Admin Settings</button>
+              </div>
+            ) : (
+              <div className="mx-auto max-w-xl rounded-3xl border bg-white p-8 text-center shadow-sm">
+                <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><User className="h-7 w-7" /></span>
+                <h2 className="mt-3 text-xl font-extrabold">My Account Login Required</h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">Login as a Job Seeker or Recruiter to view and edit your account details.</p>
+                <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
+                  <button onClick={() => enterAs('seeker')} className="rounded-full bg-sky-600 px-6 py-3 text-sm font-bold text-white">Job Seeker Login</button>
+                  <button onClick={() => enterAs('recruiter')} className="rounded-full bg-slate-900 px-6 py-3 text-sm font-bold text-white">Recruiter Login</button>
+                </div>
+              </div>
+            )
+          ) : (
+            <>
+              <div className="rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 p-6 text-white shadow-lg">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <AccountAvatar name={currentUser.name} photo={currentUser.role === 'seeker' ? currentUser.profile?.profilePhoto : undefined} imgClassName="h-16 w-16 border-2 border-white shadow" fallbackClassName="flex h-16 w-16 bg-white text-xl text-sky-700 shadow" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-extrabold tracking-widest text-sky-100">MY ACCOUNT</p>
+                    <h2 className="mt-1 truncate text-[26px] font-extrabold leading-tight">{currentUser.name}</h2>
+                    <p className="mt-1 text-sm font-semibold text-sky-50">{currentUser.role === 'recruiter' ? 'Recruiter Account' : 'Job Seeker Account'} • +91 {currentUser.mobile}</p>
+                    <p className="truncate text-xs text-sky-100">{currentUser.email}</p>
+                  </div>
+                  <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow"><Pencil className="h-3.5 w-3.5" /> Tap pencil to edit</span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+                <div className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> Account Details</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">Use the pencil icon beside a column to edit that detail. Mobile number and account type stay locked for login safety.</p>
+                    </div>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600"><Pencil className="h-5 w-5" /></span>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {renderEditableAccountField('name', 'Full Name', currentUser.name)}
+                    {renderLockedAccountField('Mobile Number', `+91 ${currentUser.mobile}`, 'This is your login ID. Contact Admin/Support if your mobile number must change.')}
+                    {renderEditableAccountField('email', 'Email ID', currentUser.email)}
+                    {renderLockedAccountField('Account Type', currentUser.role === 'recruiter' ? 'Recruiter' : 'Job Seeker', 'Account type is selected during registration and cannot be changed here.')}
+                    {renderLockedAccountField('Password', '••••••••', 'For safety, reset your password through Forgot Password on the login screen.')}
+                    {renderLockedAccountField('Account Created', formatAdminDate(currentUser.createdAt), 'Your PharmaSales Jobs account joining date.')}
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <h3 className="flex items-center gap-2 text-base font-extrabold"><Settings className="h-5 w-5 text-sky-600" /> Account Actions</h3>
+                  <div className="mt-4 grid gap-2">
+                    {currentUser.role === 'seeker' ? (
+                      <>
+                        <button type="button" onClick={openSeekerProfile} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-600 px-4 py-3 text-left text-sm font-extrabold text-white shadow transition hover:bg-sky-700"><Pencil className="h-4 w-4" /><span className="flex-1">Edit Job Profile</span><span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-extrabold">{seekerProfileProgress(currentUser.profile)}%</span></button>
+                        <button type="button" onClick={() => navigate('saved')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Bookmark className="h-4 w-4 text-sky-600" /><span className="flex-1">Saved Vacancies</span>{saved.size > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{saved.size}</span>}</button>
+                        <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post a Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
+                        <button type="button" onClick={openDeletionRequest} className="flex w-full items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm font-bold text-amber-800 transition hover:bg-amber-100/70"><FileText className="h-4 w-4" /><span className="flex-1">{myDeletionRequest?.status === 'pending' ? 'Deletion Request Pending' : 'Request Account Deletion'}</span></button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={openCandidateProfiles} className="flex w-full items-center gap-2.5 rounded-2xl bg-sky-600 px-4 py-3 text-left text-sm font-extrabold text-white shadow transition hover:bg-sky-700"><Users className="h-4 w-4" /><span className="flex-1">Candidates List</span></button>
+                        <button type="button" onClick={() => navigate('postjob')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-sky-50"><Plus className="h-4 w-4 text-sky-600" /><span className="flex-1">Post Vacancy</span><span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">Admin approval</span></button>
+                        <button type="button" onClick={() => setShowDeleteAccountConfirm(true)} className="flex w-full items-center gap-2.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-bold text-red-700 transition hover:bg-red-100/70"><Trash2 className="h-4 w-4" /><span className="flex-1">Delete Recruiter Account</span></button>
+                      </>
+                    )}
+                    <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
+                    <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
+                  </div>
+                </div>
+              </div>
+
+              {currentUser.role === 'seeker' && (
+                <div className="mt-5 rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="flex items-center gap-2 text-base font-extrabold"><Briefcase className="h-5 w-5 text-sky-600" /> Job Profile Details</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-500">Every profile column has a pencil. Tap it to jump directly to that field and edit it.</p>
+                    </div>
+                    <div className="w-full rounded-2xl bg-sky-50 px-4 py-3 sm:w-[220px]">
+                      <div className="flex items-center justify-between text-xs font-extrabold text-sky-800"><span>Profile completion</span><span>{seekerProfileProgress(accountSeekerProfile)}%</span></div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${seekerProfileProgress(accountSeekerProfile)}%` }} /></div>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {renderSeekerProfileEditRow('experienceType', 'Fresher / Experienced', accountSeekerProfile.experienceType === 'fresher' ? 'Fresher' : 'Experienced', true)}
+                    {renderSeekerProfileEditRow('qualification', 'Qualification', accountSeekerProfile.qualification, true)}
+                    {renderSeekerProfileEditRow('desiredRole', 'Role Looking For', accountSeekerProfile.desiredRole ? getRoleLabel(accountSeekerProfile.desiredRole) : undefined, true)}
+                    {accountSeekerProfile.experienceType === 'fresher' ? (
+                      renderSeekerProfileEditRow('passingYear', 'Passing Year', accountSeekerProfile.passingYear, true)
+                    ) : (
+                      <>
+                        {renderSeekerProfileEditRow('totalExperience', 'Total Experience', accountSeekerProfile.totalExperience, true)}
+                        {renderSeekerProfileEditRow('currentCompany', 'Current Company', accountSeekerProfile.currentCompany, true)}
+                        {renderSeekerProfileEditRow('currentRole', 'Current Role', accountSeekerProfile.currentRole ? getRoleLabel(accountSeekerProfile.currentRole) : undefined, true)}
+                        {renderSeekerProfileEditRow('currentPackage', 'Current Package', accountSeekerProfile.currentPackage, true)}
+                      </>
+                    )}
+                    {renderSeekerProfileEditRow('expectedPackage', 'Expected Package', accountSeekerProfile.expectedPackage, true)}
+                    {renderSeekerProfileEditRow('state', 'Current State', accountSeekerProfile.state, true)}
+                    {renderSeekerProfileEditRow('city', 'Current City', accountSeekerProfile.city, true)}
+                    {renderSeekerProfileEditRow('currentHq', 'Current HQ', accountSeekerProfile.currentHq, true)}
+                    {renderSeekerProfileEditRow('preferredHq', 'Preferred HQ', accountSeekerProfile.preferredHq)}
+                    {renderSeekerProfileEditRow('noticePeriod', 'Notice Period / Joining', accountSeekerProfile.noticePeriod, true)}
+                    {renderSeekerProfileEditRow('twoWheeler', 'Two-Wheeler', accountSeekerProfile.twoWheeler, true)}
+                    {renderSeekerProfileEditRow('skills', 'Skills', accountSeekerProfile.skills)}
+                    {renderSeekerProfileEditRow('profilePhoto', 'Profile Photo', accountSeekerProfile.profilePhoto ? 'Photo added' : undefined)}
+                    {renderSeekerProfileEditRow('resumeName', 'Resume', accountSeekerProfile.resumeName)}
+                  </div>
+                  <button type="button" onClick={openSeekerProfile} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-extrabold text-white shadow transition hover:bg-sky-700 sm:w-auto sm:px-6"><Pencil className="h-4 w-4" /> Open Full Profile Editor</button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
       {/* JOB SEEKER PROFILE — required job data; Recruiters see it anonymously */}
       {page === 'profile' && (
         <section className="mx-auto max-w-[1120px] px-4 pb-8 pt-2">
@@ -3970,9 +4295,9 @@ export default function App() {
                   <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
                     <p className="flex items-center gap-2 text-xs font-extrabold tracking-widest text-sky-700"><LockKeyhole className="h-4 w-4" /> ACCOUNT DETAILS</p>
                     <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">NAME</p><p className="truncate font-extrabold">{currentUser.name}</p></div>
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p></div>
-                      <div className="rounded-xl bg-white px-3 py-2"><p className="text-[10px] font-bold text-slate-400">EMAIL</p><p className="truncate font-extrabold">{currentUser.email}</p></div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="flex items-center gap-1 text-[10px] font-bold text-slate-400">NAME <Pencil className="h-3 w-3 text-sky-500" /></p><p className="truncate font-extrabold">{currentUser.name}</p></div>{renderPencilEditButton('Full Name', () => openMyAccountField('name'))}</div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="text-[10px] font-bold text-slate-400">MOBILE</p><p className="font-extrabold">+91 {currentUser.mobile}</p><p className="text-[10px] font-semibold text-slate-400">Login ID • locked</p></div><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400" title="Mobile number is your login ID"><LockKeyhole className="h-4 w-4" /></span></div>
+                      <div className="flex items-start gap-2 rounded-xl bg-white px-3 py-2"><div className="min-w-0 flex-1"><p className="flex items-center gap-1 text-[10px] font-bold text-slate-400">EMAIL <Pencil className="h-3 w-3 text-sky-500" /></p><p className="truncate font-extrabold">{currentUser.email}</p></div>{renderPencilEditButton('Email ID', () => openMyAccountField('email'))}</div>
                     </div>
                   </div>
 
@@ -3992,7 +4317,7 @@ export default function App() {
                           <p className="truncate text-sm font-extrabold">{currentUser.name}</p>
                           <p className="text-[11px] font-semibold text-slate-500">{seekerProfileForm.profilePhoto ? 'Profile photo added' : 'Add your profile photo'}</p>
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            <button type="button" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
+                            <button type="button" data-profile-field="profilePhoto" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
                             {seekerProfileForm.profilePhoto && (
                               <button type="button" disabled={!!uploadBusy} onClick={handleRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             )}
@@ -4008,7 +4333,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
-                          <button type="button" disabled={!!uploadBusy} onClick={() => resumeInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-3.5 w-3.5" /> {uploadBusy === 'resume' ? 'Uploading…' : seekerProfileForm.resumeName ? 'Change Resume' : 'Upload Resume'}</button>
+                          <button type="button" data-profile-field="resumeName" disabled={!!uploadBusy} onClick={() => resumeInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-3.5 w-3.5" /> {uploadBusy === 'resume' ? 'Uploading…' : seekerProfileForm.resumeName ? 'Change Resume' : 'Upload Resume'}</button>
                           {seekerProfileForm.resumeName && (
                             <>
                               <button type="button" disabled={!!uploadBusy} onClick={() => void handleDownloadResume()} className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-3.5 w-3.5" /> {uploadBusy === 'download' ? 'Opening…' : 'View / Download'}</button>
@@ -4021,14 +4346,14 @@ export default function App() {
                     <p className="mt-3 flex items-start gap-1.5 text-[11px] font-medium leading-relaxed text-slate-500"><LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Private to your account. Recruiters cannot see your name, photo, resume, mobile number or email ID.</p>
                   </div>
 
-                  <p className="mt-6 text-sm font-extrabold">1. Are you a Fresher or Experienced? *</p>
+                  <p className="mt-6 flex items-center justify-between gap-2 text-sm font-extrabold"><span>1. Are you a Fresher or Experienced? *</span><Pencil className="h-4 w-4 shrink-0 text-sky-500" /></p>
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                    <button type="button" data-profile-field="experienceType" onClick={() => updateSeekerProfileField('experienceType', 'fresher')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'fresher' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'} ${profileEditField === 'experienceType' ? 'ring-4 ring-sky-100' : ''}`}>
                       <GraduationCap className={`h-6 w-6 ${seekerProfileForm.experienceType === 'fresher' ? 'text-emerald-600' : 'text-slate-400'}`} />
                       <span className="mt-2 block text-sm font-extrabold">Fresher</span>
                       <span className="block text-xs text-slate-500">No pharma field-force experience</span>
                     </button>
-                    <button type="button" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                    <button type="button" data-profile-field="experienceType" onClick={() => updateSeekerProfileField('experienceType', 'experienced')} className={`rounded-2xl border-2 p-4 text-left transition ${seekerProfileForm.experienceType === 'experienced' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'} ${profileEditField === 'experienceType' ? 'ring-4 ring-sky-100' : ''}`}>
                       <Briefcase className={`h-6 w-6 ${seekerProfileForm.experienceType === 'experienced' ? 'text-violet-600' : 'text-slate-400'}`} />
                       <span className="mt-2 block text-sm font-extrabold">Experienced</span>
                       <span className="block text-xs text-slate-500">Currently / previously working</span>
@@ -4038,92 +4363,92 @@ export default function App() {
                   <p className="mt-6 text-sm font-extrabold">2. Required job details</p>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Qualification *</label>
-                      <select value={seekerProfileForm.qualification} onChange={e => updateSeekerProfileField('qualification', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Qualification *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="qualification" value={seekerProfileForm.qualification} onChange={e => updateSeekerProfileField('qualification', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'qualification' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select qualification</option>
                         {SEEKER_QUALIFICATIONS.map(q => <option key={q} value={q}>{q}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Role You Are Looking For *</label>
-                      <select value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Role You Are Looking For *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="desiredRole" value={seekerProfileForm.desiredRole} onChange={e => updateSeekerProfileField('desiredRole', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'desiredRole' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         {(seekerProfileForm.experienceType === 'fresher' ? ['Trainee MR', 'Field MR'] : JOB_ROLES).map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                       </select>
                     </div>
 
                     {seekerProfileForm.experienceType === 'fresher' ? (
                       <div>
-                        <label className="mb-1 block text-xs font-bold text-slate-600">Passing Year *</label>
-                        <input value={seekerProfileForm.passingYear} onChange={e => updateSeekerProfileField('passingYear', e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="e.g. 2026" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                        <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Passing Year *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                        <input data-profile-field="passingYear" value={seekerProfileForm.passingYear} onChange={e => updateSeekerProfileField('passingYear', e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="e.g. 2026" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'passingYear' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         <p className="mt-1 text-[11px] font-semibold text-emerald-700">Fresher selected — current company & current package are not required.</p>
                       </div>
                     ) : (
                       <>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Total Pharma Experience *</label>
-                          <select value={seekerProfileForm.totalExperience} onChange={e => updateSeekerProfileField('totalExperience', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Total Pharma Experience *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <select data-profile-field="totalExperience" value={seekerProfileForm.totalExperience} onChange={e => updateSeekerProfileField('totalExperience', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'totalExperience' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                             <option value="">Select experience</option>
                             {SEEKER_EXPERIENCE_OPTIONS.map(exp => <option key={exp} value={exp}>{exp}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Company *</label>
-                          <input value={seekerProfileForm.currentCompany} onChange={e => updateSeekerProfileField('currentCompany', e.target.value)} placeholder="e.g. Sun Pharma" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Company *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <input data-profile-field="currentCompany" value={seekerProfileForm.currentCompany} onChange={e => updateSeekerProfileField('currentCompany', e.target.value)} placeholder="e.g. Sun Pharma" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentCompany' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Role *</label>
-                          <select value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Role *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <select data-profile-field="currentRole" value={seekerProfileForm.currentRole} onChange={e => updateSeekerProfileField('currentRole', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentRole' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                             <option value="">Select current role</option>
                             {[...JOB_ROLES, 'Other Pharma Role'].map(roleName => <option key={roleName} value={roleName}>{getRoleLabel(roleName)}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-bold text-slate-600">Current Package ( CTC ) *</label>
-                          <input value={seekerProfileForm.currentPackage} onChange={e => updateSeekerProfileField('currentPackage', e.target.value)} placeholder="e.g. ₹4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                          <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Package ( CTC ) *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                          <input data-profile-field="currentPackage" value={seekerProfileForm.currentPackage} onChange={e => updateSeekerProfileField('currentPackage', e.target.value)} placeholder="e.g. ₹4.5 LPA" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentPackage' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                         </div>
                       </>
                     )}
 
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Expected Package *</label>
-                      <input value={seekerProfileForm.expectedPackage} onChange={e => updateSeekerProfileField('expectedPackage', e.target.value)} placeholder="e.g. ₹4.0 - 4.5 LPA" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Expected Package *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="expectedPackage" value={seekerProfileForm.expectedPackage} onChange={e => updateSeekerProfileField('expectedPackage', e.target.value)} placeholder="e.g. ₹4.0 - 4.5 LPA" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'expectedPackage' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current State *</label>
-                      <select value={seekerProfileForm.state} onChange={e => updateSeekerProfileField('state', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current State *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="state" value={seekerProfileForm.state} onChange={e => updateSeekerProfileField('state', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'state' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select state</option>
                         {LOCATIONS.slice(1).map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current City *</label>
-                      <input value={seekerProfileForm.city} onChange={e => updateSeekerProfileField('city', e.target.value)} placeholder="e.g. Hyderabad" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current City *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="city" value={seekerProfileForm.city} onChange={e => updateSeekerProfileField('city', e.target.value)} placeholder="e.g. Hyderabad" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'city' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Current HQ / Work Location *</label>
-                      <input value={seekerProfileForm.currentHq} onChange={e => updateSeekerProfileField('currentHq', e.target.value)} placeholder="e.g. Hyderabad - Ameerpet" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current HQ / Work Location *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="currentHq" value={seekerProfileForm.currentHq} onChange={e => updateSeekerProfileField('currentHq', e.target.value)} placeholder="e.g. Hyderabad - Ameerpet" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'currentHq' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Preferred HQ (Optional)</label>
-                      <input value={seekerProfileForm.preferredHq} onChange={e => updateSeekerProfileField('preferredHq', e.target.value)} placeholder="e.g. Hyderabad / Bengaluru" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Preferred HQ (Optional)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="preferredHq" value={seekerProfileForm.preferredHq} onChange={e => updateSeekerProfileField('preferredHq', e.target.value)} placeholder="e.g. Hyderabad / Bengaluru" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'preferredHq' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Notice Period / Joining *</label>
-                      <select value={seekerProfileForm.noticePeriod} onChange={e => updateSeekerProfileField('noticePeriod', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Notice Period / Joining *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="noticePeriod" value={seekerProfileForm.noticePeriod} onChange={e => updateSeekerProfileField('noticePeriod', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'noticePeriod' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select availability</option>
                         {['Immediate', '15 days', '30 days', '45 days', '60 days'].map(np => <option key={np} value={np}>{np}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Two-Wheeler Available? *</label>
-                      <select value={seekerProfileForm.twoWheeler} onChange={e => updateSeekerProfileField('twoWheeler', e.target.value)} className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500">
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Two-Wheeler Available? *</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <select data-profile-field="twoWheeler" value={seekerProfileForm.twoWheeler} onChange={e => updateSeekerProfileField('twoWheeler', e.target.value)} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'twoWheeler' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`}>
                         <option value="">Select option</option>
                         {['Yes', 'No', 'Will arrange'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
                       </select>
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="mb-1 block text-xs font-bold text-slate-600">Skills (Optional, comma separated)</label>
-                      <input value={seekerProfileForm.skills} onChange={e => updateSeekerProfileField('skills', e.target.value)} placeholder="e.g. RCPA, Doctor Calling, Stockist Handling" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Skills (Optional, comma separated)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label>
+                      <input data-profile-field="skills" value={seekerProfileForm.skills} onChange={e => updateSeekerProfileField('skills', e.target.value)} placeholder="e.g. RCPA, Doctor Calling, Stockist Handling" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500 ${profileEditField === 'skills' ? 'border-sky-500 ring-4 ring-sky-100' : ''}`} />
                     </div>
                   </div>
 
@@ -5226,7 +5551,7 @@ export default function App() {
                     <p className="text-sm font-extrabold">Frequently Asked Questions</p>
                     <div className="mt-3 space-y-2">
                       {[
-                        { q: 'Where are my account options?', a: 'Use the Account menu in the top menu bar on desktop, or My Account & Plan in the mobile menu. Job profile, account deletion and logout are kept there so the main pages stay clean.' },
+                        { q: 'Where are my account options?', a: 'Open My Account from the Account menu on desktop or the My Account section in the mobile menu. Tap the pencil icon beside any editable column to update your name, email or Job Seeker profile field. Account deletion and logout are also kept there.' },
                         { q: 'Is the Free plan really free?', a: 'Yes. Free gives 3 daily full-contact unlocks. After those, 7 extra jobs open with separate sponsored reveals for company, manager name and contact number. Apply Now plays a sponsored ad on Free, Starter and Pro.' },
                         { q: 'How are vacancies verified?', a: 'Recruiter-submitted vacancies are reviewed by Admin M Divakar Reddy before they go LIVE. Still verify the company, role, CTC and interview details before joining, and never pay money for a job.' },
                         { q: 'How can AI Assistant help me?', a: 'Open AI Assistant from the menu for resume wording, interview preparation, RCPA and salary guidance. You can also raise a support ticket there with a proper reason.' },
@@ -5405,7 +5730,7 @@ export default function App() {
                             { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
                             { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
-                            { id: 'settings' as const, label: 'Settings', sub: 'Admin password & account', icon: Settings, badge: undefined, badgeClass: '' },
+                            { id: 'settings' as const, label: 'Settings', sub: 'My Account • Admin ID divakar • Password', icon: Settings, badge: undefined, badgeClass: '' },
                           ].map(item => (
                             <button key={item.id} type="button" onClick={() => { setAdminTab(item.id); setShowAdminMenu(false) }} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.98] ${adminTab === item.id ? 'bg-slate-900 text-white shadow' : 'hover:bg-slate-50'}`}>
                               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${adminTab === item.id ? 'bg-white/15 text-white' : 'bg-sky-50 text-sky-600'}`}><item.icon className="h-5 w-5" /></span>
@@ -5855,19 +6180,22 @@ export default function App() {
                   <form className="rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handleChangePassword() }}>
                     <p className="flex items-center gap-2 text-base font-extrabold"><KeyRound className="h-5 w-5 text-sky-600" /> Change Admin Password</p>
                     <div className="mt-3 space-y-3">
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Current Password</label><input type="password" value={passForm.current} onChange={e => setPassForm({ ...passForm, current: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">New Password (min 6 characters)</label><input type="password" value={passForm.next} onChange={e => setPassForm({ ...passForm, next: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <div><label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label><input type="password" value={passForm.confirm} onChange={e => setPassForm({ ...passForm, confirm: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                      <button type="submit" className="w-full rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Update Password</button>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Current Password</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input id="admin-current-password" type="password" value={passForm.current} onChange={e => setPassForm({ ...passForm, current: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>New Password (min 6 characters)</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input type="password" value={passForm.next} onChange={e => setPassForm({ ...passForm, next: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <div><label className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-600"><span>Confirm New Password</span><Pencil className="h-3.5 w-3.5 shrink-0 text-sky-500" /></label><input type="password" value={passForm.confirm} onChange={e => setPassForm({ ...passForm, confirm: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                      <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white"><Pencil className="h-4 w-4" /> Update Password</button>
                     </div>
                   </form>
                   <div className="rounded-2xl border bg-white p-5">
-                    <p className="text-base font-extrabold">Admin Account</p>
+                    <p className="flex items-center gap-2 text-base font-extrabold"><User className="h-5 w-5 text-sky-600" /> My Account — Admin</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">Admin ID <b className="text-slate-800">divakar</b> is correct. Login also accepts <b className="text-slate-800">admin</b> or the registered Admin email.</p>
                     <div className="mt-3 space-y-2 text-sm">
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><b>M Divakar Reddy</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><b>divakar</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><b>App Founder &amp; Admin</b></p>
-                      <p className="flex justify-between rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></p>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Name</span><span className="flex items-center gap-2"><b>M Divakar Reddy</b><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Admin ID</span><span className="flex items-center gap-2"><b>divakar</b><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">Correct</span><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="shrink-0 text-slate-500">Registered Email</span><span className="flex min-w-0 items-center gap-2"><b className="truncate">{ADMIN_REGISTERED_EMAIL}</b><LockKeyhole className="h-3.5 w-3.5 shrink-0 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Password</span><span className="flex items-center gap-2"><b>••••••••</b>{renderPencilEditButton('Admin Password', () => document.getElementById('admin-current-password')?.focus())}</span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Role</span><span className="flex items-center gap-2"><b>App Founder &amp; Admin</b><LockKeyhole className="h-3.5 w-3.5 text-slate-400" /></span></div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-500">Status</span><b className="text-emerald-600">Logged in • Unlimited access</b></div>
                     </div>
                     <div className="mt-4 flex gap-2">
                       <button onClick={handleClearAllVacancies} className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
@@ -6370,13 +6698,13 @@ export default function App() {
               <Crown className={`h-5 w-5 ${page==='pricing'?'text-white':'text-amber-500'}`} /><span className={`text-[11px] font-bold ${page==='pricing'?'text-white':''}`}>Pro</span>
             </button>
           )}
-          {currentUser?.role === 'seeker' && hasAuthenticated ? (
-            <button onClick={openSeekerProfile} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <User className={`h-5 w-5 ${page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='profile'?'text-white':''}`}>Profile</span>
+          {currentUser && hasAuthenticated ? (
+            <button onClick={openMyAccount} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='account' || page==='profile'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
+              <User className={`h-5 w-5 ${page==='account' || page==='profile'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='account' || page==='profile'?'text-white':''}`}>Account</span>
             </button>
-          ) : currentUser?.role === 'recruiter' && hasAuthenticated ? (
-            <button onClick={() => openLegal('support')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='legal'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
-              <FileText className={`h-5 w-5 ${page==='legal'?'text-white':'text-sky-600'}`} /><span className={`text-[11px] font-bold ${page==='legal'?'text-white':''}`}>Support</span>
+          ) : isAdmin ? (
+            <button onClick={() => openAdmin('settings')} className="flex flex-col items-center gap-1 rounded-xl px-4 py-1 hover:bg-slate-50">
+              <User className="h-5 w-5 text-sky-600" /><span className="text-[11px] font-bold">Account</span>
             </button>
           ) : (
             <button onClick={() => navigate('recruiters')} className={`flex flex-col items-center gap-1 rounded-xl px-4 py-1 ${page==='recruiters'?'bg-slate-900 text-white':'hover:bg-slate-50'}`}>
