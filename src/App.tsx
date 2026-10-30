@@ -2039,7 +2039,7 @@ export default function App() {
     if (supabase) {
       try {
         const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
-        if (!error && data === true) { completeAdminLogin(); return }
+        if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
         if (!error && data === false) { setAdminError('Wrong Admin ID or Password. Admin ID is "divakar" — please try again.'); return }
       } catch { /* fall through to local Admin login */ }
     }
