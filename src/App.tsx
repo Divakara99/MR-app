@@ -737,7 +737,7 @@ export default function App() {
     return []
   })
   useEffect(() => { try { localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(pendingJobs)) } catch { /* ignore */ } }, [pendingJobs])
-  const [recruiterJob, setRecruiterJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: '', phone: '', email: '', urgent: false })
+  const [recruiterJob, setRecruiterJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactType: 'Manager', contactPerson: '', phone: '', email: '', urgent: false })
   const [recruiterSubmitted, setRecruiterSubmitted] = useState(false)
   // User accounts (Job Seeker / Recruiter) — register with mobile, email and
   // a minimum-6-character password; then login with mobile OR email + password.
@@ -799,11 +799,6 @@ export default function App() {
   }, [revealed, dailyUnlocks, extraReveals])
   useEffect(() => {
     if (currentUser?.role === 'seeker') setSeekerProfileForm(currentUser.profile ?? EMPTY_SEEKER_PROFILE)
-  }, [currentUser])
-  useEffect(() => {
-    if (currentUser) {
-      setRecruiterJob(prev => ({ ...prev, contactPerson: currentUser.name, phone: `+91 ${currentUser.mobile}`, email: currentUser.email }))
-    }
   }, [currentUser])
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
@@ -2164,11 +2159,12 @@ export default function App() {
   }
   // ---- RECRUITER SUBMISSION -> ADMIN APPROVAL ----
   const handleRecruiterSubmit = () => {
-    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Your Name and Mobile Number'); return }
+    if (!recruiterJob.company.trim() || !recruiterJob.ctc.trim() || !recruiterJob.phone.trim() || !recruiterJob.contactPerson.trim()) { setToast('Please fill Company, CTC, Contact Person Name and Contact Mobile Number'); return }
     const contactEmailError = recruiterJob.email.trim() ? getEmailValidationError(recruiterJob.email) : null
     if (contactEmailError) { setToast(contactEmailError); return }
     const cityName = recruiterJob.city.trim() || 'Hyderabad'
-    const posterName = currentUser && hasAuthenticated ? currentUser.name : recruiterJob.contactPerson.trim().split(' - ')[0].trim()
+    const contactName = recruiterJob.contactPerson.trim().split(' - ')[0].trim()
+    const posterName = currentUser && hasAuthenticated ? currentUser.name : contactName
     const posterRole: 'seeker' | 'recruiter' = currentUser?.role === 'seeker' ? 'seeker' : 'recruiter'
     const pending: PendingJob = {
       id: 'pending-' + Date.now(),
@@ -2188,7 +2184,7 @@ export default function App() {
       urgent: recruiterJob.urgent,
       hot: false,
       desc: recruiterJob.desc.trim() || `Opening at ${recruiterJob.company.trim()} for ${cityName} HQ. Submitted by a ${posterRole === 'seeker' ? 'Job Seeker' : 'Recruiter'} member — under verification by M Divakar Reddy.`,
-      contactPerson: recruiterJob.contactPerson.trim(),
+      contactPerson: `${contactName} - ${recruiterJob.contactType}`,
       phone: recruiterJob.phone.trim(),
       email: recruiterJob.email.trim() || 'hr@mrvacancieshub.in',
       skills: ['Doctor Calling', 'RCPA', 'Stockist Handling'],
@@ -2204,7 +2200,7 @@ export default function App() {
     setToast('Vacancy submitted! It will go LIVE after Admin (Divakar Reddy) approval ✅')
   }
   const resetRecruiterForm = () => {
-    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: currentUser ? currentUser.name : '', phone: currentUser ? `+91 ${currentUser.mobile}` : '', email: currentUser ? currentUser.email : '', urgent: false })
+    setRecruiterJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactType: 'Manager', contactPerson: '', phone: '', email: '', urgent: false })
     setRecruiterSubmitted(false)
   }
   const handleApproveJob = (pend: PendingJob) => {
@@ -4565,11 +4561,13 @@ export default function App() {
                   <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Job Description</label><textarea value={recruiterJob.desc} onChange={e => setRecruiterJob({ ...recruiterJob, desc: e.target.value })} rows={3} placeholder="Role details, HQ coverage, requirements..." className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2"><input type="checkbox" checked={recruiterJob.urgent} onChange={e => setRecruiterJob({ ...recruiterJob, urgent: e.target.checked })} className="h-4 w-4" /> Mark as Urgent Hiring</label>
                 </div>
-                <p className="mt-5 text-sm font-extrabold text-slate-900">👤 Your Contact Details <span className="text-xs font-semibold text-slate-500">(Admin will call to verify • shown to candidates only after they unlock)</span></p>
+                <p className="mt-5 text-sm font-extrabold text-slate-900">👤 Hiring Contact Details <span className="text-xs font-semibold text-slate-500">(Manager / RBM / ZSM / HR • Admin will call to verify • shown to candidates only after they unlock)</span></p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">Enter the <b>Manager / RBM / ZSM / HR</b> contact for this vacancy — not your own details, unless you are the hiring contact.</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Your Name &amp; Designation *</label><input value={recruiterJob.contactPerson} onChange={e => setRecruiterJob({ ...recruiterJob, contactPerson: e.target.value })} placeholder="e.g. Ramesh Reddy - Regional Manager" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label><input value={recruiterJob.phone} onChange={e => setRecruiterJob({ ...recruiterJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
-                  <div className="sm:col-span-2"><label className="mb-1 block text-xs font-bold text-slate-600">Email</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Type *</label><select value={recruiterJob.contactType} onChange={e => setRecruiterJob({ ...recruiterJob, contactType: e.target.value })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500"><option value="Manager">Manager</option><option value="RBM">RBM (Regional Business Manager)</option><option value="ZSM">ZSM (Zonal Sales Manager)</option><option value="HR">HR</option></select></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Person Name *</label><input value={recruiterJob.contactPerson} onChange={e => setRecruiterJob({ ...recruiterJob, contactPerson: e.target.value })} placeholder="e.g. Ramesh Reddy" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Mobile Number *</label><input value={recruiterJob.phone} onChange={e => setRecruiterJob({ ...recruiterJob, phone: e.target.value })} placeholder="+91 98XXX XXXXX" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
+                  <div><label className="mb-1 block text-xs font-bold text-slate-600">Contact Email</label><input value={recruiterJob.email} onChange={e => setRecruiterJob({ ...recruiterJob, email: e.target.value })} placeholder="hr@company.com" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" /></div>
                 </div>
                 <button type="submit" className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><Send className="h-4 w-4" /> Submit for Admin Approval</button>
                 <p className="mt-2 text-center text-xs text-slate-500">By submitting, you confirm this is a genuine vacancy. Fake/duplicate posts are rejected by Admin.</p>
