@@ -100,8 +100,6 @@ type Account = {
   mobile: string
   email: string
   createdAt: string
-  passwordHash?: string
-  hasPassword?: boolean
   authUserId?: string
   authLinked?: boolean
   profile?: SeekerProfile
@@ -198,7 +196,6 @@ type RemoteSyncCollectionKey = 'jobs' | 'pending_jobs' | 'support_tickets' | 'de
 type SyncRecord = { id: string }
 
 // Vacancies are real only: no seeded/demo jobs are bundled with the app.
-const JOBS: Job[] = []
 
 const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tamil Nadu', 'Maharashtra', 'Gujarat', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Delhi']
 const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
@@ -376,12 +373,9 @@ const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' a
 
 // Helpers
 const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) => a + 'X'.repeat(mid.length) + c)
-const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
 
 // ADMIN (M Divakar Reddy)
 const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
-const ADMIN_IDS = ['divakar', 'admin', ADMIN_REGISTERED_EMAIL]
-const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
@@ -680,21 +674,14 @@ const accountMatchesIdentifier = (account: Account, identifier: ParsedAuthIdenti
     : normalizeMobile(account.mobile) === identifier.value
 )
 const mergeAccountLists = (current: Account[], incoming: Account[]) => {
-  const clean = (account: Account): Account => {
-    const { passwordHash: _legacyPasswordHash, ...rest } = account
-    void _legacyPasswordHash
-    return rest
-  }
-  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, clean(account)]))
+  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, { ...account }]))
   incoming.forEach(account => {
     const key = `${account.role}:${normalizeMobile(account.mobile)}`
     const previous = merged.get(key)
-    const next = clean(account)
     merged.set(key, {
-      ...next,
-      authUserId: next.authUserId ?? previous?.authUserId,
-      authLinked: Boolean(next.authLinked || next.authUserId || previous?.authLinked || previous?.authUserId),
-      hasPassword: Boolean(next.authLinked || next.authUserId || previous?.authLinked || previous?.authUserId || next.hasPassword),
+      ...account,
+      authUserId: account.authUserId ?? previous?.authUserId,
+      authLinked: Boolean(account.authLinked || account.authUserId || previous?.authLinked || previous?.authUserId),
     })
   })
   return Array.from(merged.values())
@@ -705,13 +692,18 @@ const loadAccounts = (): Account[] => {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return (parsed as Account[])
-      .filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
-      .map(a => {
-        const { passwordHash: _legacyPasswordHash, ...rest } = a
-        void _legacyPasswordHash
-        return rest
-      })
+    return (parsed as Array<Record<string, unknown>>)
+      .filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && typeof a.name === 'string' && typeof a.mobile === 'string' && typeof a.email === 'string')
+      .map(a => ({
+        role: a.role as EntryRole,
+        name: a.name as string,
+        mobile: a.mobile as string,
+        email: a.email as string,
+        createdAt: typeof a.createdAt === 'string' ? a.createdAt : new Date().toISOString(),
+        authUserId: typeof a.authUserId === 'string' ? a.authUserId : undefined,
+        authLinked: a.authLinked === true || typeof a.authUserId === 'string',
+        profile: (a.profile && typeof a.profile === 'object' ? a.profile : undefined) as SeekerProfile | undefined,
+      }))
   } catch { return [] }
 }
 const loadPurchases = (): PurchaseRecord[] => {
@@ -856,7 +848,6 @@ const accountFromRemoteRow = (row: RemoteAccountRow): Account => {
     name: row.name,
     mobile: normalizeMobile(row.mobile),
     email: row.email,
-    hasPassword: row.has_password === true || row.auth_linked === true || Boolean(row.auth_user_id),
     authUserId: row.auth_user_id ?? undefined,
     authLinked: row.auth_linked === true || Boolean(row.auth_user_id),
     createdAt: row.created_at || new Date().toISOString(),
@@ -914,7 +905,7 @@ function BannerAd({ label = 'Advertisement', className = '' }: { label?: string,
       </div>
       <div className="flex items-center justify-between border-t bg-slate-50 px-3 py-1.5">
         <span className="text-[10px] font-semibold tracking-wide text-slate-400">Sponsored</span>
-        <span className="text-[10px] text-slate-400">Advertisement</span>
+        <span className="text-[10px] text-slate-400">{label}</span>
       </div>
     </div>
   )
@@ -1737,26 +1728,18 @@ export default function App() {
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
   const writeAccounts = (nextAccounts: Account[]) => {
-    const sanitized = nextAccounts.map(account => {
-      const { passwordHash: _legacyPasswordHash, ...rest } = account
-      void _legacyPasswordHash
-      return rest
-    })
-    setAccounts(sanitized)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(sanitized)) } catch { /* ignore */ }
-    return sanitized
+    setAccounts(nextAccounts)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(nextAccounts)) } catch { /* ignore */ }
+    return nextAccounts
   }
   const mergeAccountsForMobileState = (mobile: string, incoming: Account[]) => {
     setAccounts(prev => {
       const preservedIncoming = incoming.map(account => {
         const local = prev.find(a => a.role === account.role && normalizeMobile(a.mobile) === normalizeMobile(account.mobile))
-        const { passwordHash: _legacyPasswordHash, ...rest } = account
-        void _legacyPasswordHash
         return {
-          ...rest,
-          authUserId: rest.authUserId ?? local?.authUserId,
-          authLinked: Boolean(rest.authLinked || rest.authUserId || local?.authLinked || local?.authUserId),
-          hasPassword: Boolean(rest.authLinked || rest.authUserId || local?.authLinked || local?.authUserId || rest.hasPassword),
+          ...account,
+          authUserId: account.authUserId ?? local?.authUserId,
+          authLinked: Boolean(account.authLinked || account.authUserId || local?.authLinked || local?.authUserId),
         }
       })
       const next = [...prev.filter(a => normalizeMobile(a.mobile) !== normalizeMobile(mobile)), ...preservedIncoming]
@@ -2115,11 +2098,9 @@ export default function App() {
       setShowAdminForgot(false)
       setAdminRecoveryMode(false)
       try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-      try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
       return null
     }
     setIsAdmin(false)
-    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
 
     const profiles = await fetchOrCreateAuthProfiles(user, preferredRole)
     if (profiles.length === 0) return null
@@ -2145,7 +2126,7 @@ export default function App() {
       }
     }
 
-    completeUserAuth({ ...chosen, authUserId: user.id, authLinked: true, hasPassword: true }, false, { silent: options?.silent })
+    completeUserAuth({ ...chosen, authUserId: user.id, authLinked: true }, false, { silent: options?.silent })
     return chosen
   }
   const routePasswordRecoverySession = (user: SupabaseUser) => {
@@ -2285,7 +2266,7 @@ export default function App() {
         }
 
         await clearGoogleAuthReturn()
-        completeUserAuth({ ...matchedAccount, authUserId: googleUser.id, authLinked: true, hasPassword: true }, false)
+        completeUserAuth({ ...matchedAccount, authUserId: googleUser.id, authLinked: true }, false)
         return
       }
 
@@ -2587,7 +2568,7 @@ export default function App() {
         const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
         writeAccounts(mergeAccountLists(availableAccounts, [profile]))
         setGooglePendingProfile(null)
-        completeUserAuth({ ...profile, authUserId: sessionUser.id, authLinked: true, hasPassword: true }, !existing)
+        completeUserAuth({ ...profile, authUserId: sessionUser.id, authLinked: true }, !existing)
         return
       }
 
@@ -2635,7 +2616,7 @@ export default function App() {
         const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
         writeAccounts(mergeAccountLists(availableAccounts, [profile]))
         setGooglePendingProfile(null)
-        completeUserAuth({ ...profile, authUserId: data.session.user.id, authLinked: true, hasPassword: true }, !existing)
+        completeUserAuth({ ...profile, authUserId: data.session.user.id, authLinked: true }, !existing)
         return
       }
 
@@ -2657,7 +2638,7 @@ export default function App() {
         const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
         writeAccounts(mergeAccountLists(availableAccounts, [profile]))
         setGooglePendingProfile(null)
-        completeUserAuth({ ...profile, authUserId: signInData.user.id, authLinked: true, hasPassword: true }, !existing)
+        completeUserAuth({ ...profile, authUserId: signInData.user.id, authLinked: true }, !existing)
         return
       }
 
@@ -2968,7 +2949,6 @@ export default function App() {
         ...remoteAccount,
         authUserId: authSessionUser.id,
         authLinked: true,
-        hasPassword: true,
       }
       const hasLocalAccount = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
       const nextAccounts = hasLocalAccount
@@ -3165,7 +3145,6 @@ export default function App() {
           ...remoteAccount,
           authUserId: authSessionUser.id,
           authLinked: true,
-          hasPassword: true,
         }
       }
       const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
@@ -3415,7 +3394,6 @@ export default function App() {
   const completeAdminLogin = () => {
     setIsAdmin(true)
     setPageHistory([])
-    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminError(''); setAdminPass('')
     setShowAdminForgot(false); setAdminForgotError('')
     setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
@@ -3563,7 +3541,6 @@ export default function App() {
     setAdminRecoveryMode(false)
     setAdminId('')
     setIsAdmin(false)
-    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminPass('')
     setAdminError('')
     setShowAdminPass(false)
@@ -7480,7 +7457,7 @@ export default function App() {
                 <form className="mt-4 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
-                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" placeholder="Enter Mail id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>

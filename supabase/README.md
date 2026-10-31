@@ -38,7 +38,8 @@ in the database response as well as in the UI.
 
 **Supabase Auth-only update (31 Oct 2026).** Migration
 `supabase_auth_profiles_and_admin_link` added `auth_user_id` links plus
-Auth profile/Admin RPCs (`resolve_auth_login_profile`,
+Auth profile/Admin RPCs (`find_app_accounts_by_mobile`,
+`find_app_accounts_by_identifier`,
 `list_auth_profiles_for_current_user`, `upsert_auth_profile`,
 `update_auth_profile_name`, `update_auth_seeker_profile`,
 `delete_auth_profile`, `link_current_admin_auth_user`,
@@ -58,9 +59,11 @@ registered Admin email once in **Supabase Dashboard → Authentication →
 Users → Add user** (confirmed user, strong password chosen there). The app
 links `app_admins.auth_user_id` on first successful Admin Auth login. Never
 share or store that Admin password in chat/GitHub. Legacy custom-password
-RPC grants remain live temporarily only because the old production client
-is still deployed until this update merges; after production verification,
-run the legacy-revoke cleanup at the end of `schema.sql`.
+RPC definitions, browser grants, and public-table password columns have
+been removed from the repository schema. They remain live temporarily only
+because the old production client is still deployed until this update
+merges; after production verification, apply the cleaned schema drop
+statements to remove them permanently from the live database.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -124,10 +127,10 @@ The script creates:
 - `public.app_sync_records` — ordered cross-device vacancy/support records
 - `public.app_user_states` — per-account saved/applied/reveal state
 - `public.app_settings` — Admin-managed `commerce` plan/payment settings
-- Auth profile link/resolve, profile, deletion, candidate, purchase,
+- Auth profile lookup/link, profile, deletion, candidate, purchase,
   Admin-list, collection-sync, user-state, and commerce-settings RPC
-  functions (legacy custom-password RPC definitions are retained only for
-  rollback and are revoked for browser clients in the target schema)
+  functions. When applied to an older installation, the schema also drops
+  the legacy custom-password RPCs and public-table password columns.
 - Row Level Security and restricted direct table access
 - The initial Admin allowlist row for **M Divakar Reddy** (`divakar`)
 
@@ -299,9 +302,9 @@ hardening pass before a large public launch:
 - Forgot Password uses Supabase email reset links. Configure production
   SMTP, templates, rate limiting and abuse monitoring before scale; the
   pre-login mobile/email resolver also needs rate limiting.
-- After the Auth-only client is production-verified, run the legacy-revoke
-  cleanup at the end of `schema.sql` so old custom-password RPCs are no
-  longer browser-callable.
+- After the Auth-only client is production-verified, apply the cleaned
+  schema drop statements so old custom-password RPCs and public-table
+  password columns are permanently removed from the live database.
 - Replace manual-reference/demo payment activation with verified
   gateway/Google Play Billing receipts.
 - Never expose the `service_role` key in the browser application.

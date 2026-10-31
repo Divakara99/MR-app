@@ -88,11 +88,3 @@ textarea {
   box-shadow: 0 16px 34px rgba(3, 105, 161, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
   color: #ffffff !important;
 }
-
-/* shimmer for masked */
-.shimmer {
-  background: linear-gradient(90deg, #e0f2fe 25%, #bae6fd 37%, #e0f2fe 63%);
-  background-size: 400% 100%;
-  animation: shimmer 1.2s ease-in-out infinite;
-}
-@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }

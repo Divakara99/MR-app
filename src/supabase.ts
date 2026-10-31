@@ -28,7 +28,6 @@ export type RemoteAccountRow = {
   name: string
   mobile: string
   email: string
-  has_password?: boolean | null
   auth_user_id?: string | null
   auth_linked?: boolean | null
   profile?: Record<string, unknown> | null
