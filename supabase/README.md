@@ -1,11 +1,15 @@
 # PharmaSales Jobs — Supabase activation checklist
 
 This directory contains the database setup for **PharmaSales Jobs**. The app
-is already coded to use Supabase for all three account roles:
+uses **Supabase Auth only** for login identities/sessions, with Supabase
+tables for linked profile and application data:
 
-- **Job Seeker** accounts in `public.app_accounts`
-- **Recruiter** accounts in `public.app_accounts`
-- **Admin** accounts in `public.app_admins`
+- **Login identities** for Job Seekers, Recruiters and Admin in
+  Supabase **Authentication → Users** (`auth.users`)
+- **Job Seeker / Recruiter profiles** in `public.app_accounts`, linked to
+  the Auth user by `auth_user_id`
+- **Admin allowlist** in `public.app_admins`, linked to the manually created
+  Admin Auth user by `auth_user_id`
 - **Starter/Pro purchases and payments** in `public.app_purchases`
 - **Live vacancies, pending approvals, support tickets, and deletion
   requests** in `public.app_sync_records`
@@ -31,6 +35,35 @@ password, a Job Seeker's purchases can be listed by mobile for automatic
 plan restoration/expiry, and duplicate payment references are rejected. The
 anonymous candidate RPC now strips profile-photo and resume-upload fields
 in the database response as well as in the UI.
+
+**Supabase Auth-only update (31 Oct 2026).** Migration
+`supabase_auth_profiles_and_admin_link` added `auth_user_id` links plus
+Auth profile/Admin RPCs (`find_app_accounts_by_mobile`,
+`find_app_accounts_by_identifier`,
+`list_auth_profiles_for_current_user`, `upsert_auth_profile`,
+`update_auth_profile_name`, `update_auth_seeker_profile`,
+`delete_auth_profile`, `link_current_admin_auth_user`,
+`admin_list_accounts_auth`, `admin_list_purchases_auth`,
+`admin_delete_app_account_auth`, and `set_app_setting_admin_auth`).
+Registration now **first creates the Supabase Auth account**; email
+confirmation remains **ON**, so the user confirms email and then logs in
+with registered mobile **or** email + password (mobile resolves to the
+registered email before Supabase Auth verifies the password). Existing
+pre-Auth `app_accounts` profiles link automatically when their owner
+creates the Auth account once with the same registered email/mobile and
+confirms/logs in. Supabase Auth **Site URL** is
+`https://mrnew.netlify.app`; redirect allow-list includes production,
+Netlify deploy previews, `https://3000-*.e2b.app/**`, and localhost.
+**Required one-time owner step for Admin on the new build:** create the
+registered Admin email once in **Supabase Dashboard → Authentication →
+Users → Add user** (confirmed user, strong password chosen there). The app
+links `app_admins.auth_user_id` on first successful Admin Auth login. Never
+share or store that Admin password in chat/GitHub. Legacy custom-password
+RPC definitions, browser grants, and public-table password columns have
+been removed from the repository schema. They remain live temporarily only
+because the old production client is still deployed until this update
+merges; after production verification, apply the cleaned schema drop
+statements to remove them permanently from the live database.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -86,20 +119,25 @@ In the new project:
 
 The script creates:
 
-- `public.app_accounts` — Job Seeker and Recruiter accounts/profiles
+- `public.app_accounts` — Job Seeker and Recruiter profiles linked to
+  Supabase Auth users by `auth_user_id`
 - `public.app_purchases` — purchase and payment records
-- `public.app_admins` — Admin accounts with bcrypt password hashes
+- `public.app_admins` — Admin allowlist linked to the manually created
+  Supabase Auth Admin user (no seeded Admin password)
 - `public.app_sync_records` — ordered cross-device vacancy/support records
 - `public.app_user_states` — per-account saved/applied/reveal state
 - `public.app_settings` — Admin-managed `commerce` plan/payment settings
-- Account registration, login, password, profile, deletion, candidate,
-  purchase, Admin-list, collection-sync, user-state, and commerce-settings
-  RPC functions
+- Auth profile lookup/link, profile, deletion, candidate, purchase,
+  Admin-list, collection-sync, user-state, and commerce-settings RPC
+  functions. When applied to an older installation, the schema also drops
+  the legacy custom-password RPCs and public-table password columns.
 - Row Level Security and restricted direct table access
-- The initial Admin account for **M Divakar Reddy** (`divakar`)
+- The initial Admin allowlist row for **M Divakar Reddy** (`divakar`)
 
-Change the seeded Admin password immediately after the first successful
-Admin login from **Admin Dashboard → Settings**.
+Before first Admin login on the Auth-only build, create the registered
+Admin email once in **Supabase Dashboard → Authentication → Users → Add
+user** and set its password there. Later password changes use **Admin
+Dashboard → Settings** (current Auth password required).
 
 > The URL and public key alone cannot create database tables. Either run
 > `schema.sql` in the new project first, or connect that new Supabase
@@ -124,11 +162,11 @@ restart/redeploy** after adding or changing them.
 
 ### Google login for Job Seeker / Recruiter (enabled)
 
-The app uses Supabase Auth only to verify the person's Google email. It then
-matches that email to the existing `app_accounts` record for the selected
-Job Seeker or Recruiter role. First-time Google users still add a mobile
-number and create a password once, preserving mobile/email + password login.
-Admin is excluded.
+Google is a real Supabase Auth session. After Google verifies the email,
+the app loads/creates the selected Job Seeker or Recruiter profile linked
+to that Auth user. First-time Google users add a mobile number and set a
+password once, preserving later mobile/email + password login. Admin does
+not use Google; Admin uses separate email/password Supabase Auth login.
 
 The project owner completed this one-time setup directly in Google Cloud
 and Supabase on 30 Oct 2026. The configuration below is retained for future
@@ -148,19 +186,23 @@ into chat, GitHub, or a `VITE_` variable.**
    the final production domain later, before launch):
 
    ```text
-   https://3000-ilquizxjtw6bibxj3yiux.e2b.app
+   https://mrnew.netlify.app
    http://localhost:3000
    ```
+
+   Add each exact Netlify deploy-preview or e2b preview origin separately
+   when testing Google there (Google does not accept wildcard origins).
 
 4. In **Supabase Dashboard → Authentication → Providers → Google**, enable
    Google and paste the Google **Client ID** and **Client Secret** there.
 5. In **Supabase Dashboard → Authentication → URL Configuration**, keep the
-   app origins in the redirect allow-list. The current preview origin and
-   `http://localhost:3000` were allow-listed on 30 Oct 2026; add the final
-   production domain later. The code returns to the current app origin after
-   Google verifies the user.
-6. Test both roles: an already-registered email should log in directly; a
-   new Google email should ask for mobile number + password once.
+   Site URL as `https://mrnew.netlify.app` and the redirect allow-list with
+   production, Netlify deploy-preview pattern, e2b preview pattern, and
+   localhost. The code returns to the current app origin after Google, email
+   confirmation, and password-recovery links.
+6. Test both roles: an email with a linked selected-role profile should log
+   in directly; a new Google email should ask for mobile number + password
+   once to complete/link that role profile.
 
 ### 4. Verify the connection
 
@@ -174,11 +216,11 @@ After rebuilding:
    days, daily direct-contact limit, benefits and purchase on/off state. In
    **Payment Settings**, add the receiver name and enable the real receiving
    source Admin wants shown at checkout (UPI ID/QR, payment link and/or bank
-   details). Save each settings change with the current Admin password.
+   details). Save each settings change while signed in with the Admin Auth session (no separate password entry).
    Job Seekers also have separate menu pages: **Plans & Benefits** explains
    and compares the cards, while **Payment & My Plan** shows the current
    plan, five payment steps, ready payment methods and payment history.
-4. Register one test Job Seeker and one test Recruiter.
+4. Register one test Job Seeker and one test Recruiter. Confirm each email, then login with mobile/email + password and confirm the accounts appear in **Authentication → Users** plus linked rows in `app_accounts`.
 5. Confirm both test accounts appear in **Users List** from another browser
    or after clearing the first browser's local data. Use **View Account** to
    review each account/profile and current plan; passwords are not displayed.
@@ -195,7 +237,7 @@ After rebuilding:
 8. Post/approve a test vacancy, raise a test support ticket, and save/apply
    to a test job; confirm the same records/state appear after signing in on
    another browser or device.
-9. Confirm Admin login still works, then change the seeded Admin password.
+9. Create the Admin Auth user once in Supabase Dashboard, confirm Admin login works with Admin ID/email + that Auth password, then test Admin password change in Settings.
 
 Use clearly named test accounts and delete test data before production use.
 
@@ -204,10 +246,11 @@ Use clearly named test accounts and delete test data before production use.
 When both environment variables are present at build time, the app uses
 Supabase for:
 
-- Job Seeker and Recruiter registration
-- Google email matching for enabled Job Seeker/Recruiter Google login
-- Login by registered mobile **or** registered email
-- Password setting/reset flows implemented by the app
+- Job Seeker and Recruiter registration in Supabase Auth + linked profiles
+- Google Supabase Auth login for Job Seekers/Recruiters
+- Login by registered mobile **or** registered email, verified by Supabase
+  Auth passwords/sessions
+- Email confirmation and secure email-link password reset
 - Job Seeker profile storage and updates
 - Anonymous Recruiter candidate profiles
 - Supported remote account-deletion calls
@@ -220,11 +263,12 @@ Supabase for:
 - Saved jobs, applied jobs, Recruiter candidate interests, and same-day
   free/sponsored reveal usage for the signed-in account
 - Admin Users, Purchases, and Payments lists
-- Admin login and Admin password changes, with the existing local fallback
-  if the remote Admin RPC is unavailable
+- Admin Supabase Auth login, Admin password changes, and email-link Admin
+  password reset (Admin Auth user must be created once in the Dashboard)
 
-If the environment variables are absent, the app remains usable with its
-existing **This Device** local-storage fallback.
+If the environment variables are absent, public/local device content may
+still render, but **login, registration and Admin access require Supabase
+Auth** and will not work. There is no local password-account fallback.
 
 ## Not migrated by this schema yet
 
@@ -238,7 +282,7 @@ full cross-device backend coverage is required:
 
 Current checkout can display Admin-configured manual UPI, payment-link, or
 bank receiving details and records the Job Seeker-entered transaction/UTR
-reference; Demo Checkout can also be enabled for testing. Manual-reference
+reference. Manual-reference
 activation is **not** independent bank/gateway verification and is not proof
 of a real gateway or Google Play payment. Admin should cross-check manual
 references, and production digital subscriptions should move to verified
@@ -249,18 +293,19 @@ payment-gateway/Google Play Billing receipt validation.
 This setup is ready for controlled testing, but it should receive a security
 hardening pass before a large public launch:
 
-- The current RPC design follows the app's custom account flow and grants
-  function execution to `anon`/`authenticated`; Admin list, collection-sync,
-  and user-state RPCs must eventually move behind Supabase Auth with
-  authenticated user/Admin claims or a protected server-side API. Direct
+- Identity/session authority is Supabase Auth, and Admin lists/settings now
+  require a linked Admin Auth session. However, collection-sync,
+  per-account user-state and purchase-recording RPCs still accept
+  mobile-keyed parameters for compatibility and should eventually derive
+  identity from `auth.uid()` or move to a protected server-side API. Direct
   table access remains revoked and RLS remains enabled.
-- Forgot Password currently verifies registered mobile + email because no
-  verified email-link or OTP delivery service is connected.
-- Add rate limiting and abuse monitoring for account lookup/login flows.
-  Commerce-setting writes require the verified Admin password, but they
-  should still move behind an authenticated Admin claim/session before a
-  large launch.
-- Replace manual-reference/demo payment activation with verified
+- Forgot Password uses Supabase email reset links. Configure production
+  SMTP, templates, rate limiting and abuse monitoring before scale; the
+  pre-login mobile/email resolver also needs rate limiting.
+- After the Auth-only client is production-verified, apply the cleaned
+  schema drop statements so old custom-password RPCs and public-table
+  password columns are permanently removed from the live database.
+- Replace manual-reference payment activation with verified
   gateway/Google Play Billing receipts.
 - Never expose the `service_role` key in the browser application.
 
@@ -274,3 +319,9 @@ hardening pass before a large public launch:
   are using the same `VITE_SUPABASE_URL` and project public key.
 - **Wrong key type**: use publishable or legacy anon public only; never use
   `service_role` in a `VITE_` variable.
+- **Account created but cannot login**: confirm the email from Supabase
+  first; check **Authentication → URL Configuration** allows the exact app
+  origin that sent the confirmation/reset link.
+- **Admin login says wrong password / no reset email**: create the
+  registered Admin email once in **Authentication → Users → Add user**. A
+  reset email is sent only for an existing Auth user.

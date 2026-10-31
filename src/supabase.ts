@@ -12,9 +12,9 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        // Required for the Google OAuth return used by Job Seeker/Recruiter
-        // login. The app clears this short-lived identity session after it has
-        // matched the verified Google email to the app account.
+        // Supabase Auth is the only login/session source for Job Seeker,
+        // Recruiter and Admin accounts. Profile/app data remains in public
+        // tables linked to the authenticated user's ID.
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
@@ -28,7 +28,8 @@ export type RemoteAccountRow = {
   name: string
   mobile: string
   email: string
-  has_password?: boolean | null
+  auth_user_id?: string | null
+  auth_linked?: boolean | null
   profile?: Record<string, unknown> | null
   created_at?: string | null
 }

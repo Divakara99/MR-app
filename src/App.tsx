@@ -100,8 +100,8 @@ type Account = {
   mobile: string
   email: string
   createdAt: string
-  passwordHash?: string
-  hasPassword?: boolean
+  authUserId?: string
+  authLinked?: boolean
   profile?: SeekerProfile
 }
 type PurchaseRecord = {
@@ -140,14 +140,13 @@ type PaymentReceivingSettings = {
   bankDetails: string
   bankEnabled: boolean
   instructions: string
-  demoCheckoutEnabled: boolean
 }
 type CommerceSettings = {
   plans: Record<PaidPlanId, PaidPlanConfig>
   payment: PaymentReceivingSettings
   updatedAt?: string
 }
-type CheckoutMethod = 'upi' | 'payment-link' | 'bank' | 'demo'
+type CheckoutMethod = 'upi' | 'payment-link' | 'bank'
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
   name: string
@@ -158,6 +157,8 @@ type AuthFormState = {
   confirmPassword: string
 }
 const EMPTY_AUTH_FORM: AuthFormState = { name: '', mobile: '', email: '', identifier: '', password: '', confirmPassword: '' }
+type AuthField = keyof AuthFormState
+type AuthFieldErrors = Partial<Record<AuthField, string>>
 type AccountDeletionRequest = {
   id: string
   name: string
@@ -170,6 +171,13 @@ type AccountDeletionRequest = {
   requestedAt: string
   reviewedAt?: string
   adminNote?: string
+}
+type ConfirmationRequest = {
+  title: string
+  message: string
+  confirmLabel: string
+  tone?: 'danger' | 'warning' | 'primary'
+  onConfirm: () => void | Promise<void>
 }
 
 type LegalTab = 'privacy' | 'terms' | 'support'
@@ -193,8 +201,7 @@ type SupportTicket = {
 type RemoteSyncCollectionKey = 'jobs' | 'pending_jobs' | 'support_tickets' | 'deletion_requests'
 type SyncRecord = { id: string }
 
-// Vacancies are real only: no seeded/demo jobs are bundled with the app.
-const JOBS: Job[] = []
+// Vacancies are real only: no seeded jobs are bundled with the app.
 
 const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tamil Nadu', 'Maharashtra', 'Gujarat', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Delhi']
 const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
@@ -261,7 +268,6 @@ const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
     bankDetails: '',
     bankEnabled: false,
     instructions: 'Pay the exact plan amount using the Admin payment source shown here. After payment, enter the UPI/UTR/transaction reference and tap Payment Done — Activate Plan.',
-    demoCheckoutEnabled: true,
   },
 }
 const asSettingsRecord = (value: unknown): Record<string, unknown> => (
@@ -311,7 +317,6 @@ const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
       bankDetails: settingsString(payment.bankDetails, DEFAULT_COMMERCE_SETTINGS.payment.bankDetails, 1200),
       bankEnabled: settingsBoolean(payment.bankEnabled, DEFAULT_COMMERCE_SETTINGS.payment.bankEnabled),
       instructions: settingsString(payment.instructions, DEFAULT_COMMERCE_SETTINGS.payment.instructions, 1200) || DEFAULT_COMMERCE_SETTINGS.payment.instructions,
-      demoCheckoutEnabled: settingsBoolean(payment.demoCheckoutEnabled, DEFAULT_COMMERCE_SETTINGS.payment.demoCheckoutEnabled),
     },
     updatedAt: settingsString(source.updatedAt, '', 60) || undefined,
   }
@@ -340,7 +345,7 @@ const validateCommerceSettings = (settings: CommerceSettings): string => {
     } catch { return 'Enter a correct payment link, or turn Payment Link off.' }
   }
   if (payment.bankEnabled && !payment.bankDetails.trim()) return 'Enter bank receiving details, or turn Bank Transfer off.'
-  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled && !payment.demoCheckoutEnabled) return 'Enable at least one payment receiving method.'
+  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled) return 'Enable at least one real payment receiving method.'
   return ''
 }
 const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
@@ -372,18 +377,15 @@ const getAiWelcomeMessages = (role?: EntryRole | null) => [{ role: 'assistant' a
 
 // Helpers
 const maskPhone = (p: string) => p.replace(/(.{4})(.*)(.{3})/, (_, a, mid, c) => a + 'X'.repeat(mid.length) + c)
-const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom) => a + 'X'.repeat(Math.min(mid.length, 6)) + dom)
 
 // ADMIN (M Divakar Reddy)
 const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
-const ADMIN_IDS = ['divakar', 'admin', ADMIN_REGISTERED_EMAIL]
-const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
-const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
 const GOOGLE_ENTRY_ROLE_KEY = 'mr-google-entry-role-v1'
+const AUTH_RECOVERY_TARGET_KEY = 'mr-auth-recovery-target-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
 const GUEST_SUPPORT_TICKET_IDS_KEY = 'mr-guest-support-ticket-ids-v1'
@@ -418,7 +420,7 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     }
   } catch { return emptyDailyJobAccess() }
 }
-const LEGACY_DEMO_JOB_IDS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
+const LEGACY_SEEDED_JOB_IDS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
 const loadInitialJobs = (): Job[] => {
   try {
     const raw = localStorage.getItem(ADMIN_JOBS_KEY)
@@ -426,8 +428,8 @@ const loadInitialJobs = (): Job[] => {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     // Keep only real Admin-posted/Admin-approved jobs already saved on this
-    // device. Old bundled demo vacancies (IDs 1–15) are never restored.
-    return (parsed as Job[]).filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))
+    // device. Old bundled seeded vacancies (IDs 1–15) are never restored.
+    return (parsed as Job[]).filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))
   } catch { return [] }
 }
 const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
@@ -552,6 +554,15 @@ const normalizeMobile = (value: string) => {
   return digits
 }
 const isValidMobile = (value: string) => /^[6-9]\d{9}$/.test(normalizeMobile(value))
+const getMobileValidationError = (value: string) => {
+  if (!value.trim()) return 'Enter your 10-digit mobile number.'
+  return isValidMobile(value) ? null : 'Enter a correct 10-digit Indian mobile number.'
+}
+const getNameValidationError = (value: string) => {
+  const name = value.trim().replace(/\s+/g, ' ')
+  if (!name) return 'Enter your full name.'
+  return name.length < 3 ? 'Enter your full name (minimum 3 letters).' : null
+}
 type EmailValidationResult = { error: string | null; suggestion?: string }
 const GMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com'])
 const GMAIL_TYPO_DOMAINS = new Set([
@@ -617,52 +628,37 @@ const getEmailValidationError = (value: string) => {
 }
 const isValidEmail = (value: string) => validateEmailAddress(value).error === null
 const MIN_PASSWORD_LENGTH = 6
-const PASSWORD_HASH_ITERATIONS = 120000
 const getPasswordValidationError = (password: string, label = 'Password') => {
   if (!password) return `Enter your ${label.toLowerCase()}.`
   if (password.length < MIN_PASSWORD_LENGTH) return `${label} must be at least ${MIN_PASSWORD_LENGTH} characters.`
   return null
 }
-const hasAccountPassword = (account?: Account | null) => Boolean(account?.passwordHash || account?.hasPassword)
-const bytesToBase64 = (bytes: Uint8Array) => {
-  let binary = ''
-  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
-  return btoa(binary)
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error) return String((error as { message?: unknown }).message ?? '')
+  return ''
 }
-const base64ToBytes = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
-const createLocalPasswordHash = async (password: string) => {
-  if (!globalThis.crypto?.subtle || !globalThis.crypto?.getRandomValues) throw new Error('Secure password storage is not available in this browser')
-  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16))
-  const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await globalThis.crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: PASSWORD_HASH_ITERATIONS, hash: 'SHA-256' },
-    key,
-    256,
-  )
-  return `pbkdf2_sha256$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(new Uint8Array(bits))}`
-}
-const verifyLocalPasswordHash = async (password: string, storedHash?: string) => {
-  if (!storedHash || !globalThis.crypto?.subtle) return false
-  const [scheme, iterationsText, saltText, expectedText] = storedHash.split('$')
-  const iterations = Number(iterationsText)
-  if (scheme !== 'pbkdf2_sha256' || !Number.isInteger(iterations) || iterations < 10000 || !saltText || !expectedText) return false
-  try {
-    const salt = base64ToBytes(saltText)
-    const expected = base64ToBytes(expectedText)
-    const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-    const bits = await globalThis.crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
-      key,
-      expected.length * 8,
-    )
-    const actual = new Uint8Array(bits)
-    if (actual.length !== expected.length) return false
-    let difference = 0
-    actual.forEach((byte, index) => { difference |= byte ^ expected[index] })
-    return difference === 0
-  } catch {
-    return false
+type MappedAuthError = { field?: AuthField; message: string }
+const mapAuthError = (error: unknown, fallback: string, emailField: AuthField = 'email'): MappedAuthError => {
+  const raw = getErrorMessage(error).trim()
+  const lower = raw.toLowerCase()
+  if (lower.includes('email not confirmed') || lower.includes('confirm your email')) {
+    return { field: emailField, message: 'Please confirm your email ID from the Supabase email first, then login with your registered details.' }
   }
+  if (lower.includes('invalid login credentials')) {
+    return { field: 'password', message: 'Wrong password. Please check your password or use Forgot Password below.' }
+  }
+  if (lower.includes('already registered') || lower.includes('already been registered') || lower.includes('user already exists')) {
+    return { field: emailField, message: 'This email ID already has a Supabase Auth account. Login with its existing password or use Forgot Password.' }
+  }
+  if (lower.includes('mobile')) return { field: 'mobile', message: raw }
+  if (lower.includes('full name') || (lower.includes('name') && lower.includes('minimum'))) return { field: 'name', message: raw }
+  if (lower.includes('password')) return { field: 'password', message: raw }
+  if (lower.includes('email')) return { field: emailField, message: raw }
+  if (raw && raw.length <= 240 && !lower.includes('failed to fetch') && !lower.includes('network') && !lower.includes('fetch')) {
+    return { message: raw }
+  }
+  return { message: fallback }
 }
 type ParsedAuthIdentifier = { kind: 'mobile' | 'email'; value: string; error: string | null }
 const parseAuthIdentifier = (value: string): ParsedAuthIdentifier => {
@@ -682,13 +678,15 @@ const accountMatchesIdentifier = (account: Account, identifier: ParsedAuthIdenti
     : normalizeMobile(account.mobile) === identifier.value
 )
 const mergeAccountLists = (current: Account[], incoming: Account[]) => {
-  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, account]))
+  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, { ...account }]))
   incoming.forEach(account => {
     const key = `${account.role}:${normalizeMobile(account.mobile)}`
     const previous = merged.get(key)
-    merged.set(key, previous?.passwordHash && !account.passwordHash
-      ? { ...account, passwordHash: previous.passwordHash, hasPassword: true }
-      : account)
+    merged.set(key, {
+      ...account,
+      authUserId: account.authUserId ?? previous?.authUserId,
+      authLinked: Boolean(account.authLinked || account.authUserId || previous?.authLinked || previous?.authUserId),
+    })
   })
   return Array.from(merged.values())
 }
@@ -698,7 +696,18 @@ const loadAccounts = (): Account[] => {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return (parsed as Account[]).filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
+    return (parsed as Array<Record<string, unknown>>)
+      .filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && typeof a.name === 'string' && typeof a.mobile === 'string' && typeof a.email === 'string')
+      .map(a => ({
+        role: a.role as EntryRole,
+        name: a.name as string,
+        mobile: a.mobile as string,
+        email: a.email as string,
+        createdAt: typeof a.createdAt === 'string' ? a.createdAt : new Date().toISOString(),
+        authUserId: typeof a.authUserId === 'string' ? a.authUserId : undefined,
+        authLinked: a.authLinked === true || typeof a.authUserId === 'string',
+        profile: (a.profile && typeof a.profile === 'object' ? a.profile : undefined) as SeekerProfile | undefined,
+      }))
   } catch { return [] }
 }
 const loadPurchases = (): PurchaseRecord[] => {
@@ -725,14 +734,9 @@ const loadStoredSession = (): { role: EntryRole; mobile: string } | null => {
   } catch { return null }
 }
 const loadSessionAccount = (): Account | null => {
-  const session = loadStoredSession()
-  if (!session) return null
-  const allAccounts = loadAccounts()
-  const account = allAccounts.find(a => a.role === session.role && a.mobile === session.mobile) || null
-  if (!account || !isValidEmail(account.email) || !hasAccountPassword(account)) return null
-  // Standing rule: a Recruiter account on this mobile blocks the Job Seeker session.
-  if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
-  return account
+  // Supabase Auth session is the only proof of login. The stored role/mobile
+  // below is only a preferred-profile hint after Auth verifies the session.
+  return null
 }
 const emptyUserJobState = (): UserJobState => ({
   saved: [],
@@ -848,7 +852,8 @@ const accountFromRemoteRow = (row: RemoteAccountRow): Account => {
     name: row.name,
     mobile: normalizeMobile(row.mobile),
     email: row.email,
-    hasPassword: row.has_password === true,
+    authUserId: row.auth_user_id ?? undefined,
+    authLinked: row.auth_linked === true || Boolean(row.auth_user_id),
     createdAt: row.created_at || new Date().toISOString(),
     profile,
   }
@@ -904,7 +909,7 @@ function BannerAd({ label = 'Advertisement', className = '' }: { label?: string,
       </div>
       <div className="flex items-center justify-between border-t bg-slate-50 px-3 py-1.5">
         <span className="text-[10px] font-semibold tracking-wide text-slate-400">Sponsored</span>
-        <span className="text-[10px] text-slate-400">Advertisement</span>
+        <span className="text-[10px] text-slate-400">{label}</span>
       </div>
     </div>
   )
@@ -1003,10 +1008,9 @@ export default function App() {
   const [commerceDraft, setCommerceDraft] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
   const [commerceSettingsError, setCommerceSettingsError] = useState('')
   const [commerceSettingsSaving, setCommerceSettingsSaving] = useState(false)
-  const [commerceAdminPassword, setCommerceAdminPassword] = useState('')
   const [commerceQrUploading, setCommerceQrUploading] = useState(false)
   const [checkoutPlan, setCheckoutPlan] = useState<PaidPlanId | null>(null)
-  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>('demo')
+  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod | null>(null)
   const [checkoutReference, setCheckoutReference] = useState('')
   const [checkoutError, setCheckoutError] = useState('')
   const [checkoutProcessing, setCheckoutProcessing] = useState(false)
@@ -1052,7 +1056,7 @@ export default function App() {
   const [jobs, setJobs] = useState<Job[]>(() => loadInitialJobs())
   useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
   // Admin auth (M Divakar Reddy only)
-  const [isAdmin, setIsAdmin] = useState(() => { try { return localStorage.getItem(ADMIN_AUTH_KEY) === '1' } catch { return false } })
+  const [isAdmin, setIsAdmin] = useState(false)
   const [adminId, setAdminId] = useState('')
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
@@ -1090,6 +1094,10 @@ export default function App() {
   const [authStep, setAuthStep] = useState<AuthStep>('mobile')
   const [authForm, setAuthForm] = useState<AuthFormState>(EMPTY_AUTH_FORM)
   const [authError, setAuthError] = useState('')
+  const [authFieldErrors, setAuthFieldErrors] = useState<AuthFieldErrors>({})
+  const [authIdentifierTouched, setAuthIdentifierTouched] = useState(false)
+  const [authNameTouched, setAuthNameTouched] = useState(false)
+  const [authMobileTouched, setAuthMobileTouched] = useState(false)
   const [authEmailTouched, setAuthEmailTouched] = useState(false)
   const [authPasswordTouched, setAuthPasswordTouched] = useState(false)
   const [authConfirmPasswordTouched, setAuthConfirmPasswordTouched] = useState(false)
@@ -1098,7 +1106,13 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false)
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false)
   const [googlePendingProfile, setGooglePendingProfile] = useState<{ role: EntryRole; name: string; email: string } | null>(null)
+  const [authSessionUser, setAuthSessionUser] = useState<SupabaseUser | null>(null)
+  const [authRecoveryMode, setAuthRecoveryMode] = useState(false)
+  const [adminRecoveryMode, setAdminRecoveryMode] = useState(false)
+  const [adminAuthLoading, setAdminAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
+  const [confirmationRequest, setConfirmationRequest] = useState<ConfirmationRequest | null>(null)
+  const [confirmationBusy, setConfirmationBusy] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
   const [deletionRequestForm, setDeletionRequestForm] = useState({ category: '', details: '' })
@@ -1189,7 +1203,6 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
-  const remoteSessionRefreshRef = useRef(false)
   const remoteSyncLoadStartedRef = useRef(false)
   const remoteSyncLoadedRef = useRef<Record<string, boolean>>({})
   const remoteSyncPreviousRef = useRef<Record<string, SyncRecord[]>>({})
@@ -1197,6 +1210,8 @@ export default function App() {
   const remoteUserStateLoadedKeyRef = useRef('')
   const remoteUserStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const googleAuthProcessingRef = useRef(false)
+  const authSessionSyncKeyRef = useRef('')
+  const suppressAuthSessionSyncUntilRef = useRef(0)
   const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const resetAuthPasswordState = () => {
@@ -1204,6 +1219,73 @@ export default function App() {
     setAuthConfirmPasswordTouched(false)
     setShowAuthPassword(false)
     setShowAuthConfirmPassword(false)
+  }
+  const clearAuthErrors = () => {
+    setAuthError('')
+    setAuthFieldErrors({})
+  }
+  const requestConfirmation = (request: ConfirmationRequest) => {
+    if (confirmationBusy) return
+    setShowAccountMenu(false)
+    setShowMobileMenu(false)
+    setShowAdminMenu(false)
+    setConfirmationRequest(request)
+  }
+  const closeConfirmation = () => {
+    if (confirmationBusy) return
+    setConfirmationRequest(null)
+  }
+  const confirmPendingAction = async () => {
+    if (!confirmationRequest || confirmationBusy) return
+    setConfirmationBusy(true)
+    try {
+      await confirmationRequest.onConfirm()
+      setConfirmationRequest(null)
+    } finally {
+      setConfirmationBusy(false)
+    }
+  }
+  const clearAuthFieldError = (field: AuthField) => {
+    setAuthFieldErrors(prev => {
+      if (!prev[field]) return prev
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
+  }
+  const showAuthFieldErrors = (errors: AuthFieldErrors) => {
+    setAuthError('')
+    setAuthFieldErrors(errors)
+  }
+  const showAuthFieldError = (field: AuthField, message: string) => {
+    showAuthFieldErrors({ [field]: message })
+  }
+  const markAuthFieldTouched = (field: AuthField) => {
+    if (field === 'identifier') setAuthIdentifierTouched(true)
+    if (field === 'name') setAuthNameTouched(true)
+    if (field === 'mobile') setAuthMobileTouched(true)
+    if (field === 'email') setAuthEmailTouched(true)
+    if (field === 'password') setAuthPasswordTouched(true)
+    if (field === 'confirmPassword') setAuthConfirmPasswordTouched(true)
+  }
+  const markAuthFieldsTouched = (fields: AuthField[]) => {
+    fields.forEach(markAuthFieldTouched)
+  }
+  const resetAuthTouched = () => {
+    setAuthIdentifierTouched(false)
+    setAuthNameTouched(false)
+    setAuthMobileTouched(false)
+    setAuthEmailTouched(false)
+    resetAuthPasswordState()
+  }
+  const updateAuthField = (field: AuthField, value: string) => {
+    setAuthForm(prev => ({ ...prev, [field]: value }))
+    setAuthError('')
+    clearAuthFieldError(field)
+    // Password and Confirm Password are one pair: editing either box should
+    // not leave a stale "do not match" error under the other box.
+    if (field === 'password') clearAuthFieldError('confirmPassword')
+    if (field === 'confirmPassword') clearAuthFieldError('password')
   }
 
   const limitForTier: Record<Tier, number> = {
@@ -1510,9 +1592,8 @@ export default function App() {
   }
 
   // ---- ADMIN: M Divakar Reddy ----
-  // No hard-coded Admin password: the local fallback exists only after a
-  // successful verified Admin login/reset has stored the current password.
-  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || '' } catch { return '' } }
+  // No hard-coded or locally stored Admin password. Admin access requires a
+  // verified Supabase Auth session linked to the app_admins allowlist row.
   const openAdmin = (tab: typeof adminTab = 'overview') => {
     if (!isAdmin) {
       setAdminId('')
@@ -1635,8 +1716,8 @@ export default function App() {
     if (selected) { setSelected(null); return }
     if (page === 'auth' && authStep !== 'mobile') {
       setAuthStep('mobile')
-      setAuthError('')
-      resetAuthPasswordState()
+      clearAuthErrors()
+      resetAuthTouched()
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
@@ -1682,9 +1763,11 @@ export default function App() {
     setAccounts(prev => {
       const preservedIncoming = incoming.map(account => {
         const local = prev.find(a => a.role === account.role && normalizeMobile(a.mobile) === normalizeMobile(account.mobile))
-        return local?.passwordHash && !account.passwordHash
-          ? { ...account, passwordHash: local.passwordHash, hasPassword: true }
-          : account
+        return {
+          ...account,
+          authUserId: account.authUserId ?? local?.authUserId,
+          authLinked: Boolean(account.authLinked || account.authUserId || local?.authLinked || local?.authUserId),
+        }
       })
       const next = [...prev.filter(a => normalizeMobile(a.mobile) !== normalizeMobile(mobile)), ...preservedIncoming]
       try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
@@ -1812,48 +1895,38 @@ export default function App() {
     if (error) throw error
     return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
   }
-  const loginRemoteAccount = async (role: EntryRole, identifier: string, password: string): Promise<Account | null> => {
-    if (!supabase) return null
-    const { data, error } = await supabase.rpc('login_app_account', {
+  const fetchAuthProfilesForCurrentUser = async (): Promise<Account[]> => {
+    if (!supabase) return []
+    const { data, error } = await supabase.rpc('list_auth_profiles_for_current_user')
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+  }
+  const upsertAuthProfile = async (role: EntryRole, name: string, mobile: string, email: string): Promise<Account> => {
+    if (!supabase) throw new Error('Supabase Auth is not connected. Please try again later.')
+    const { data, error } = await supabase.rpc('upsert_auth_profile', {
       p_role: role,
-      p_identifier: identifier,
-      p_password: password,
+      p_name: name,
+      p_mobile: normalizeMobile(mobile),
+      p_email: email.trim().toLowerCase(),
     })
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role) ?? null
+    const account = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+      .find(a => a.role === role && normalizeMobile(a.mobile) === normalizeMobile(mobile))
+    if (!account) throw new Error('Your Supabase Auth profile was not returned. Please login again.')
+    return account
   }
-  const setRemoteAccountPassword = async (role: EntryRole, mobile: string, password: string): Promise<Account | null> => {
-    if (!supabase) return null
-    const { data, error } = await supabase.rpc('set_app_password', {
-      p_role: role,
-      p_mobile: mobile,
-      p_password: password,
-    })
+  const linkCurrentAdminAuthUser = async (): Promise<boolean> => {
+    if (!supabase) return false
+    const { data, error } = await supabase.rpc('link_current_admin_auth_user')
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
+    return data === true
   }
-  const resetRemoteAccountPassword = async (role: EntryRole, mobile: string, email: string, password: string): Promise<Account | null> => {
+  const fetchAdminAuthEmail = async (identifier: string): Promise<{ email: string; authLinked: boolean } | null> => {
     if (!supabase) return null
-    const { data, error } = await supabase.rpc('reset_app_password_with_registered_details', {
-      p_role: role,
-      p_mobile: mobile,
-      p_email: email,
-      p_password: password,
-    })
+    const { data, error } = await supabase.rpc('get_admin_auth_email', { p_identifier: identifier })
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
-  }
-  const authenticateExistingAccount = async (account: Account, identifier: string, password: string): Promise<Account | null> => {
-    if (supabase) {
-      const remoteAccount = await loginRemoteAccount(account.role, identifier, password)
-      if (remoteAccount) {
-        return account.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: account.passwordHash, hasPassword: true }
-          : remoteAccount
-      }
-    }
-    if (account.passwordHash && await verifyLocalPasswordHash(password, account.passwordHash)) return account
-    return null
+    const row = ((data ?? []) as Array<{ email?: string; auth_linked?: boolean }>)[0]
+    return row?.email ? { email: row.email, authLinked: row.auth_linked === true } : null
   }
   const fetchRemoteCandidateProfiles = async () => {
     if (!supabase) return
@@ -1958,8 +2031,8 @@ export default function App() {
     setAdminDataLoading(true)
     try {
       const [usersResult, purchasesResult] = await Promise.all([
-        supabase.rpc('admin_list_accounts'),
-        supabase.rpc('admin_list_purchases'),
+        supabase.rpc('admin_list_accounts_auth'),
+        supabase.rpc('admin_list_purchases_auth'),
       ])
       if (!usersResult.error && Array.isArray(usersResult.data)) setRemoteAdminUsers(usersResult.data as RemoteAccountRow[])
       if (!purchasesResult.error && Array.isArray(purchasesResult.data)) setRemotePurchases((purchasesResult.data as RemotePurchaseRow[]).map(purchaseFromRemoteRow))
@@ -1975,16 +2048,22 @@ export default function App() {
     if (!isAdmin || (adminTab !== 'plan-settings' && adminTab !== 'payment-settings')) return
     setCommerceDraft(commerceSettings)
     setCommerceSettingsError('')
-    setCommerceAdminPassword(storedAdminPassword())
     // Refresh the editor from the live settings each time Admin opens it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, adminTab])
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
     if (!supabase) return
-    const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
+    if (isAdmin) {
+      const { data, error } = await supabase.rpc('admin_delete_app_account_auth', { p_role: role, p_mobile: normalizeMobile(mobile) })
+      if (error) throw error
+      if (data === false) throw new Error('Account could not be deleted by Admin.')
+      return
+    }
+    const { data, error } = await supabase.rpc('delete_auth_profile', { p_role: role })
     if (error) throw error
+    if (data === false) throw new Error('Account profile could not be deleted.')
   }
-  const completeUserAuth = (account: Account, isNewAccount: boolean) => {
+  const completeUserAuth = (account: Account, isNewAccount: boolean, options?: { silent?: boolean }) => {
     setSelected(null)
     setShowPricing(false)
     setShowRewarded(null)
@@ -1999,19 +2078,114 @@ export default function App() {
     setEntryRole(account.role)
     setGooglePendingProfile(null)
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ role: account.role, mobile: account.mobile })) } catch { /* ignore */ }
-    setAuthError('')
+    clearAuthErrors()
     setAuthStep('mobile')
     setAuthForm(prev => ({ ...prev, identifier: account.mobile, password: '', confirmPassword: '' }))
-    resetAuthPasswordState()
+    resetAuthTouched()
     if (account.role === 'seeker' && !isSeekerProfileComplete(account.profile)) {
       setSeekerProfileForm(account.profile ?? EMPTY_SEEKER_PROFILE)
       setSeekerProfileError('')
-      setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
+      if (!options?.silent) setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
       navigate('profile', { resetHistory: true })
       return
     }
-    setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
+    if (!options?.silent) setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
     navigate(destinationForRole(account.role), { resetHistory: true })
+  }
+  const fetchOrCreateAuthProfiles = async (user: SupabaseUser, preferredRole?: EntryRole | null): Promise<Account[]> => {
+    const profiles = await fetchAuthProfilesForCurrentUser()
+    if (profiles.length > 0) return profiles
+
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
+    const metaRole = metadata.app_role === 'recruiter' || metadata.app_role === 'seeker'
+      ? metadata.app_role as EntryRole
+      : preferredRole ?? null
+    const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+    const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+    if (metaRole && metaName.length >= 3 && isValidMobile(metaMobile) && user.email) {
+      const created = await upsertAuthProfile(metaRole, metaName, metaMobile, user.email)
+      return [created]
+    }
+    return []
+  }
+  const applySupabaseAuthSession = async (
+    user: SupabaseUser,
+    preferredRole?: EntryRole | null,
+    options?: { silent?: boolean; requirePreferredRole?: boolean },
+  ): Promise<Account | null> => {
+    setAuthSessionUser(user)
+
+    const adminLinked = await linkCurrentAdminAuthUser().catch(() => false)
+    if (adminLinked) {
+      setIsAdmin(true)
+      setCurrentUser(null)
+      setHasAuthenticated(false)
+      setEntryRole(null)
+      setAdminError('')
+      setShowAdminForgot(false)
+      setAdminRecoveryMode(false)
+      try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+      return null
+    }
+    setIsAdmin(false)
+
+    const profiles = await fetchOrCreateAuthProfiles(user, preferredRole)
+    if (profiles.length === 0) return null
+    mergeIncomingAccountsState(profiles)
+    if (preferredRole && options?.requirePreferredRole && !profiles.some(a => a.role === preferredRole)) return null
+
+    const storedPreference = loadStoredSession()
+    let chosen = (preferredRole ? profiles.find(a => a.role === preferredRole) : undefined)
+      ?? (storedPreference ? profiles.find(a => a.role === storedPreference.role && normalizeMobile(a.mobile) === storedPreference.mobile) : undefined)
+      ?? profiles[0]
+
+    if (chosen.role === 'seeker') {
+      const recruiterBlock = profiles.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(chosen.mobile))
+      if (recruiterBlock) chosen = recruiterBlock
+    }
+
+    if (user.email && chosen.email.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+      try {
+        chosen = await upsertAuthProfile(chosen.role, chosen.name, chosen.mobile, user.email)
+        mergeIncomingAccountsState([chosen])
+      } catch {
+        // Keep the existing profile if the confirmed Auth email cannot be synced yet.
+      }
+    }
+
+    completeUserAuth({ ...chosen, authUserId: user.id, authLinked: true }, false, { silent: options?.silent })
+    return chosen
+  }
+  const routePasswordRecoverySession = (user: SupabaseUser) => {
+    setAuthSessionUser(user)
+    let target = ''
+    try { target = localStorage.getItem(AUTH_RECOVERY_TARGET_KEY) || '' } catch { /* ignore */ }
+    const userEmail = (user.email ?? '').trim().toLowerCase()
+    try { window.history.replaceState({}, document.title, window.location.pathname) } catch { /* ignore */ }
+
+    if (target === 'admin' || userEmail === ADMIN_REGISTERED_EMAIL) {
+      setAdminRecoveryMode(true)
+      setShowAdminForgot(true)
+      setAdminForgotId('divakar')
+      setAdminForgotEmail(userEmail || ADMIN_REGISTERED_EMAIL)
+      setAdminForgotNew('')
+      setAdminForgotConfirm('')
+      setAdminForgotError('')
+      setAdminError('')
+      navigate('admin', { resetHistory: true })
+      setToast('Email verified ✅ Set your new Admin password.')
+      return
+    }
+
+    const role: EntryRole = target.endsWith(':recruiter') ? 'recruiter' : 'seeker'
+    setEntryRole(role)
+    setAuthRecoveryMode(true)
+    setAuthStep('forgot')
+    clearAuthErrors()
+    resetAuthTouched()
+    setAuthForm(prev => ({ ...prev, email: userEmail || prev.email, identifier: userEmail || prev.identifier, password: '', confirmPassword: '' }))
+    navigate('auth', { resetHistory: true })
+    setToast('Email verified ✅ Set your new password.')
   }
   const enterAs = (r: EntryRole) => {
     setEntryRole(r)
@@ -2019,9 +2193,8 @@ export default function App() {
     const blockedByRecruiter = r === 'seeker' && existingForRole ? accounts.some(a => a.role === 'recruiter' && a.mobile === existingForRole.mobile) : false
     if (hasAuthenticated && currentUser?.role === r && existingForRole && !blockedByRecruiter) { completeUserAuth(existingForRole, false); return }
     setAuthStep('mobile')
-    setAuthError('')
-    setAuthEmailTouched(false)
-    resetAuthPasswordState()
+    clearAuthErrors()
+    resetAuthTouched()
     if (existingForRole) {
       setAuthForm(prev => ({ ...prev, name: prev.name || existingForRole.name, mobile: existingForRole.mobile, email: prev.email || existingForRole.email, identifier: existingForRole.mobile, password: '', confirmPassword: '' }))
     } else if (currentUser && currentUser.role !== r) {
@@ -2036,27 +2209,25 @@ export default function App() {
     // Login / Register button; tap the selected role again to unselect it.
     setEntryRole(prev => (prev === r ? null : r))
     setAuthStep('mobile')
-    setAuthError('')
-    setAuthEmailTouched(false)
-    resetAuthPasswordState()
+    clearAuthErrors()
+    resetAuthTouched()
     setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' }))
   }
   const clearGoogleAuthReturn = async () => {
     try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
     try { window.history.replaceState({}, document.title, window.location.pathname) } catch { /* ignore */ }
-    if (supabase) {
-      try { await supabase.auth.signOut() } catch { /* Google identity is only a short-lived login check */ }
-    }
+    // Supabase Auth is now the real app session, so a successful Google return
+    // intentionally keeps the session instead of signing it out.
   }
   const handleGoogleLogin = async () => {
     if (authLoading || googleAuthLoading) return
     if (!supabase) {
-      setAuthError('Google login needs the Supabase connection. Please login with your mobile number/email and password.')
+      setAuthError('Supabase Auth is not connected. Google login is unavailable right now.')
       return
     }
     const selectedRole = entryRole ?? 'seeker'
     setGoogleAuthLoading(true)
-    setAuthError('')
+    clearAuthErrors()
     try { localStorage.setItem(GOOGLE_ENTRY_ROLE_KEY, selectedRole) } catch { /* ignore */ }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -2068,7 +2239,8 @@ export default function App() {
     if (error) {
       try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
       setGoogleAuthLoading(false)
-      setAuthError('Google login is not available yet. Please login with your mobile number/email and password.')
+      const mapped = mapAuthError(error, 'Google login is not available yet. Please login with your mobile number/email and password.', 'identifier')
+      setAuthError(mapped.message)
     }
     // On success the browser leaves this page for Google, then returns here.
   }
@@ -2076,71 +2248,80 @@ export default function App() {
     if (googleAuthProcessingRef.current) return
     googleAuthProcessingRef.current = true
     setGoogleAuthLoading(true)
-    setAuthError('')
+    clearAuthErrors()
+    setAuthSessionUser(googleUser)
     try {
       const email = (googleUser.email ?? '').trim().toLowerCase()
       if (!email || !isValidEmail(email)) throw new Error('Google did not return a valid email ID')
-      const metadata = googleUser.user_metadata ?? {}
-      const googleName = String(metadata.full_name || metadata.name || '').trim() || email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Google User'
 
-      let availableAccounts = accounts
-      if (supabase) {
-        const remoteAccounts = await fetchRemoteAccountsByIdentifier(email)
-        if (remoteAccounts) {
-          availableAccounts = mergeAccountLists(accounts, remoteAccounts)
-          writeAccounts(availableAccounts)
-        }
-      }
-
-      const matchedAccount = availableAccounts.find(a => a.role === selectedRole && a.email.trim().toLowerCase() === email)
-      if (matchedAccount) {
-        const blockedByRecruiter = selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(matchedAccount.mobile))
-        if (blockedByRecruiter) {
-          await clearGoogleAuthReturn()
-          setEntryRole(selectedRole)
-          setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
-          setAuthStep('mobile')
-          setAuthError('Job Seeker login is blocked because this mobile number has a Recruiter account. Delete the Recruiter account first, or login as Recruiter.')
-          navigate('auth', { resetHistory: true })
-          return
-        }
-
-        if (!hasAccountPassword(matchedAccount)) {
-          await clearGoogleAuthReturn()
-          setEntryRole(selectedRole)
-          setGooglePendingProfile({ role: selectedRole, name: matchedAccount.name, email })
-          setAuthForm({ name: matchedAccount.name, mobile: normalizeMobile(matchedAccount.mobile), email, identifier: email, password: '', confirmPassword: '' })
-          setAuthStep('register')
-          setAuthError('Google verified your email. Set a password once to secure this existing account.')
-          setAuthEmailTouched(false)
-          resetAuthPasswordState()
-          navigate('auth', { resetHistory: true })
-          return
-        }
-
+      if (email === ADMIN_REGISTERED_EMAIL) {
+        await supabase?.auth.signOut().catch(() => undefined)
+        setAuthSessionUser(null)
         await clearGoogleAuthReturn()
-        completeUserAuth(matchedAccount, false)
+        setAuthError('Admin does not use Google login. Please use the separate Admin Login with Admin ID/email and password.')
+        navigate('admin', { resetHistory: true })
         return
       }
 
-      // First Google login: keep the existing registration rules. The user
-      // adds a mobile number and creates a password once, so the same person
-      // can later login with Google OR mobile/email + password.
+      const metadata = googleUser.user_metadata ?? {}
+      const googleName = String(metadata.full_name || metadata.name || '').trim() || email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Google User'
+      const profiles = await fetchAuthProfilesForCurrentUser()
+      if (profiles.length > 0) mergeIncomingAccountsState(profiles)
+      const matchedAccount = profiles.find(a => a.role === selectedRole)
+
+      if (matchedAccount) {
+        if (selectedRole === 'seeker') {
+          const byMobile = await fetchRemoteAccountsByMobile(matchedAccount.mobile).catch(() => null)
+          if (byMobile) {
+            mergeAccountsForMobileState(matchedAccount.mobile, byMobile)
+            const recruiterBlock = byMobile.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(matchedAccount.mobile))
+            if (recruiterBlock) {
+              await supabase?.auth.signOut().catch(() => undefined)
+              setAuthSessionUser(null)
+              setCurrentUser(null)
+              setHasAuthenticated(false)
+              await clearGoogleAuthReturn()
+              setEntryRole(selectedRole)
+              setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+              setAuthStep('mobile')
+              markAuthFieldTouched('identifier')
+              showAuthFieldError('identifier', 'Job Seeker login is blocked because this mobile number has a Recruiter account. Delete the Recruiter account first, or login as Recruiter.')
+              navigate('auth', { resetHistory: true })
+              return
+            }
+          }
+        }
+
+        await clearGoogleAuthReturn()
+        completeUserAuth({ ...matchedAccount, authUserId: googleUser.id, authLinked: true }, false)
+        return
+      }
+
+      const otherProfile = profiles[0]
       await clearGoogleAuthReturn()
       setEntryRole(selectedRole)
-      setGooglePendingProfile({ role: selectedRole, name: googleName, email })
-      setAuthForm({ name: googleName, mobile: '', email, identifier: email, password: '', confirmPassword: '' })
+      setGooglePendingProfile({ role: selectedRole, name: otherProfile?.name || googleName, email })
+      setAuthForm({
+        name: otherProfile?.name || googleName,
+        mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : '',
+        email,
+        identifier: email,
+        password: '',
+        confirmPassword: '',
+      })
       setAuthStep('register')
-      setAuthError('')
-      setAuthEmailTouched(false)
-      resetAuthPasswordState()
+      clearAuthErrors()
+      resetAuthTouched()
       navigate('auth', { resetHistory: true })
-      setToast('Google email verified ✅ Add your mobile number and create a password to finish.')
-    } catch {
+      setToast('Google email verified ✅ Add your mobile number to complete this account profile.')
+    } catch (error) {
+      await supabase?.auth.signOut().catch(() => undefined)
+      setAuthSessionUser(null)
       await clearGoogleAuthReturn()
       setEntryRole(selectedRole)
       setAuthStep('mobile')
-      setAuthError('Google login could not be completed. Please try again, or login with your mobile number/email and password.')
+      const mapped = mapAuthError(error, 'Google login could not be completed. Please try again, or login with your mobile number/email and password.', 'identifier')
+      setAuthError(mapped.message)
       navigate('auth', { resetHistory: true })
     } finally {
       googleAuthProcessingRef.current = false
@@ -2151,28 +2332,36 @@ export default function App() {
     if (authLoading) return
     const selectedRole = entryRole ?? 'seeker'
     const parsedIdentifier = parseAuthIdentifier(authForm.identifier)
-    if (parsedIdentifier.error) { setAuthError(parsedIdentifier.error); return }
     const password = authForm.password
     const passwordError = getPasswordValidationError(password)
-    if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
+    const loginFieldErrors: AuthFieldErrors = {}
+    if (parsedIdentifier.error) loginFieldErrors.identifier = parsedIdentifier.error
+    if (passwordError) loginFieldErrors.password = passwordError
+    if (Object.keys(loginFieldErrors).length > 0) {
+      markAuthFieldsTouched(Object.keys(loginFieldErrors) as AuthField[])
+      showAuthFieldErrors(loginFieldErrors)
+      return
+    }
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Login is unavailable right now. Please try again later.')
+      return
+    }
 
     setAuthLoading(true)
-    setAuthError('')
+    clearAuthErrors()
     try {
       let availableAccounts = accounts
-      if (supabase) {
-        const remoteAccounts = parsedIdentifier.kind === 'mobile'
-          ? await fetchRemoteAccountsByMobile(parsedIdentifier.value)
-          : await fetchRemoteAccountsByIdentifier(parsedIdentifier.value)
-        if (remoteAccounts) {
-          availableAccounts = parsedIdentifier.kind === 'mobile'
-            ? mergeAccountLists(
-                accounts.filter(a => normalizeMobile(a.mobile) !== parsedIdentifier.value),
-                mergeAccountLists(accounts, remoteAccounts).filter(a => normalizeMobile(a.mobile) === parsedIdentifier.value),
-              )
-            : mergeAccountLists(accounts, remoteAccounts)
-          writeAccounts(availableAccounts)
-        }
+      const remoteAccounts = parsedIdentifier.kind === 'mobile'
+        ? await fetchRemoteAccountsByMobile(parsedIdentifier.value)
+        : await fetchRemoteAccountsByIdentifier(parsedIdentifier.value)
+      if (remoteAccounts) {
+        availableAccounts = parsedIdentifier.kind === 'mobile'
+          ? mergeAccountLists(
+              accounts.filter(a => normalizeMobile(a.mobile) !== parsedIdentifier.value),
+              mergeAccountLists(accounts, remoteAccounts).filter(a => normalizeMobile(a.mobile) === parsedIdentifier.value),
+            )
+          : mergeAccountLists(accounts, remoteAccounts)
+        writeAccounts(availableAccounts)
       }
 
       const existingCandidates = availableAccounts.filter(a => a.role === selectedRole && accountMatchesIdentifier(a, parsedIdentifier))
@@ -2184,83 +2373,120 @@ export default function App() {
           ? availableAccounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(blockedMobile))
           : undefined
         if (recruiterAccount && (parsedIdentifier.kind === 'mobile' || existing)) {
-          setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`)
+          markAuthFieldTouched('identifier')
+          showAuthFieldError('identifier', `This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`)
           return
         }
       }
 
-      if (existing) {
-        let authenticatedAccount: Account | null = null
-        const passwordCandidates = existingCandidates.filter(hasAccountPassword)
-        for (const candidate of passwordCandidates) {
-          authenticatedAccount = await authenticateExistingAccount(candidate, parsedIdentifier.value, password)
-          if (authenticatedAccount) break
-        }
-        if (passwordCandidates.length > 0 && !authenticatedAccount) {
-          setAuthPasswordTouched(true)
-          setAuthError('Wrong password. Please check your password or use Forgot Password below.')
-          return
-        }
+      const goToRegister = (otherRoleAccount?: Account) => {
+        setAuthForm(prev => ({
+          name: prev.name || otherRoleAccount?.name || '',
+          mobile: parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : (otherRoleAccount?.mobile || prev.mobile || ''),
+          email: parsedIdentifier.kind === 'email' ? parsedIdentifier.value : (prev.email || otherRoleAccount?.email || ''),
+          identifier: parsedIdentifier.value,
+          password,
+          confirmPassword: '',
+        }))
+        setAuthEmailTouched(false)
+        setAuthPasswordTouched(true)
+        setAuthConfirmPasswordTouched(false)
+        setAuthStep('register')
+        setToast(otherRoleAccount
+          ? 'Account found for the other role — complete this role registration to continue.'
+          : 'New account — first create your Supabase Auth account, confirm email, then login.')
+      }
 
-        const accountForNextStep = authenticatedAccount ?? existing
-        const existingEmailValidation = validateEmailAddress(accountForNextStep.email)
+      if (existing && !existing.authLinked && !existing.authUserId) {
+        const existingEmailValidation = validateEmailAddress(existing.email)
+        setAuthForm({
+          name: existing.name,
+          mobile: normalizeMobile(existing.mobile),
+          email: existingEmailValidation.suggestion ?? existing.email,
+          identifier: parsedIdentifier.value,
+          password,
+          confirmPassword: '',
+        })
+        setAuthStep('register')
         if (existingEmailValidation.error) {
-          setAuthForm({
-            name: accountForNextStep.name,
-            mobile: accountForNextStep.mobile,
-            email: existingEmailValidation.suggestion ?? accountForNextStep.email,
-            identifier: parsedIdentifier.value,
-            password,
-            confirmPassword: hasAccountPassword(accountForNextStep) ? password : '',
-          })
           setAuthEmailTouched(true)
+          showAuthFieldError('email', `Your saved email ID (${existing.email}) is not correct. ${existingEmailValidation.error} Please correct it, create your Supabase Auth account, confirm email, then login.`)
+        } else {
           setAuthPasswordTouched(true)
-          setAuthStep('register')
-          setAuthError(`Your saved email ID (${accountForNextStep.email}) is not correct. ${existingEmailValidation.error} Please correct it to continue.`)
-          setToast('Please correct your email ID to continue.')
-          return
+          showAuthFieldError('confirmPassword', 'This account was created before Supabase Auth. Create your Supabase Auth account once with the same details, confirm your email, then login.')
         }
-
-        if (!hasAccountPassword(accountForNextStep)) {
-          setAuthForm({
-            name: accountForNextStep.name,
-            mobile: accountForNextStep.mobile,
-            email: accountForNextStep.email,
-            identifier: parsedIdentifier.value,
-            password,
-            confirmPassword: '',
-          })
-          setAuthEmailTouched(true)
-          setAuthPasswordTouched(true)
-          setAuthConfirmPasswordTouched(false)
-          setAuthStep('register')
-          setAuthError('This existing account was created before password login. Please set and confirm a password of at least 6 characters.')
-          setToast('Please set a password for your existing account.')
-          return
-        }
-
-        completeUserAuth(accountForNextStep, false)
+        setToast('Create your Supabase Auth account once to move this account to secure Auth login.')
         return
       }
 
-      const otherRoleAccount = availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier))
-      setAuthForm(prev => ({
-        name: prev.name || otherRoleAccount?.name || '',
-        mobile: parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : (otherRoleAccount?.mobile || prev.mobile || ''),
-        email: parsedIdentifier.kind === 'email' ? parsedIdentifier.value : (prev.email || otherRoleAccount?.email || ''),
+      const loginEmail = existing?.email.trim().toLowerCase()
+        || (parsedIdentifier.kind === 'email' ? parsedIdentifier.value : '')
+      if (loginEmail === ADMIN_REGISTERED_EMAIL) {
+        markAuthFieldTouched('identifier')
+        showAuthFieldError('identifier', 'This email ID is reserved for Admin. Please use the separate Admin Login.')
+        return
+      }
+      if (!loginEmail) {
+        goToRegister(availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier)))
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail, password })
+      if (error || !data.user) {
+        const rawMessage = getErrorMessage(error)
+        if (!existing && parsedIdentifier.kind === 'email' && rawMessage.toLowerCase().includes('invalid login credentials')) {
+          goToRegister(availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier)))
+          return
+        }
+        const mapped = mapAuthError(error, 'Unable to login right now. Please check your details and try again.', 'identifier')
+        if (mapped.field) {
+          markAuthFieldTouched(mapped.field)
+          showAuthFieldError(mapped.field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+        return
+      }
+
+      setAuthSessionUser(data.user)
+      const appliedAccount = await applySupabaseAuthSession(data.user, selectedRole, { requirePreferredRole: true })
+      if (appliedAccount) return
+
+      // Authenticated Supabase user exists, but this selected-role profile is
+      // not created yet (first Google/email-confirmation return or second role).
+      const profiles = await fetchAuthProfilesForCurrentUser().catch(() => [])
+      const otherProfile = profiles[0]
+      const metadata = (data.user.user_metadata ?? {}) as Record<string, unknown>
+      const metaName = String(metadata.full_name || metadata.name || '').trim()
+      const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+      const isGoogleUser = data.user.app_metadata?.provider === 'google'
+        || (Array.isArray(data.user.app_metadata?.providers) && data.user.app_metadata.providers.includes('google'))
+      if (isGoogleUser) {
+        setGooglePendingProfile({ role: selectedRole, name: otherProfile?.name || metaName || 'Google User', email: loginEmail })
+      }
+      setAuthForm({
+        name: otherProfile?.name || metaName || authForm.name,
+        mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : (isValidMobile(metaMobile) ? metaMobile : (parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : authForm.mobile)),
+        email: data.user.email?.trim().toLowerCase() || loginEmail,
         identifier: parsedIdentifier.value,
-        password,
+        password: '',
         confirmPassword: '',
-      }))
+      })
       setAuthEmailTouched(false)
-      setAuthPasswordTouched(true)
-      setAuthConfirmPasswordTouched(false)
+      resetAuthTouched()
       setAuthStep('register')
-      setToast(otherRoleAccount
-        ? 'Account found for the other role — complete this role registration to continue.'
-        : 'New account — complete your name, mobile, email and confirm your password.')
-    } catch {
-      setAuthError('Unable to login or check your account right now. Please check your internet connection and try again.')
+      setToast(otherProfile
+        ? 'Complete this role profile to continue with the same Supabase Auth login.'
+        : 'Supabase Auth login verified ✅ Complete your account profile to continue.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to login or check your account right now. Please check your internet connection and try again.', 'identifier')
+      if (mapped.field) {
+        markAuthFieldTouched(mapped.field)
+        showAuthFieldError(mapped.field, mapped.message)
+      } else {
+        setAuthError(mapped.message)
+      }
     } finally {
       setAuthLoading(false)
     }
@@ -2273,150 +2499,198 @@ export default function App() {
     const email = authForm.email.trim().toLowerCase()
     const password = authForm.password
     const confirmPassword = authForm.confirmPassword
-    if (!isValidMobile(mobile)) { setAuthError('Enter a correct 10-digit Indian mobile number.'); return }
-    if (name.length < 3) { setAuthError('Enter your full name (minimum 3 letters).'); return }
+    const isGooglePending = Boolean(
+      googlePendingProfile
+      && googlePendingProfile.role === selectedRole
+      && googlePendingProfile.email === email,
+    )
+    const hasMatchingAuthSession = Boolean(
+      authSessionUser?.email
+      && authSessionUser.email.trim().toLowerCase() === email,
+    )
+    const needsPassword = isGooglePending || !hasMatchingAuthSession
+
+    const registerFieldErrors: AuthFieldErrors = {}
+    const mobileError = getMobileValidationError(authForm.mobile)
+    if (mobileError) registerFieldErrors.mobile = mobileError
+    const nameError = getNameValidationError(name)
+    if (nameError) registerFieldErrors.name = nameError
     const emailError = getEmailValidationError(email)
-    if (emailError) { setAuthEmailTouched(true); setAuthError(emailError); return }
+    if (emailError) registerFieldErrors.email = emailError
+    if (email === ADMIN_REGISTERED_EMAIL) {
+      registerFieldErrors.email = 'This email ID is reserved for Admin. Please use the separate Admin Login.'
+    }
+    if (needsPassword) {
+      const passwordError = getPasswordValidationError(password)
+      if (passwordError) registerFieldErrors.password = passwordError
+      if (password !== confirmPassword) registerFieldErrors.confirmPassword = 'Password and Confirm Password do not match.'
+    }
+    if (Object.keys(registerFieldErrors).length > 0) {
+      markAuthFieldsTouched(Object.keys(registerFieldErrors) as AuthField[])
+      showAuthFieldErrors(registerFieldErrors)
+      return
+    }
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Account creation is unavailable right now. Please try again later.')
+      return
+    }
 
     setAuthLoading(true)
-    setAuthError('')
+    clearAuthErrors()
     try {
       let availableAccounts = accounts
-      if (supabase) {
-        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
-          fetchRemoteAccountsByMobile(mobile),
-          fetchRemoteAccountsByIdentifier(email),
-        ])
-        if (remoteMobileAccounts) {
-          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
-            .filter(a => normalizeMobile(a.mobile) === mobile)
-          availableAccounts = mergeAccountLists(
-            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
-            preservedMobileAccounts,
-          )
-        }
-        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
-        writeAccounts(availableAccounts)
+      const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+        fetchRemoteAccountsByMobile(mobile),
+        fetchRemoteAccountsByIdentifier(email),
+      ])
+      if (remoteMobileAccounts) {
+        const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+          .filter(a => normalizeMobile(a.mobile) === mobile)
+        availableAccounts = mergeAccountLists(
+          accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+          preservedMobileAccounts,
+        )
       }
+      if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
+      writeAccounts(availableAccounts)
 
       if (selectedRole === 'seeker') {
         const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)
-        if (recruiterAccount) { setAuthError(`This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`); return }
+        if (recruiterAccount) {
+          markAuthFieldTouched('mobile')
+          showAuthFieldError('mobile', `This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker registration is blocked until that Recruiter account is deleted.`)
+          return
+        }
       }
 
       const existing = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile)
       const emailOwner = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) !== mobile && a.email.trim().toLowerCase() === email)
       if (emailOwner) {
-        setAuthError('This email ID is already registered with another mobile number for this account type. Login with that email ID and password, or use the correct registered mobile number.')
+        markAuthFieldTouched('email')
+        showAuthFieldError('email', 'This email ID is already registered with another mobile number for this account type. Login with that email ID and password, or use the correct registered mobile number.')
+        return
+      }
+      if (existing && existing.email.trim().toLowerCase() !== email) {
+        markAuthFieldTouched('mobile')
+        showAuthFieldError('mobile', 'This mobile number is already registered with another email ID for this account type. Use the registered email ID or contact support.')
         return
       }
 
-      const needsPasswordSetup = !existing || !hasAccountPassword(existing)
-      const passwordError = getPasswordValidationError(password, needsPasswordSetup ? 'Password' : 'Current password')
-      if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
-      if (needsPasswordSetup && password !== confirmPassword) {
-        setAuthConfirmPasswordTouched(true)
-        setAuthError('Password and Confirm Password do not match.')
-        return
-      }
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
+      const sessionUser = sessionData.session?.user ?? authSessionUser
 
-      if (existing && hasAccountPassword(existing)) {
-        const authenticatedAccount = await authenticateExistingAccount(existing, mobile, password)
-        if (!authenticatedAccount) {
-          setAuthPasswordTouched(true)
-          setAuthError('Wrong current password. Please check your password or use Forgot Password from the login screen.')
+      if (sessionUser) {
+        if ((sessionUser.email ?? '').trim().toLowerCase() !== email) {
+          setAuthError('You are signed in with another email ID. Please logout first, then create this account.')
           return
         }
+        setAuthSessionUser(sessionUser)
+        if (isGooglePending) {
+          suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+          const { data: updatedUserData, error: updateUserError } = await supabase.auth.updateUser({ password })
+          if (updateUserError) throw updateUserError
+          if (updatedUserData.user) setAuthSessionUser(updatedUserData.user)
+        }
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: sessionUser.id, authLinked: true }, !existing)
+        return
+      }
 
-        if (isValidEmail(authenticatedAccount.email)) {
-          completeUserAuth(authenticatedAccount, false)
+      if (existing && (existing.authLinked || existing.authUserId)) {
+        setAuthStep('mobile')
+        setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+        resetAuthTouched()
+        setToast('Account already created in Supabase Auth ✅ Login with your registered mobile/email + password.')
+        return
+      }
+
+      if (isGooglePending) {
+        setAuthError('Your Google session expired. Please use Continue with Google again.')
+        return
+      }
+
+      const passwordError = getPasswordValidationError(password)
+      const signUpPasswordErrors: AuthFieldErrors = {}
+      if (passwordError) signUpPasswordErrors.password = passwordError
+      if (password !== confirmPassword) signUpPasswordErrors.confirmPassword = 'Password and Confirm Password do not match.'
+      if (Object.keys(signUpPasswordErrors).length > 0) {
+        markAuthFieldsTouched(Object.keys(signUpPasswordErrors) as AuthField[])
+        showAuthFieldErrors(signUpPasswordErrors)
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: {
+            full_name: name,
+            name,
+            mobile,
+            app_role: selectedRole,
+          },
+        },
+      })
+      if (error) throw error
+
+      if (data.session?.user) {
+        setAuthSessionUser(data.session.user)
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: data.session.user.id, authLinked: true }, !existing)
+        return
+      }
+
+      const identities = data.user?.identities ?? []
+      if (data.user && identities.length === 0) {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+        if (signInError || !signInData.user) {
+          const mapped = mapAuthError(signInError, 'This email ID already has a Supabase Auth account. Login with its existing password or use Forgot Password.', 'email')
+          if (mapped.field) {
+            markAuthFieldTouched(mapped.field)
+            showAuthFieldError(mapped.field, mapped.message)
+          } else {
+            setAuthError(mapped.message)
+          }
           return
         }
-
-        let correctedAccount: Account = { ...authenticatedAccount, name, email }
-        if (supabase) {
-          const { data, error } = await supabase.rpc('update_app_account_email', {
-            p_role: selectedRole,
-            p_name: name,
-            p_mobile: mobile,
-            p_email: email,
-          })
-          if (error) throw error
-          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-          if (!updated) throw new Error('Corrected account was not returned')
-          correctedAccount = authenticatedAccount.passwordHash && !updated.passwordHash
-            ? { ...updated, passwordHash: authenticatedAccount.passwordHash, hasPassword: true }
-            : updated
-        }
-        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? correctedAccount : a))
-        completeUserAuth(correctedAccount, false)
+        setAuthSessionUser(signInData.user)
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: signInData.user.id, authLinked: true }, !existing)
         return
       }
 
-      if (existing) {
-        let updatedAccount: Account = { ...existing, name, email }
-        if (supabase && !isValidEmail(existing.email)) {
-          const { data, error } = await supabase.rpc('update_app_account_email', {
-            p_role: selectedRole,
-            p_name: name,
-            p_mobile: mobile,
-            p_email: email,
-          })
-          if (error) throw error
-          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-          if (!updated) throw new Error('Corrected account was not returned')
-          updatedAccount = updated
-        }
-        if (supabase) {
-          const remotePasswordAccount = await setRemoteAccountPassword(selectedRole, mobile, password)
-          if (remotePasswordAccount) updatedAccount = { ...remotePasswordAccount, name, email }
-        }
-        updatedAccount = {
-          ...updatedAccount,
-          passwordHash: updatedAccount.passwordHash || await createLocalPasswordHash(password),
-          hasPassword: true,
-        }
-        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
-        completeUserAuth(updatedAccount, false)
-        setToast('Password set successfully ✅ You can now login with your mobile or email and password.')
-        return
-      }
-
-      let account: Account
-      if (supabase) {
-        const { data, error } = await supabase.rpc('register_app_account', {
-          p_role: selectedRole,
-          p_name: name,
-          p_mobile: mobile,
-          p_email: email,
-          p_password: password,
-        })
-        if (error) throw error
-        const created = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-        if (!created) throw new Error('Account was not returned')
-        account = created
+      setGooglePendingProfile(null)
+      setAuthStep('mobile')
+      setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+      resetAuthTouched()
+      setToast('Account created in Supabase Auth ✅ Confirm your email, then login with your registered details.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to create your Supabase Auth account right now. Please check your internet connection and try again.', 'email')
+      if (mapped.field) {
+        const field = mapped.field === 'identifier' ? 'email' : mapped.field
+        markAuthFieldTouched(field)
+        showAuthFieldError(field, mapped.message)
       } else {
-        account = {
-          role: selectedRole,
-          name,
-          mobile,
-          email,
-          passwordHash: await createLocalPasswordHash(password),
-          hasPassword: true,
-          createdAt: new Date().toISOString(),
-        }
+        setAuthError(mapped.message)
       }
-      const updatedAccounts = [...availableAccounts.filter(a => !(a.role === selectedRole && normalizeMobile(a.mobile) === mobile)), account]
-      writeAccounts(updatedAccounts)
-      completeUserAuth(account, true)
-    } catch {
-      setAuthError('Unable to create or update your account right now. Please check your internet connection and try again.')
     } finally {
       setAuthLoading(false)
     }
   }
   const openForgotPassword = () => {
     const parsedIdentifier = parseAuthIdentifier(authForm.identifier)
+    setAuthRecoveryMode(false)
+    try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
     setAuthForm(prev => ({
       ...prev,
       mobile: parsedIdentifier.kind === 'mobile' && !parsedIdentifier.error ? parsedIdentifier.value : prev.mobile,
@@ -2424,9 +2698,8 @@ export default function App() {
       password: '',
       confirmPassword: '',
     }))
-    setAuthError('')
-    setAuthEmailTouched(false)
-    resetAuthPasswordState()
+    clearAuthErrors()
+    resetAuthTouched()
     setAuthStep('forgot')
   }
   const handleForgotPasswordReset = async () => {
@@ -2435,65 +2708,156 @@ export default function App() {
     const mobile = normalizeMobile(authForm.mobile)
     const email = authForm.email.trim().toLowerCase()
     const password = authForm.password
-    if (!isValidMobile(mobile)) { setAuthError('Enter your registered 10-digit mobile number.'); return }
+
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Password reset is unavailable right now. Please try again later.')
+      return
+    }
+
+    if (authRecoveryMode) {
+      const recoveryFieldErrors: AuthFieldErrors = {}
+      const passwordError = getPasswordValidationError(password, 'New password')
+      if (passwordError) recoveryFieldErrors.password = passwordError
+      if (password !== authForm.confirmPassword) recoveryFieldErrors.confirmPassword = 'New password and Confirm Password do not match.'
+      if (Object.keys(recoveryFieldErrors).length > 0) {
+        markAuthFieldsTouched(Object.keys(recoveryFieldErrors) as AuthField[])
+        showAuthFieldErrors(recoveryFieldErrors)
+        return
+      }
+
+      setAuthLoading(true)
+      clearAuthErrors()
+      try {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data, error } = await supabase.auth.updateUser({ password })
+        if (error) throw error
+        const recoveredUser = data.user ?? authSessionUser
+        try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
+        setAuthRecoveryMode(false)
+        if (recoveredUser) {
+          setAuthSessionUser(recoveredUser)
+          const appliedAccount = await applySupabaseAuthSession(recoveredUser, selectedRole, { requirePreferredRole: true })
+          if (appliedAccount) {
+            setToast('Password reset successful ✅ You are now logged in.')
+            return
+          }
+          const profiles = await fetchAuthProfilesForCurrentUser().catch(() => [])
+          const otherProfile = profiles[0]
+          setAuthForm(prev => ({
+            ...prev,
+            name: otherProfile?.name || prev.name,
+            mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : prev.mobile,
+            email: recoveredUser.email?.trim().toLowerCase() || email,
+            identifier: recoveredUser.email?.trim().toLowerCase() || email,
+            password: '',
+            confirmPassword: '',
+          }))
+          setAuthStep('register')
+          setToast('Password updated ✅ Complete your account profile to continue.')
+          return
+        }
+        setAuthStep('mobile')
+        setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+        setToast('Password reset successful ✅ Login with your new password.')
+      } catch (error) {
+        const mapped = mapAuthError(error, 'Unable to reset your password right now. Please check your internet connection and try again.', 'email')
+        if (mapped.field) {
+          const field = mapped.field === 'identifier' ? 'password' : mapped.field
+          markAuthFieldTouched(field)
+          showAuthFieldError(field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+      } finally {
+        setAuthLoading(false)
+      }
+      return
+    }
+
+    const forgotFieldErrors: AuthFieldErrors = {}
+    const mobileError = getMobileValidationError(authForm.mobile)
+    if (mobileError) forgotFieldErrors.mobile = mobileError
     const emailError = getEmailValidationError(email)
-    if (emailError) { setAuthEmailTouched(true); setAuthError(emailError); return }
-    const passwordError = getPasswordValidationError(password, 'New password')
-    if (passwordError) { setAuthPasswordTouched(true); setAuthError(passwordError); return }
-    if (password !== authForm.confirmPassword) {
-      setAuthConfirmPasswordTouched(true)
-      setAuthError('New password and Confirm Password do not match.')
+    if (emailError) forgotFieldErrors.email = emailError
+    if (email === ADMIN_REGISTERED_EMAIL) {
+      forgotFieldErrors.email = 'This email ID is reserved for Admin. Please use Forgot Admin Password from Admin Login.'
+    }
+    if (Object.keys(forgotFieldErrors).length > 0) {
+      markAuthFieldsTouched(Object.keys(forgotFieldErrors) as AuthField[])
+      showAuthFieldErrors(forgotFieldErrors)
       return
     }
 
     setAuthLoading(true)
-    setAuthError('')
+    clearAuthErrors()
     try {
-      const localPasswordHash = await createLocalPasswordHash(password)
       let availableAccounts = accounts
-      if (supabase) {
-        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
-          fetchRemoteAccountsByMobile(mobile),
-          fetchRemoteAccountsByIdentifier(email),
-        ])
-        if (remoteMobileAccounts) {
-          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
-            .filter(a => normalizeMobile(a.mobile) === mobile)
-          availableAccounts = mergeAccountLists(
-            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
-            preservedMobileAccounts,
-          )
-        }
-        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
-        writeAccounts(availableAccounts)
+      const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+        fetchRemoteAccountsByMobile(mobile),
+        fetchRemoteAccountsByIdentifier(email),
+      ])
+      if (remoteMobileAccounts) {
+        const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+          .filter(a => normalizeMobile(a.mobile) === mobile)
+        availableAccounts = mergeAccountLists(
+          accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+          preservedMobileAccounts,
+        )
       }
+      if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
+      writeAccounts(availableAccounts)
 
       if (selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)) {
-        setAuthError('This mobile is registered as a Recruiter account. Select Recruiter above to reset that account password.')
+        markAuthFieldTouched('mobile')
+        showAuthFieldError('mobile', 'This mobile is registered as a Recruiter account. Select Recruiter above to reset that account password.')
         return
       }
 
       const existing = availableAccounts.find(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile && a.email.trim().toLowerCase() === email)
       if (!existing) {
-        setAuthError('The registered mobile number and email ID do not match an account for the selected account type. Please check both details.')
+        markAuthFieldsTouched(['mobile', 'email'])
+        showAuthFieldErrors({
+          mobile: 'Registered mobile number and email ID do not match the same account. Please check this mobile number.',
+          email: 'Registered mobile number and email ID do not match the same account. Please check this email ID.',
+        })
         return
       }
 
-      let updatedAccount: Account = existing
-      if (supabase) {
-        const remoteAccount = await resetRemoteAccountPassword(selectedRole, mobile, email, password)
-        if (!remoteAccount) {
-          setAuthError('The registered mobile number and email ID do not match an account for the selected account type. Please check both details.')
-          return
-        }
-        updatedAccount = remoteAccount
+      if (!existing.authLinked && !existing.authUserId) {
+        setAuthForm(prev => ({
+          ...prev,
+          name: existing.name,
+          mobile: normalizeMobile(existing.mobile),
+          email: existing.email.trim().toLowerCase(),
+          identifier: existing.email.trim().toLowerCase(),
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        showAuthFieldError('confirmPassword', 'This account was created before Supabase Auth. Create your Supabase Auth account once with the same details, confirm your email, then login.')
+        setToast('Create your Supabase Auth account once to set a new secure password.')
+        return
       }
-      updatedAccount = { ...updatedAccount, passwordHash: localPasswordHash, hasPassword: true }
-      writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
-      completeUserAuth(updatedAccount, false)
-      setToast('Password reset successful ✅ You are now logged in.')
-    } catch {
-      setAuthError('Unable to reset your password right now. Please check your internet connection and try again.')
+
+      try { localStorage.setItem(AUTH_RECOVERY_TARGET_KEY, `member:${selectedRole}`) } catch { /* ignore */ }
+      const { error } = await supabase.auth.resetPasswordForEmail(existing.email.trim().toLowerCase(), {
+        redirectTo: window.location.origin,
+      })
+      if (error) throw error
+
+      setAuthStep('mobile')
+      setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+      resetAuthTouched()
+      setToast('Password reset email sent ✅ Open the email link to set your new password.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to send the password reset email right now. Please check your internet connection and try again.', 'email')
+      if (mapped.field) {
+        const field = mapped.field === 'identifier' ? 'email' : mapped.field
+        markAuthFieldTouched(field)
+        showAuthFieldError(field, mapped.message)
+      } else {
+        setAuthError(mapped.message)
+      }
     } finally {
       setAuthLoading(false)
     }
@@ -2560,6 +2924,10 @@ export default function App() {
     if (field === 'email') {
       const emailError = getEmailValidationError(nextValue)
       if (emailError) { setAccountEditError(emailError); return }
+      if (nextValue === ADMIN_REGISTERED_EMAIL) {
+        setAccountEditError('This email is reserved for Admin. Please use another email ID.')
+        return
+      }
       const emailAlreadyUsed = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile) && account.email.trim().toLowerCase() === nextValue)
       if (emailAlreadyUsed) {
         setAccountEditError('This email is already used by another account in this role.')
@@ -2574,20 +2942,40 @@ export default function App() {
     setAccountSaving(true)
     setAccountEditError('')
     try {
-      let updatedAccount: Account = { ...currentUser, [field]: nextValue }
-      if (supabase) {
-        const { data, error } = await supabase.rpc('update_app_account_email', {
-          p_role: currentUser.role,
-          p_name: updatedAccount.name,
-          p_mobile: currentUser.mobile,
-          p_email: updatedAccount.email,
-        })
+      if (!supabase || !authSessionUser) {
+        setAccountEditError('Your Supabase Auth session expired. Please login again to update your account.')
+        return
+      }
+
+      if (field === 'email') {
+        const remoteEmailAccounts = await fetchRemoteAccountsByIdentifier(nextValue).catch(() => null)
+        if (remoteEmailAccounts?.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile))) {
+          setAccountEditError('This email is already used by another account in this role.')
+          return
+        }
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { error } = await supabase.auth.updateUser(
+          { email: nextValue },
+          { emailRedirectTo: window.location.origin },
+        )
         if (error) throw error
-        const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
-        if (!remoteAccount) throw new Error('Updated account was not returned')
-        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
-          : remoteAccount
+        cancelAccountFieldEdit()
+        setToast('Check your new email to confirm the change ✅ Your login email updates after confirmation.')
+        return
+      }
+
+      const { data, error } = await supabase.rpc('update_auth_profile_name', {
+        p_role: currentUser.role,
+        p_name: nextValue,
+      })
+      if (error) throw error
+      const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+        .find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+      if (!remoteAccount) throw new Error('Updated account was not returned')
+      const updatedAccount: Account = {
+        ...remoteAccount,
+        authUserId: authSessionUser.id,
+        authLinked: true,
       }
       const hasLocalAccount = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
       const nextAccounts = hasLocalAccount
@@ -2596,9 +2984,10 @@ export default function App() {
       writeAccounts(nextAccounts)
       setCurrentUser(updatedAccount)
       cancelAccountFieldEdit()
-      setToast(`${field === 'name' ? 'Name' : 'Email'} updated in My Account ✅`)
-    } catch {
-      setAccountEditError('Unable to save this detail right now. Please check it and try again.')
+      setToast('Name updated in My Account ✅')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to save this detail right now. Please check it and try again.', 'email')
+      setAccountEditError(mapped.message)
     } finally {
       setAccountSaving(false)
     }
@@ -2701,6 +3090,20 @@ export default function App() {
     persistSeekerProfilePatch({ resumeName: undefined, resumeSize: undefined, resumeType: undefined, resumeUploadedAt: undefined })
     setToast('Resume removed from your account')
   }
+  const requestRemoveProfilePhoto = () => requestConfirmation({
+    title: 'Remove Profile Photo?',
+    message: 'Are you sure you want to remove your profile photo? You can upload another photo later.',
+    confirmLabel: 'Yes, Remove Photo',
+    tone: 'danger',
+    onConfirm: handleRemoveProfilePhoto,
+  })
+  const requestRemoveResume = () => requestConfirmation({
+    title: 'Remove Resume?',
+    message: 'Are you sure you want to remove the resume saved on this account/device? You can upload it again later.',
+    confirmLabel: 'Yes, Remove Resume',
+    tone: 'danger',
+    onConfirm: handleRemoveResume,
+  })
   const requireCompletedSeekerProfile = () => {
     if (isAdmin) return true
     if (currentUser?.role === 'seeker' && !isSeekerProfileComplete(currentUser.profile)) {
@@ -2772,16 +3175,18 @@ export default function App() {
     try {
       let updatedAccount: Account = { ...currentUser, profile }
       if (supabase) {
-        const { data, error } = await supabase.rpc('update_seeker_profile', {
-          p_mobile: currentUser.mobile,
+        if (!authSessionUser) throw new Error('Supabase Auth session expired. Please login again.')
+        const { data, error } = await supabase.rpc('update_auth_seeker_profile', {
           p_profile: profile,
         })
         if (error) throw error
         const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === 'seeker' && a.mobile === currentUser.mobile)
         if (!remoteAccount) throw new Error('Profile was not returned')
-        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
-          : remoteAccount
+        updatedAccount = {
+          ...remoteAccount,
+          authUserId: authSessionUser.id,
+          authLinked: true,
+        }
       }
       const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
       writeAccounts(updatedAccounts)
@@ -2885,7 +3290,10 @@ export default function App() {
     setSupportTickets(prev => prev.map(ticket => ticket.id === ticketId ? { ...ticket, status, updatedAt } : ticket))
     setToast('Support ticket status updated')
   }
-  const handleUserLogout = () => {
+  const handleUserLogout = async () => {
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
+    setAuthRecoveryMode(false)
     setShowAccountMenu(false)
     setSelectedCandidate(null)
     setSelected(null)
@@ -2903,13 +3311,19 @@ export default function App() {
     try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
     setAuthForm(EMPTY_AUTH_FORM)
     setAuthStep('mobile')
-    setAuthError('')
-    setAuthEmailTouched(false)
-    resetAuthPasswordState()
+    clearAuthErrors()
+    resetAuthTouched()
     setShowMobileMenu(false)
     setToast('Logged out successfully')
     navigate('welcome', { resetHistory: true })
   }
+  const requestUserLogout = () => requestConfirmation({
+    title: 'Logout?',
+    message: `Are you sure you want to logout${currentUser ? ` from ${currentUser.name}'s account` : ''}? You can login again with your registered mobile/email and password.`,
+    confirmLabel: 'Yes, Logout',
+    tone: 'warning',
+    onConfirm: handleUserLogout,
+  })
   const handleDeleteRecruiterAccount = async () => {
     if (!currentUser || currentUser.role !== 'recruiter') return
     const deletedAccount = currentUser
@@ -2919,6 +3333,8 @@ export default function App() {
       setToast('Unable to delete this Recruiter account right now. Please try again.')
       return
     }
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
     const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
     writeAccounts(updatedAccounts)
     deleteStoredUserJobState(deletedAccount)
@@ -2933,9 +3349,8 @@ export default function App() {
     setEntryRole(null)
     setAuthForm({ ...EMPTY_AUTH_FORM, name: deletedAccount.name, mobile: deletedAccount.mobile, email: deletedAccount.email, identifier: deletedAccount.mobile })
     setAuthStep('mobile')
-    setAuthError('')
-    setAuthEmailTouched(false)
-    resetAuthPasswordState()
+    clearAuthErrors()
+    resetAuthTouched()
     setShowDeleteAccountConfirm(false)
     setShowMobileMenu(false)
     setToast('Recruiter account deleted. This mobile can now be used as a Job Seeker.')
@@ -2986,6 +3401,13 @@ export default function App() {
     setShowDeletionRequestModal(false)
     setToast('Your account deletion request has been withdrawn.')
   }
+  const requestWithdrawDeletionRequest = () => requestConfirmation({
+    title: 'Withdraw Deletion Request?',
+    message: 'Are you sure you want to withdraw your pending account-deletion request? Your Job Seeker account will remain active.',
+    confirmLabel: 'Yes, Withdraw Request',
+    tone: 'warning',
+    onConfirm: handleWithdrawDeletionRequest,
+  })
   const handleApproveDeletionRequest = async (request: AccountDeletionRequest) => {
     if (!isAdmin) return
     try {
@@ -3024,67 +3446,170 @@ export default function App() {
     try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
     setToast(`Deletion request rejected for ${request.name}. The Job Seeker account remains active.`)
   }
+  const requestApproveDeletionRequest = (request: AccountDeletionRequest) => requestConfirmation({
+    title: 'Delete Job Seeker Account?',
+    message: `Are you sure you want to permanently delete ${request.name}'s Job Seeker account (+91 ${request.mobile})? This cannot be undone and will free the mobile number.`,
+    confirmLabel: 'Yes, Delete Account',
+    tone: 'danger',
+    onConfirm: () => handleApproveDeletionRequest(request),
+  })
+  const requestRejectDeletionRequest = (request: AccountDeletionRequest) => requestConfirmation({
+    title: 'Reject Deletion Request?',
+    message: `Are you sure you want to reject ${request.name}'s account-deletion request? The account will remain active, and the user can submit a clear new reason later.`,
+    confirmLabel: 'Yes, Reject Request',
+    tone: 'warning',
+    onConfirm: () => handleRejectDeletionRequest(request),
+  })
   const completeAdminLogin = () => {
     setIsAdmin(true)
     setPageHistory([])
-    try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
     setAdminError(''); setAdminPass('')
     setShowAdminForgot(false); setAdminForgotError('')
     setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
   }
   const handleAdminLogin = async () => {
+    if (adminAuthLoading) return
     const enteredId = adminId.trim().toLowerCase()
-    // When Supabase is connected, the Admin account is verified from app_admins.
-    // Any RPC/network problem falls back to this device's Admin password.
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
-        if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
-        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Please try again.'); return }
-      } catch { /* fall through to local Admin login */ }
+    if (!enteredId || !adminPass) {
+      setAdminError('Enter Admin ID/Email and password.')
+      return
     }
-    const idOk = ADMIN_IDS.includes(enteredId)
-    if (idOk && adminPass && storedAdminPassword() && adminPass === storedAdminPassword()) {
+    if (!supabase) {
+      setAdminError('Supabase Auth is not connected. Admin login is unavailable right now.')
+      return
+    }
+
+    setAdminAuthLoading(true)
+    setAdminError('')
+    try {
+      const adminEmailInfo = await fetchAdminAuthEmail(enteredId)
+      if (!adminEmailInfo) {
+        setAdminError('Wrong Admin ID/Email or Password. Please try again.')
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: adminEmailInfo.email,
+        password: adminPass,
+      })
+      if (error || !data.user) {
+        const raw = getErrorMessage(error).toLowerCase()
+        setAdminError(raw.includes('email not confirmed')
+          ? 'Please confirm the Admin email first, then login.'
+          : 'Wrong Admin ID/Email or Password. If the Admin Auth user is not created yet, create the registered Admin email once in Supabase Dashboard → Authentication → Users → Add user, then login here.')
+        return
+      }
+
+      setAuthSessionUser(data.user)
+      const linked = await linkCurrentAdminAuthUser().catch(() => false)
+      if (!linked) {
+        await supabase.auth.signOut().catch(() => undefined)
+        setAuthSessionUser(null)
+        setAdminError('This Supabase Auth user is not authorized as Admin.')
+        return
+      }
+
+      setCurrentUser(null)
+      setHasAuthenticated(false)
+      setEntryRole(null)
+      try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
       completeAdminLogin()
-    } else {
-      setAdminError('Wrong Admin ID/Email or Password. Please try again.')
+    } catch {
+      setAdminError('Unable to login to Admin right now. Please check your internet connection and try again.')
+    } finally {
+      setAdminAuthLoading(false)
     }
   }
   const handleAdminForgotPassword = async () => {
+    if (adminAuthLoading) return
+    if (!supabase) {
+      setAdminForgotError('Supabase Auth is not connected. Password reset is unavailable right now.')
+      return
+    }
+
+    if (adminRecoveryMode) {
+      if (adminForgotNew.length < 6) { setAdminForgotError('New password must be at least 6 characters.'); return }
+      if (adminForgotNew !== adminForgotConfirm) { setAdminForgotError('New password and confirm password do not match.'); return }
+
+      setAdminAuthLoading(true)
+      setAdminForgotError('')
+      try {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data, error } = await supabase.auth.updateUser({ password: adminForgotNew })
+        if (error) throw error
+        const recoveredUser = data.user ?? authSessionUser
+        try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
+        setAdminRecoveryMode(false)
+        setAdminForgotNew('')
+        setAdminForgotConfirm('')
+        if (recoveredUser) {
+          setAuthSessionUser(recoveredUser)
+          const linked = await linkCurrentAdminAuthUser().catch(() => false)
+          if (linked) {
+            setCurrentUser(null)
+            setHasAuthenticated(false)
+            setEntryRole(null)
+            try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+            completeAdminLogin()
+            setToast('Admin password reset successful 🔐 You are now logged in.')
+            return
+          }
+          await supabase.auth.signOut().catch(() => undefined)
+          setAuthSessionUser(null)
+        }
+        setShowAdminForgot(false)
+        setAdminId('')
+        setAdminPass('')
+        setAdminError('')
+        setToast('Admin password reset successful 🔐 Login with your new password')
+      } catch (error) {
+        const mapped = mapAuthError(error, 'Unable to reset Admin password right now. Please try again.')
+        setAdminForgotError(mapped.message)
+      } finally {
+        setAdminAuthLoading(false)
+      }
+      return
+    }
+
     const forgotId = adminForgotId.trim().toLowerCase()
     const forgotEmail = adminForgotEmail.trim().toLowerCase()
     if (!forgotId || !forgotEmail) { setAdminForgotError('Enter Admin ID and registered Admin email.'); return }
     const forgotEmailError = getEmailValidationError(forgotEmail)
     if (forgotEmailError) { setAdminForgotError(forgotEmailError); return }
-    if (adminForgotNew.length < 6) { setAdminForgotError('New password must be at least 6 characters.'); return }
-    if (adminForgotNew !== adminForgotConfirm) { setAdminForgotError('New password and confirm password do not match.'); return }
-    const localDetailsOk = (forgotId === 'divakar' || forgotId === 'admin') && forgotEmail === ADMIN_REGISTERED_EMAIL
-    const finishAdminReset = () => {
-      try { localStorage.setItem(ADMIN_PASS_KEY, adminForgotNew) } catch { /* ignore */ }
+
+    setAdminAuthLoading(true)
+    setAdminForgotError('')
+    try {
+      const adminEmailInfo = await fetchAdminAuthEmail(forgotId)
+      if (!adminEmailInfo || adminEmailInfo.email.trim().toLowerCase() !== forgotEmail) {
+        setAdminForgotError('Admin ID and registered Admin email do not match.')
+        return
+      }
+      try { localStorage.setItem(AUTH_RECOVERY_TARGET_KEY, 'admin') } catch { /* ignore */ }
+      const { error } = await supabase.auth.resetPasswordForEmail(adminEmailInfo.email, {
+        redirectTo: window.location.origin,
+      })
+      if (error) throw error
+      setShowAdminForgot(false)
       setAdminId('')
       setAdminPass('')
       setAdminError('')
-      setAdminForgotError('')
-      setAdminForgotNew('')
-      setAdminForgotConfirm('')
-      setShowAdminForgot(false)
-      setToast('Admin password reset successfully 🔐 Login with your new password')
+      setToast('Admin password reset email requested ✅ If the Admin Auth user exists, open the email link to set a new password.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to send Admin password reset email right now. Please try again.')
+      setAdminForgotError(mapped.message)
+    } finally {
+      setAdminAuthLoading(false)
     }
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('admin_reset_password_with_registered_details', { p_admin_id: forgotId, p_email: forgotEmail, p_new_password: adminForgotNew })
-        if (!error && data === true) { finishAdminReset(); return }
-        if (!error && data === false) { setAdminForgotError('Admin ID and registered Admin email do not match.'); return }
-      } catch { /* fall through to local Admin reset */ }
-    }
-    if (localDetailsOk) { finishAdminReset(); return }
-    setAdminForgotError('Admin ID and registered Admin email do not match.')
   }
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
     const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
+    setAdminRecoveryMode(false)
     setAdminId('')
     setIsAdmin(false)
-    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminPass('')
     setAdminError('')
     setShowAdminPass(false)
@@ -3106,6 +3631,13 @@ export default function App() {
     setToast('Admin logged out. See you soon, Divakar Reddy!')
     navigate(destination, { resetHistory: true })
   }
+  const requestAdminLogout = () => requestConfirmation({
+    title: 'Admin Logout?',
+    message: 'Are you sure you want to logout from the Admin dashboard? You will need the Admin ID/email and Supabase Auth password to login again.',
+    confirmLabel: 'Yes, Logout',
+    tone: 'warning',
+    onConfirm: handleAdminLogout,
+  })
   const handlePostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
     const contactEmailError = getEmailValidationError(newJob.email)
@@ -3140,6 +3672,18 @@ export default function App() {
     setToast(`Vacancy published! ${job.company} • ${job.hq} is now LIVE on Jobs page ✅`)
     setAdminTab('manage')
   }
+  const requestPostJob = () => {
+    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
+    const contactEmailError = getEmailValidationError(newJob.email)
+    if (contactEmailError) { setToast(contactEmailError); return }
+    requestConfirmation({
+      title: 'Publish Vacancy LIVE?',
+      message: `Are you sure you want to publish ${newJob.company.trim()} • ${newJob.title.trim() || 'Medical Representative'} LIVE for all Job Seekers now?`,
+      confirmLabel: 'Yes, Publish LIVE',
+      tone: 'primary',
+      onConfirm: handlePostJob,
+    })
+  }
   const handleDeleteJob = (id: string) => {
     setJobs(prev => prev.filter(j => j.id !== id))
     setSaved(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -3153,18 +3697,45 @@ export default function App() {
     try { localStorage.setItem(ADMIN_JOBS_KEY, '[]') } catch { /* ignore */ }
     setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
-  const handleChangePassword = () => {
-    if (!passForm.current || !storedAdminPassword() || passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
+  const requestDeleteJob = (job: Job) => requestConfirmation({
+    title: 'Delete Vacancy?',
+    message: `Are you sure you want to delete ${job.company} • ${job.title} (${job.hq})? This live vacancy will be removed for Job Seekers.`,
+    confirmLabel: 'Yes, Delete Vacancy',
+    tone: 'danger',
+    onConfirm: () => handleDeleteJob(job.id),
+  })
+  const requestClearAllVacancies = () => requestConfirmation({
+    title: 'Clear All Vacancies?',
+    message: `Are you sure you want to delete all ${jobs.length} live ${jobs.length === 1 ? 'vacancy' : 'vacancies'}? Job Seekers will no longer see them. This cannot be undone.`,
+    confirmLabel: 'Yes, Clear All',
+    tone: 'danger',
+    onConfirm: handleClearAllVacancies,
+  })
+  const handleChangePassword = async () => {
+    if (!supabase || !authSessionUser) { setToast('Admin Auth session expired. Please login again.'); return }
+    if (!passForm.current) { setToast('Current password is wrong'); return }
     if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
     if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
+
     const nextPassword = passForm.next
     const currentPassword = passForm.current
-    try { localStorage.setItem(ADMIN_PASS_KEY, nextPassword) } catch { /* ignore */ }
-    if (supabase) {
-      void supabase.rpc('admin_change_password', { p_admin_id: adminId.trim().toLowerCase() || 'divakar', p_current_password: currentPassword, p_new_password: nextPassword }).then(() => undefined, () => undefined)
+    try {
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: ADMIN_REGISTERED_EMAIL,
+        password: currentPassword,
+      })
+      if (error || !data.user) { setToast('Current password is wrong'); return }
+      setAuthSessionUser(data.user)
+      const linked = await linkCurrentAdminAuthUser().catch(() => false)
+      if (!linked) { setToast('This Supabase Auth user is not authorized as Admin.'); return }
+      const { error: updateError } = await supabase.auth.updateUser({ password: nextPassword })
+      if (updateError) throw updateError
+      setPassForm({ current: '', next: '', confirm: '' })
+      setToast('Admin password changed successfully 🔐 Use it from next login')
+    } catch {
+      setToast('Unable to change Admin password right now. Please try again.')
     }
-    setPassForm({ current: '', next: '', confirm: '' })
-    setToast('Admin password changed successfully 🔐 Use it from next login')
   }
   // ---- ADMIN: JOB SEEKER PLANS + PAYMENT RECEIVING SOURCE ----
   const updateCommercePlanDraft = (planId: PaidPlanId, patch: Partial<PaidPlanConfig>) => {
@@ -3180,6 +3751,23 @@ export default function App() {
   }
   const updateCommercePaymentDraft = (patch: Partial<PaymentReceivingSettings>) => {
     setCommerceDraft(prev => ({ ...prev, payment: { ...prev.payment, ...patch } }))
+  }
+  const requestRemovePaymentQr = () => requestConfirmation({
+    title: 'Remove Payment QR?',
+    message: 'Are you sure you want to remove this payment QR image? The removal will apply after you save Payment Settings.',
+    confirmLabel: 'Yes, Remove QR',
+    tone: 'danger',
+    onConfirm: () => updateCommercePaymentDraft({ qrImageUrl: '' }),
+  })
+  const requestResetCommerceChanges = () => {
+    if (JSON.stringify(commerceDraft) === JSON.stringify(commerceSettings)) { setCommerceSettingsError(''); return }
+    requestConfirmation({
+      title: 'Reset Changes?',
+      message: 'Are you sure you want to discard the unsaved plan/payment setting changes on this screen?',
+      confirmLabel: 'Yes, Reset Changes',
+      tone: 'warning',
+      onConfirm: () => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') },
+    })
   }
   const handlePaymentQrFile = async (file: File | undefined) => {
     if (!file || commerceQrUploading) return
@@ -3203,28 +3791,26 @@ export default function App() {
     const normalized = normalizeCommerceSettings({ ...commerceDraft, updatedAt: new Date().toISOString() })
     const validationError = validateCommerceSettings(normalized)
     if (validationError) { setCommerceSettingsError(validationError); return }
-    if (supabase && !commerceAdminPassword) {
-      setCommerceSettingsError('Enter the current Admin password to securely save these payment settings to Supabase.')
+    if (supabase && (!isAdmin || !authSessionUser)) {
+      setCommerceSettingsError('Admin Auth session expired. Please login to Admin again to save these settings.')
       return
     }
     setCommerceSettingsSaving(true)
     setCommerceSettingsError('')
     try {
       if (supabase) {
-        const { data, error } = await supabase.rpc('set_app_setting_admin', {
-          p_admin_id: 'divakar',
-          p_admin_password: commerceAdminPassword,
+        const { data, error } = await supabase.rpc('set_app_setting_admin_auth', {
           p_setting_key: 'commerce',
           p_payload: normalized,
         })
         if (error) throw error
-        if (data !== true) throw new Error('Admin password was not accepted. Payment settings were not saved.')
+        if (data !== true) throw new Error('Admin Auth session was not accepted. Payment settings were not saved.')
       }
       setCommerceSettings(normalized)
       setCommerceDraft(normalized)
       setToast(supabase ? 'Plans & payment receiving source saved live ✅ Job Seekers will see the new price, validity and payment details.' : 'Plans & payment receiving source saved on this device ✅')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save these settings. Please check the Admin password and try again.'
+      const message = error instanceof Error ? error.message : 'Unable to save these settings. Please check your Admin session and try again.'
       setCommerceSettingsError(message)
     } finally {
       setCommerceSettingsSaving(false)
@@ -3236,8 +3822,7 @@ export default function App() {
     if (settings.payment.upiEnabled && settings.payment.upiId.trim()) methods.push({ id: 'upi', label: 'UPI' })
     if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) methods.push({ id: 'payment-link', label: 'Payment Link' })
     if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) methods.push({ id: 'bank', label: 'Bank Transfer' })
-    if (settings.payment.demoCheckoutEnabled) methods.push({ id: 'demo', label: 'Demo Checkout' })
-    return methods.length > 0 ? methods : [{ id: 'demo', label: 'Demo Checkout' }]
+    return methods
   }
   const getPlanCheckoutExpiry = (planId: PaidPlanId, validityDays: number): string => {
     const now = Date.now()
@@ -3271,7 +3856,7 @@ export default function App() {
       setShowPricing(false)
       if (isAdmin) {
         openAdmin('plan-settings')
-        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to test a purchase.')
+        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to purchase a plan.')
       } else {
         setToast('Please login as a Job Seeker to purchase a plan.')
       }
@@ -3283,8 +3868,13 @@ export default function App() {
       setToast(`Your ${activePurchaseNow.planName} plan is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Starter can be purchased after it expires.`)
       return
     }
+    const availableMethods = getAvailableCheckoutMethods(latestSettings)
+    if (availableMethods.length === 0) {
+      setToast('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+      return
+    }
     setCheckoutPlan(nextTier)
-    setCheckoutMethod(getAvailableCheckoutMethods(latestSettings)[0].id)
+    setCheckoutMethod(availableMethods[0].id)
     setCheckoutReference('')
     setCheckoutError('')
     setShowPricing(false)
@@ -3294,15 +3884,17 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) { setCheckoutError('Please login as a Job Seeker to activate this plan.'); return }
     const planConfig = commerceSettings.plans[checkoutPlan]
     if (!planConfig.enabled) { setCheckoutError(`${planConfig.name} is not available for purchase right now.`); return }
+    if (!checkoutMethod || !getAvailableCheckoutMethods(commerceSettings).some(method => method.id === checkoutMethod)) {
+      setCheckoutError('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+      return
+    }
     const enteredReference = checkoutReference.trim().replace(/\s+/g, '')
-    if (checkoutMethod !== 'demo' && enteredReference.length < 6) {
+    if (enteredReference.length < 6) {
       setCheckoutError('Enter the UPI/UTR/transaction reference shown after payment (minimum 6 characters).')
       return
     }
     if (enteredReference.length > 100) { setCheckoutError('Payment reference is too long. Please enter only the transaction/UTR reference.'); return }
-    const transactionId = checkoutMethod === 'demo'
-      ? 'TXN' + Date.now().toString(36).toUpperCase()
-      : enteredReference
+    const transactionId = enteredReference
     const knownPurchases = [...purchases, ...(remotePurchases ?? [])]
     if (knownPurchases.some(record => record.transactionId.trim().toLowerCase() === transactionId.toLowerCase())) {
       setCheckoutError('This payment reference has already been used. Enter the new transaction/UTR reference for this payment.')
@@ -3312,9 +3904,7 @@ export default function App() {
       ? 'UPI'
       : checkoutMethod === 'payment-link'
         ? 'Payment Link'
-        : checkoutMethod === 'bank'
-          ? 'Bank Transfer'
-          : 'In-App Checkout (Demo)'
+        : 'Bank Transfer'
     const now = new Date()
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
@@ -3408,82 +3998,169 @@ export default function App() {
     setPendingJobs(prev => prev.filter(x => x.id !== id))
     setToast('Vacancy rejected by Admin — it will not go live')
   }
+  const requestApproveJob = (pend: PendingJob) => requestConfirmation({
+    title: 'Approve & Publish LIVE?',
+    message: `Are you sure you want to approve ${pend.company} • ${pend.title} (${pend.hq}) and make it LIVE for all Job Seekers?`,
+    confirmLabel: 'Yes, Publish LIVE',
+    tone: 'primary',
+    onConfirm: () => handleApproveJob(pend),
+  })
+  const requestRejectJob = (job: PendingJob) => requestConfirmation({
+    title: 'Reject Vacancy?',
+    message: `Are you sure you want to reject ${job.company} • ${job.title} (${job.hq})? It will be removed from Pending Approvals and will not go live.`,
+    confirmLabel: 'Yes, Reject Vacancy',
+    tone: 'danger',
+    onConfirm: () => handleRejectJob(job.id),
+  })
   useEffect(() => {
     if (page !== 'jobs') setShowFilters(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [page])
 
   useEffect(() => {
-    if (!supabase || remoteSessionRefreshRef.current) return
-    remoteSessionRefreshRef.current = true
-    const storedSession = loadStoredSession()
-    if (!storedSession) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const remoteAccounts = await fetchRemoteAccountsByMobile(storedSession.mobile)
-        if (cancelled || !remoteAccounts) return
-        mergeAccountsForMobileState(storedSession.mobile, remoteAccounts)
-        const remoteAccount = remoteAccounts.find(a => a.role === storedSession.role)
-        const localAccount = accounts.find(a => a.role === storedSession.role && normalizeMobile(a.mobile) === storedSession.mobile)
-        const account = remoteAccount && localAccount?.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: localAccount.passwordHash, hasPassword: true }
-          : remoteAccount
-        const blockedByRecruiter = storedSession.role === 'seeker' && remoteAccounts.some(a => a.role === 'recruiter' && a.mobile === storedSession.mobile)
-        if (!account || blockedByRecruiter || !isValidEmail(account.email) || !hasAccountPassword(account)) {
-          try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-          setCurrentUser(null)
-          setHasAuthenticated(false)
-          setEntryRole(storedSession.role)
-          navigate('welcome', { resetHistory: true })
-          return
-        }
-        setCurrentUser(account)
-        setHasAuthenticated(true)
-        setEntryRole(account.role)
-        if (page === 'welcome') navigate(getAccountDestination(account), { resetHistory: true })
-      } catch {
-        // Keep the locally saved login when the device is offline.
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
     if (!supabase) return
-    let pendingRole: EntryRole | null = null
-    try {
-      const storedRole = localStorage.getItem(GOOGLE_ENTRY_ROLE_KEY)
-      if (storedRole === 'seeker' || storedRole === 'recruiter') pendingRole = storedRole
-    } catch { /* ignore */ }
-    if (!pendingRole) return
+    let cancelled = false
+
+    const readStoredValue = (key: string): string => {
+      try { return localStorage.getItem(key) || '' } catch { return '' }
+    }
+    const pendingGoogleRoleRaw = readStoredValue(GOOGLE_ENTRY_ROLE_KEY)
+    const pendingGoogleRole: EntryRole | null = pendingGoogleRoleRaw === 'seeker' || pendingGoogleRoleRaw === 'recruiter'
+      ? pendingGoogleRoleRaw
+      : null
+    const recoveryTargetAtLoad = readStoredValue(AUTH_RECOVERY_TARGET_KEY)
 
     const searchParams = new URLSearchParams(window.location.search)
     const hashParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '')
     const oauthError = searchParams.get('error_description') || searchParams.get('error') || hashParams.get('error_description') || hashParams.get('error')
     if (oauthError) {
       void clearGoogleAuthReturn()
-      setEntryRole(pendingRole)
-      setAuthStep('mobile')
-      setAuthError('Google login was not completed. If this continues, the Google provider may not be enabled yet. You can login with your mobile number/email and password.')
-      navigate('auth', { resetHistory: true })
-      return
+      if (recoveryTargetAtLoad === 'admin') {
+        setShowAdminForgot(true)
+        setAdminForgotError('This password reset link is expired or invalid. Please request a new Admin password reset email.')
+        navigate('admin', { resetHistory: true })
+        return
+      }
+      if (recoveryTargetAtLoad.startsWith('member:')) {
+        const role: EntryRole = recoveryTargetAtLoad.endsWith(':recruiter') ? 'recruiter' : 'seeker'
+        setEntryRole(role)
+        setAuthStep('forgot')
+        setAuthError('This password reset link is expired or invalid. Please request a new password reset email.')
+        navigate('auth', { resetHistory: true })
+        return
+      }
+      if (pendingGoogleRole) {
+        setEntryRole(pendingGoogleRole)
+        setAuthStep('mobile')
+        setAuthError('Google login was not completed. If this continues, the Google provider may not be enabled yet. You can login with your mobile number/email and password.')
+        navigate('auth', { resetHistory: true })
+        return
+      }
     }
 
-    let cancelled = false
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!cancelled && session?.user) {
-        const googleUser = session.user
-        // Supabase recommends deferring other Supabase calls out of this
-        // callback; the account lookup runs on the next tick.
-        window.setTimeout(() => { if (!cancelled) void completeGoogleLogin(googleUser, pendingRole) }, 0)
+    const handleSession = async (session: { user: SupabaseUser } | null, event: string) => {
+      if (cancelled) return
+      const user = session?.user ?? null
+      setAuthSessionUser(user)
+
+      if (event === 'PASSWORD_RECOVERY' && user) {
+        routePasswordRecoverySession(user)
+        return
       }
-    })
-    void supabase.auth.getUser().then(({ data }) => {
-      if (!cancelled && data.user) void completeGoogleLogin(data.user, pendingRole)
+      if (!user) {
+        if (event === 'SIGNED_OUT') {
+          authSessionSyncKeyRef.current = ''
+          setCurrentUser(null)
+          setHasAuthenticated(false)
+          setIsAdmin(false)
+          setAuthRecoveryMode(false)
+          setAdminRecoveryMode(false)
+        }
+        return
+      }
+      if (event === 'TOKEN_REFRESHED') return
+      if (event === 'SIGNED_IN' && suppressAuthSessionSyncUntilRef.current > Date.now()) return
+
+      const recoveryTarget = readStoredValue(AUTH_RECOVERY_TARGET_KEY)
+      if (recoveryTarget && event === 'USER_UPDATED') return
+
+      const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
+      const metaRole: EntryRole | null = metadata.app_role === 'seeker' || metadata.app_role === 'recruiter'
+        ? metadata.app_role as EntryRole
+        : null
+      const storedPreference = loadStoredSession()
+      const preferredRole: EntryRole | null = pendingGoogleRole ?? metaRole ?? storedPreference?.role ?? null
+      const syncKey = `${user.id}:${preferredRole ?? ''}:${user.email ?? ''}`
+      if (authSessionSyncKeyRef.current === syncKey) return
+      authSessionSyncKeyRef.current = syncKey
+
+      try {
+        const providers = Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers : []
+        const isGoogleUser = user.app_metadata?.provider === 'google' || providers.includes('google')
+        if (isGoogleUser) {
+          await completeGoogleLogin(user, preferredRole ?? 'seeker')
+          return
+        }
+
+        const appliedAccount = await applySupabaseAuthSession(user, preferredRole, { silent: event === 'INITIAL_SESSION' })
+        if (appliedAccount) return
+        if ((user.email ?? '').trim().toLowerCase() === ADMIN_REGISTERED_EMAIL) return
+
+        const roleForProfile = preferredRole ?? 'seeker'
+        const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+        const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+        setEntryRole(roleForProfile)
+        setAuthForm(prev => ({
+          ...prev,
+          name: metaName || prev.name,
+          mobile: isValidMobile(metaMobile) ? metaMobile : prev.mobile,
+          email: user.email?.trim().toLowerCase() || prev.email,
+          identifier: user.email?.trim().toLowerCase() || prev.identifier,
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        navigate('auth', { resetHistory: true })
+        if (event !== 'INITIAL_SESSION') setToast('Supabase Auth login verified ✅ Complete your account profile to continue.')
+      } catch (error) {
+        if (cancelled) return
+        const roleForProfile = preferredRole ?? 'seeker'
+        const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+        const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+        setEntryRole(roleForProfile)
+        setAuthForm(prev => ({
+          ...prev,
+          name: metaName || prev.name,
+          mobile: isValidMobile(metaMobile) ? metaMobile : prev.mobile,
+          email: user.email?.trim().toLowerCase() || prev.email,
+          identifier: user.email?.trim().toLowerCase() || prev.identifier,
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        const mapped = mapAuthError(error, 'Unable to complete your Supabase Auth profile right now. Please check your details and try again.', 'email')
+        if (mapped.field) {
+          const field = mapped.field === 'identifier' ? 'email' : mapped.field
+          markAuthFieldTouched(field)
+          showAuthFieldError(field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+        navigate('auth', { resetHistory: true })
+      }
+    }
+
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled) void handleSession(data.session, 'INITIAL_SESSION')
     }, () => undefined)
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Defer other Supabase calls out of the auth callback.
+      window.setTimeout(() => { if (!cancelled) void handleSession(session, event) }, 0)
+    })
+
     return () => { cancelled = true; subscription.unsubscribe() }
-    // Run once when the browser returns from Google.
+    // Restore/handle the Supabase Auth session once on app load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -3521,7 +4198,7 @@ export default function App() {
     }
 
     void Promise.all([
-      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))),
+      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))),
       loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs(), setPendingJobs),
       loadCollection<SupportTicket>('support_tickets', loadSupportTickets(), setSupportTickets),
       loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests(), setDeletionRequests),
@@ -3861,16 +4538,31 @@ export default function App() {
     : authRegisterExistingAccount
   const authExistingEmailValidation = authExistingAccount ? validateEmailAddress(authExistingAccount.email) : null
   const authExistingEmailError = authExistingEmailValidation?.error ?? null
-  const authExistingNeedsPasswordSetup = Boolean(authExistingAccount && !hasAccountPassword(authExistingAccount))
-  const authRegisterNeedsPasswordSetup = !authRegisterExistingAccount || !hasAccountPassword(authRegisterExistingAccount)
+  const authExistingNeedsPasswordSetup = Boolean(authExistingAccount && !authExistingAccount.authLinked && !authExistingAccount.authUserId)
+  const authRegisterGooglePending = Boolean(
+    googlePendingProfile
+    && entryRole === googlePendingProfile.role
+    && authForm.email.trim().toLowerCase() === googlePendingProfile.email,
+  )
+  const authRegisterHasAuthSession = Boolean(
+    authSessionUser?.email
+    && authForm.email.trim().toLowerCase() === authSessionUser.email.trim().toLowerCase(),
+  )
+  const authRegisterNeedsPasswordSetup = authRegisterGooglePending || !authRegisterHasAuthSession
+  const authIdentifierFieldError = authFieldErrors.identifier ?? (authIdentifierTouched ? parsedAuthIdentifier.error : null)
+  const authNameFieldError = authFieldErrors.name ?? (authNameTouched ? getNameValidationError(authForm.name) : null)
+  const authMobileFieldError = authFieldErrors.mobile ?? (authMobileTouched ? getMobileValidationError(authForm.mobile) : null)
   const authEmailValidation = validateEmailAddress(authForm.email)
-  const showAuthEmailError = authEmailTouched && Boolean(authEmailValidation.error)
-  const showAuthEmailSuccess = authEmailTouched && Boolean(authForm.email.trim()) && !authEmailValidation.error
+  const authEmailFieldError = authFieldErrors.email ?? (authEmailTouched ? authEmailValidation.error : null)
+  const showAuthEmailError = Boolean(authEmailFieldError)
+  const showAuthEmailSuccess = authEmailTouched && Boolean(authForm.email.trim()) && !authEmailValidation.error && !authFieldErrors.email
   const authPasswordError = getPasswordValidationError(authForm.password, authStep === 'forgot' ? 'New password' : 'Password')
-  const showAuthPasswordError = authPasswordTouched && Boolean(authPasswordError)
-  const showAuthPasswordSuccess = authPasswordTouched && Boolean(authForm.password) && !authPasswordError
+  const authPasswordFieldError = authFieldErrors.password ?? (authPasswordTouched ? authPasswordError : null)
+  const showAuthPasswordError = Boolean(authPasswordFieldError)
+  const showAuthPasswordSuccess = authPasswordTouched && Boolean(authForm.password) && !authPasswordError && !authFieldErrors.password
   const authConfirmPasswordError = authForm.confirmPassword !== authForm.password ? 'Confirm Password does not match.' : null
-  const showAuthConfirmPasswordError = authConfirmPasswordTouched && Boolean(authConfirmPasswordError)
+  const authConfirmPasswordFieldError = authFieldErrors.confirmPassword ?? (authConfirmPasswordTouched ? authConfirmPasswordError : null)
+  const showAuthConfirmPasswordError = Boolean(authConfirmPasswordFieldError)
   const authLookupIdentifier = authStep === 'mobile'
     ? (parsedAuthIdentifier.error ? '' : parsedAuthIdentifier.value)
     : (isValidMobile(normalizedAuthMobile) ? normalizedAuthMobile : '')
@@ -3933,7 +4625,7 @@ export default function App() {
       return { id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: publicProfile }
     })
   const registeredCandidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? remoteCandidateProfiles : localRegisteredCandidateProfiles
-  // Only real registered Job Seeker profiles are shown — no sample/demo profiles.
+  // Only real registered Job Seeker profiles are shown — no sample profiles.
   const candidateProfiles: CandidateProfileView[] = registeredCandidateProfiles
   const candidateStates = ['All India', ...Array.from(new Set(candidateProfiles.map(c => c.profile.state).filter(Boolean)))]
   const filteredCandidateProfiles = candidateProfiles.filter(c => {
@@ -4216,7 +4908,7 @@ export default function App() {
     const steps = [
       { title: 'Choose a plan', text: 'Open Plans & Benefits and select Free, Starter or Pro.', icon: Crown },
       { title: 'Check the amount', text: 'Confirm the plan name, exact amount, validity and receiver name.', icon: Eye },
-      { title: 'Make the payment', text: 'Use the UPI, payment link, bank or demo option switched on by Admin.', icon: Wallet },
+      { title: 'Make the payment', text: 'Use the UPI, payment link or bank option switched on by Admin.', icon: Wallet },
       { title: 'Save the reference', text: 'Copy the UPI/UTR/transaction number. Use a new reference for every payment.', icon: FileText },
       { title: 'Plan auto-activates', text: 'Tap “Payment Done”. The new expiry date will appear in Payment & My Plan.', icon: BadgeCheck },
     ]
@@ -4266,15 +4958,6 @@ export default function App() {
         summary: 'Transfer the exact plan amount to the Admin bank account shown at checkout.',
         detail: `Receiver: ${paymentSettings.receiverName}. Full bank details are shown after plan selection.`,
         note: 'Enter the UTR/NEFT/IMPS reference after transfer.',
-      },
-      {
-        id: 'demo' as CheckoutMethod,
-        title: 'Demo Checkout',
-        icon: Info,
-        available: paymentSettings.demoCheckoutEnabled,
-        summary: 'Test activation only. No real money moves to any bank or UPI account.',
-        detail: 'Use this only to check how plan activation and expiry work.',
-        note: 'Do not treat a demo activation as a real payment.',
       },
     ]
 
@@ -4596,7 +5279,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="border-t bg-slate-50 p-2">
-                          <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
+                          <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
                         </div>
                       </div>
                     </>
@@ -4755,7 +5438,7 @@ export default function App() {
                           <ChevronRight className="h-4 w-4 shrink-0 text-red-400" />
                         </button>
                       )}
-                      <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-red-50 active:scale-[0.98]">
+                      <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-red-50 active:scale-[0.98]">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><LogOut className="h-5 w-5" /></span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-bold leading-tight text-slate-700">Logout</span>
@@ -4965,8 +5648,8 @@ export default function App() {
 
               <div className="relative mt-4 grid grid-cols-2 rounded-full bg-slate-100 p-1" role="radiogroup" aria-label="Select account type">
                 <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-300 ease-out ${entryRole === 'recruiter' ? 'translate-x-full' : 'translate-x-0'}`} />
-                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
-                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole !== 'recruiter'} onClick={() => { setEntryRole('seeker'); setAuthStep('mobile'); clearAuthErrors(); resetAuthTouched(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole !== 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><User className="h-3.5 w-3.5" /> Job Seeker{entryRole !== 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
+                <button type="button" role="radio" aria-checked={entryRole === 'recruiter'} onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); clearAuthErrors(); resetAuthTouched(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full py-2 text-xs font-extrabold transition-colors duration-300 ${entryRole === 'recruiter' ? 'text-slate-900' : 'text-slate-500'}`}><Building2 className="h-3.5 w-3.5" /> Recruiter{entryRole === 'recruiter' && <Check className="h-3.5 w-3.5 text-sky-700" />}</button>
               </div>
 
               {authStep === 'mobile' ? (
@@ -4974,8 +5657,11 @@ export default function App() {
                   <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number or Email ID *</label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><User className="h-4 w-4" /></span>
-                    <input value={authForm.identifier} onChange={e => { setAuthForm(prev => ({ ...prev, identifier: e.target.value })); setAuthError('') }} type="text" inputMode="email" autoComplete="username" placeholder="10-digit mobile or yourname@gmail.com" className="w-full rounded-xl border bg-white py-3 pl-10 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                    <input value={authForm.identifier} onChange={e => updateAuthField('identifier', e.target.value)} onBlur={() => setAuthIdentifierTouched(true)} type="text" inputMode="email" autoComplete="username" placeholder="10-digit mobile or yourname@gmail.com" aria-invalid={Boolean(authIdentifierFieldError)} aria-describedby={authIdentifierFieldError && !authRecruiterBlockAccount ? 'auth-identifier-message' : undefined} className={`w-full rounded-xl border bg-white py-3 pl-10 pr-3 text-sm font-semibold outline-none ${authIdentifierFieldError ? 'border-red-400 focus:border-red-500' : 'focus:border-sky-500'}`} />
                   </div>
+                  {authIdentifierFieldError && !authRecruiterBlockAccount && (
+                    <p id="auth-identifier-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authIdentifierFieldError}</span></p>
+                  )}
                   {authRecruiterBlockAccount ? (
                     <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left">
                       <div className="flex gap-2.5">
@@ -4983,7 +5669,7 @@ export default function App() {
                         <div>
                           <p className="text-sm font-extrabold text-amber-900">This mobile is registered as Recruiter</p>
                           <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800"><b>{authRecruiterBlockAccount.name}</b> uses this mobile for a Recruiter account. Job Seeker login is blocked until that Recruiter account is deleted.</p>
-                          <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); setAuthError(''); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white">Login as Recruiter to delete account</button>
+                          <button type="button" onClick={() => { setEntryRole('recruiter'); setAuthStep('mobile'); clearAuthErrors(); resetAuthTouched(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white">Login as Recruiter to delete account</button>
                         </div>
                       </div>
                     </div>
@@ -5002,7 +5688,7 @@ export default function App() {
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-extrabold">Welcome back, {authExistingAccount.name}!</p>
-                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingNeedsPasswordSetup ? 'Password setup needed' : authExistingAccount.email}</p>
+                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingNeedsPasswordSetup ? 'Supabase Auth setup needed' : authExistingAccount.email}</p>
                       </div>
                       <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
                     </div>
@@ -5011,11 +5697,11 @@ export default function App() {
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password *</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
-                      <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="current-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      <input value={authForm.password} onChange={e => updateAuthField('password', e.target.value)} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="current-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                       <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide password' : 'Show password'} title={showAuthPassword ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                     </div>
                     {showAuthPasswordError ? (
-                      <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                      <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordFieldError}</p>
                     ) : showAuthPasswordSuccess ? (
                       <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
                     ) : null}
@@ -5024,7 +5710,7 @@ export default function App() {
                     <button type="button" onClick={openForgotPassword} className="text-xs font-extrabold text-sky-700 hover:text-sky-900 hover:underline">Forgot Password?</button>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading || googleAuthLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Set Password & Continue' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading || googleAuthLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
                   {isSupabaseConfigured && (
                     <>
                       <div className="my-4 flex items-center gap-3" aria-hidden="true">
@@ -5043,51 +5729,54 @@ export default function App() {
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleForgotPasswordReset() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
                     <p className="text-sm font-extrabold text-sky-900">Forgot Password</p>
-                    <p className="text-[11px] font-medium leading-relaxed text-sky-700">Enter the same registered mobile number and email ID used for this {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account, then create a new password.</p>
+                    <p className="text-[11px] font-medium leading-relaxed text-sky-700">{authRecoveryMode ? 'Email verified. Set your new password below.' : `Enter the same registered mobile number and email ID used for this ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account. We will email you a secure reset link.`}</p>
                   </div>
                   <div className="mt-4 space-y-3">
-                    <div>
+                    <div className={authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Mobile Number *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
-                        <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit registered mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                        <input value={authForm.mobile} onChange={e => updateAuthField('mobile', e.target.value)} onBlur={() => setAuthMobileTouched(true)} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit registered mobile number" aria-invalid={Boolean(authMobileFieldError)} aria-describedby={authMobileFieldError ? 'auth-mobile-message' : undefined} className={`w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none ${authMobileFieldError ? 'border-red-400 focus:border-red-500' : 'focus:border-sky-500'}`} />
                       </div>
+                      {authMobileFieldError && (
+                        <p id="auth-mobile-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authMobileFieldError}</span></p>
+                      )}
                     </div>
-                    <div>
+                    <div className={authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Email ID *</label>
-                      <input value={authForm.email} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      <input value={authForm.email} onChange={e => updateAuthField('email', e.target.value)} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                       {showAuthEmailError ? (
-                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailValidation.error}{authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { setAuthForm(prev => ({ ...prev, email: authEmailValidation.suggestion ?? prev.email })); setAuthError(''); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
+                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailFieldError}{!authFieldErrors.email && authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { updateAuthField('email', authEmailValidation.suggestion ?? authForm.email); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
                       ) : showAuthEmailSuccess ? (
                         <p id="auth-email-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Email format is correct.</p>
                       ) : (
                         <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Both registered mobile and email must match the same account.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
-                        <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <input value={authForm.password} onChange={e => updateAuthField('password', e.target.value)} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                         <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide new password' : 'Show new password'} title={showAuthPassword ? 'Hide new password' : 'Show new password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                       </div>
                       {showAuthPasswordError ? (
-                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordFieldError}</p>
                       ) : showAuthPasswordSuccess ? (
                         <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
                       ) : (
                         <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><KeyRound className="h-4 w-4" /></span>
-                        <input value={authForm.confirmPassword} onChange={e => { setAuthForm(prev => ({ ...prev, confirmPassword: e.target.value })); setAuthError('') }} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter new password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <input value={authForm.confirmPassword} onChange={e => updateAuthField('confirmPassword', e.target.value)} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter new password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                         <button type="button" onClick={() => setShowAuthConfirmPassword(prev => !prev)} aria-label={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} title={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                       </div>
                       {showAuthConfirmPasswordError ? (
-                        <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordError}</p>
+                        <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordFieldError}</p>
                       ) : authConfirmPasswordTouched && authForm.confirmPassword ? (
                         <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Passwords match.</p>
                       ) : (
@@ -5096,14 +5785,14 @@ export default function App() {
                     </div>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><KeyRound className="h-4 w-4" /> {authLoading ? 'Resetting Password...' : 'Reset Password & Login'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })); resetAuthPasswordState() }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Return to Login</button>
+                  <button type="submit" disabled={authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><KeyRound className="h-4 w-4" /> {authLoading ? (authRecoveryMode ? 'Setting New Password...' : 'Sending Reset Email...') : authRecoveryMode ? 'Set New Password & Login' : 'Email Password Reset Link'}</button>
+                  <button type="button" onClick={() => { setAuthRecoveryMode(false); setAuthStep('mobile'); clearAuthErrors(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })); resetAuthTouched() }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Return to Login</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
-                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Your Password' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
-                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'This account was created before password login. Set a minimum-6-character password to secure it.' : authExistingAccount ? 'Enter your current password to login to this existing account.' : 'Register with your name, mobile number, correct email ID and a minimum-6-character password.'}</p>
+                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
+                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authExistingNeedsPasswordSetup ? 'This account was created before Supabase Auth. Create your secure Auth account once, confirm email, then login.' : authExistingAccount ? 'This account is already created. Login with your registered mobile/email and password.' : 'First create your Supabase Auth account with name, mobile, correct email ID and a minimum-6-character password. Confirm email, then login.'}</p>
                   </div>
                   {activeGooglePendingProfile && (
                     <div className="mt-3 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-left">
@@ -5130,35 +5819,41 @@ export default function App() {
                   <div className="mt-4 space-y-3">
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Full Name *</label>
-                      <input value={authForm.name} onChange={e => { setAuthForm(prev => ({ ...prev, name: e.target.value })); setAuthError('') }} autoComplete="name" placeholder="Enter your full name" className="w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none focus:border-sky-500" />
+                      <input value={authForm.name} onChange={e => updateAuthField('name', e.target.value)} onBlur={() => setAuthNameTouched(true)} autoComplete="name" placeholder="Enter your full name" aria-invalid={Boolean(authNameFieldError)} aria-describedby={authNameFieldError ? 'auth-name-message' : undefined} className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${authNameFieldError ? 'border-red-400 focus:border-red-500' : 'focus:border-sky-500'}`} />
+                      {authNameFieldError && (
+                        <p id="auth-name-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authNameFieldError}</span></p>
+                      )}
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Mobile Number *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
-                        <input value={authForm.mobile} onChange={e => { setAuthForm(prev => ({ ...prev, mobile: e.target.value })); setAuthError('') }} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile number" className="w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none focus:border-sky-500" />
+                        <input value={authForm.mobile} onChange={e => updateAuthField('mobile', e.target.value)} onBlur={() => setAuthMobileTouched(true)} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile number" aria-invalid={Boolean(authMobileFieldError)} aria-describedby={authMobileFieldError ? 'auth-mobile-message' : undefined} className={`w-full rounded-xl border bg-white py-3 pl-14 pr-3 text-sm font-semibold outline-none ${authMobileFieldError ? 'border-red-400 focus:border-red-500' : 'focus:border-sky-500'}`} />
                       </div>
+                      {authMobileFieldError && (
+                        <p id="auth-mobile-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authMobileFieldError}</span></p>
+                      )}
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Correct Email ID *{activeGooglePendingProfile ? ' (verified by Google)' : ''}</label>
-                      <input value={authForm.email} disabled={Boolean(activeGooglePendingProfile)} onChange={e => { setAuthForm(prev => ({ ...prev, email: e.target.value })); setAuthError('') }} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-slate-600 ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                      <input value={authForm.email} disabled={Boolean(activeGooglePendingProfile)} onChange={e => updateAuthField('email', e.target.value)} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-slate-600 ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                       {showAuthEmailError ? (
-                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailValidation.error}{authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { setAuthForm(prev => ({ ...prev, email: authEmailValidation.suggestion ?? prev.email })); setAuthError(''); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
+                        <p id="auth-email-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authEmailFieldError}{!authFieldErrors.email && authEmailValidation.suggestion ? <> Did you mean <button type="button" onClick={() => { updateAuthField('email', authEmailValidation.suggestion ?? authForm.email); setAuthEmailTouched(true) }} className="font-extrabold text-sky-700 underline">{authEmailValidation.suggestion}</button>?</> : null}</span></p>
                       ) : showAuthEmailSuccess ? (
                         <p id="auth-email-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Email format is correct.</p>
                       ) : (
                         <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Gmail IDs must end with @gmail.com.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRegisterNeedsPasswordSetup ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">{authRegisterNeedsPasswordSetup ? 'Create Password *' : 'Current Password *'}</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
-                        <input value={authForm.password} onChange={e => { setAuthForm(prev => ({ ...prev, password: e.target.value })); setAuthError('') }} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete={authRegisterNeedsPasswordSetup ? 'new-password' : 'current-password'} placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                        <input value={authForm.password} onChange={e => updateAuthField('password', e.target.value)} onBlur={() => setAuthPasswordTouched(true)} type={showAuthPassword ? 'text' : 'password'} autoComplete={authRegisterNeedsPasswordSetup ? 'new-password' : 'current-password'} placeholder="Minimum 6 characters" aria-invalid={showAuthPasswordError} aria-describedby="auth-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthPasswordError ? 'border-red-400 focus:border-red-500' : showAuthPasswordSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                         <button type="button" onClick={() => setShowAuthPassword(prev => !prev)} aria-label={showAuthPassword ? 'Hide password' : 'Show password'} title={showAuthPassword ? 'Hide password' : 'Show password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                       </div>
                       {showAuthPasswordError ? (
-                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordError}</p>
+                        <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authPasswordFieldError}</p>
                       ) : showAuthPasswordSuccess ? (
                         <p id="auth-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Password length is correct.</p>
                       ) : (
@@ -5170,11 +5865,11 @@ export default function App() {
                         <label className="mb-1 block text-xs font-bold text-slate-600">Confirm Password *</label>
                         <div className="relative">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><KeyRound className="h-4 w-4" /></span>
-                          <input value={authForm.confirmPassword} onChange={e => { setAuthForm(prev => ({ ...prev, confirmPassword: e.target.value })); setAuthError('') }} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
+                          <input value={authForm.confirmPassword} onChange={e => updateAuthField('confirmPassword', e.target.value)} onBlur={() => setAuthConfirmPasswordTouched(true)} type={showAuthConfirmPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Enter password again" aria-invalid={showAuthConfirmPasswordError} aria-describedby="auth-confirm-password-message" className={`w-full rounded-xl border bg-white py-3 pl-10 pr-11 text-sm font-semibold outline-none ${showAuthConfirmPasswordError ? 'border-red-400 focus:border-red-500' : authConfirmPasswordTouched && authForm.confirmPassword && !authConfirmPasswordError ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                           <button type="button" onClick={() => setShowAuthConfirmPassword(prev => !prev)} aria-label={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} title={showAuthConfirmPassword ? 'Hide confirm password' : 'Show confirm password'} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700">{showAuthConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
                         </div>
                         {showAuthConfirmPasswordError ? (
-                          <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordError}</p>
+                          <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> {authConfirmPasswordFieldError}</p>
                         ) : authConfirmPasswordTouched && authForm.confirmPassword ? (
                           <p id="auth-confirm-password-message" className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> Passwords match.</p>
                         ) : (
@@ -5184,8 +5879,8 @@ export default function App() {
                     )}
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authRegisterNeedsPasswordSetup && authExistingAccount ? 'Setting Password...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError && authRegisterNeedsPasswordSetup ? 'Correct Email & Set Password' : authExistingEmailError ? 'Correct Email & Continue' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Password & Continue' : authExistingAccount ? 'Login & Continue' : 'Register & Continue'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); setAuthError(''); setGooglePendingProfile(null); setAuthEmailTouched(false); resetAuthPasswordState(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authExistingNeedsPasswordSetup ? 'Creating Supabase Auth Account...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError ? 'Correct Email & Continue' : authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingAccount && !authRegisterNeedsPasswordSetup ? 'Complete Profile & Continue' : authExistingAccount ? 'Login & Continue' : 'Create Account'}</button>
+                  <button type="button" onClick={() => { setAuthStep('mobile'); clearAuthErrors(); setGooglePendingProfile(null); resetAuthTouched(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
                 </form>
               )}
 
@@ -5270,7 +5965,7 @@ export default function App() {
                       </>
                     )}
                     <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
-                    <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
+                    <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
                   </div>
                 </div>
               </div>
@@ -5424,7 +6119,7 @@ export default function App() {
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
                             <button type="button" data-profile-field="profilePhoto" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
                             {seekerProfileForm.profilePhoto && (
-                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                              <button type="button" disabled={!!uploadBusy} onClick={requestRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             )}
                           </div>
                         </div>
@@ -5442,7 +6137,7 @@ export default function App() {
                           {seekerProfileForm.resumeName && (
                             <>
                               <button type="button" disabled={!!uploadBusy} onClick={() => void handleDownloadResume()} className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-3.5 w-3.5" /> {uploadBusy === 'download' ? 'Opening…' : 'View / Download'}</button>
-                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveResume} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                              <button type="button" disabled={!!uploadBusy} onClick={requestRemoveResume} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             </>
                           )}
                         </div>
@@ -6890,7 +7585,7 @@ export default function App() {
                 <form className="mt-4 space-y-3" autoComplete="off" onSubmit={e => { e.preventDefault(); handleAdminLogin() }}>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID / Email</label>
-                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
+                    <input value={adminId} onChange={e => setAdminId(e.target.value)} name="admin-login-id" placeholder="Enter Mail id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-bold text-slate-600">Password</label>
@@ -6900,30 +7595,30 @@ export default function App() {
                     </div>
                   </div>
                   {adminError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminError}</p>}
-                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> Login to Dashboard</button>
+                  <button type="submit" disabled={adminAuthLoading} className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><LogIn className="h-4 w-4" /> {adminAuthLoading ? 'Checking Admin Auth...' : 'Login to Dashboard'}</button>
                 </form>
                 <button type="button" onClick={() => { setShowAdminForgot(v => !v); setAdminForgotError('') }} className="mx-auto mt-3 block text-xs font-extrabold text-sky-700 hover:underline">Forgot Admin Password?</button>
                 {showAdminForgot && (
                   <form className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-left" onSubmit={e => { e.preventDefault(); void handleAdminForgotPassword() }}>
-                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email to set a new password.</p>
-                    <div>
+                    <p className="text-xs leading-relaxed text-slate-600">{adminRecoveryMode ? <><b className="text-slate-900">Email verified:</b> set your new Admin password below.</> : <><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email. We will email a secure reset link if the Admin Auth user exists.</>}</p>
+                    <div className={adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
                       <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} name="admin-forgot-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
                       <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} name="admin-registered-email" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={!adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password</label>
                       <input type="password" value={adminForgotNew} onChange={e => setAdminForgotNew(e.target.value)} placeholder="Minimum 6 characters" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={!adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label>
                       <input type="password" value={adminForgotConfirm} onChange={e => setAdminForgotConfirm(e.target.value)} placeholder="Enter new password again" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     {adminForgotError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminForgotError}</p>}
-                    <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
+                    <button type="submit" disabled={adminAuthLoading} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"><KeyRound className="h-4 w-4" /> {adminAuthLoading ? 'Please wait...' : adminRecoveryMode ? 'Set New Admin Password' : 'Email Admin Reset Link'}</button>
                   </form>
                 )}
               </div>
@@ -6975,7 +7670,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">Preview Job Seeker Website</button>
-                  <button onClick={handleAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                  <button onClick={requestAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                 </div>
               </div>
 
@@ -7022,7 +7717,7 @@ export default function App() {
                       </div>
                       <div className="border-t bg-slate-50 px-3 py-3">
                         <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, vacancies, tickets, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
-                        <button type="button" onClick={handleAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
+                        <button type="button" onClick={requestAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
                       </div>
                     </motion.div>
                   </>
@@ -7094,7 +7789,7 @@ export default function App() {
               )}
 
               {adminTab === 'post' && (
-                <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handlePostJob() }}>
+                <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); requestPostJob() }}>
                   <p className="text-base font-extrabold">Post New Vacancy</p>
                   <p className="text-xs text-slate-500">Fields marked * are required. As ADMIN, your vacancy goes LIVE instantly (recruiters' vacancies come to the Approvals tab first).</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -7154,8 +7849,8 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button onClick={() => setSelected(job)} className="rounded-full border bg-white px-4 py-2 text-xs font-bold">View Full Details</button>
-                          <button onClick={() => handleRejectJob(job.id)} className="ml-auto flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white"><X className="h-3.5 w-3.5" /> Reject</button>
-                          <button onClick={() => handleApproveJob(job)} className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow"><Check className="h-3.5 w-3.5" /> Approve &amp; Publish LIVE</button>
+                          <button onClick={() => requestRejectJob(job)} className="ml-auto flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white"><X className="h-3.5 w-3.5" /> Reject</button>
+                          <button onClick={() => requestApproveJob(job)} className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow"><Check className="h-3.5 w-3.5" /> Approve &amp; Publish LIVE</button>
                         </div>
                       </div>
                     ))}
@@ -7211,7 +7906,7 @@ export default function App() {
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                           {account.role === 'seeker' && <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(account.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(account.profile) ? 'Profile Complete' : `Profile ${seekerProfileProgress(account.profile)}%`}</span>}
-                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.hasPassword || account.passwordHash) ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>{(account.hasPassword || account.passwordHash) ? 'Password Set' : 'No Password'}</span>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.authLinked || account.authUserId) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{(account.authLinked || account.authUserId) ? 'Supabase Auth' : 'Auth Pending'}</span>
                           <button type="button" onClick={() => setAdminAccountDetail(account)} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-slate-800"><Eye className="h-3.5 w-3.5" /> View Account</button>
                         </div>
                       </div>
@@ -7274,7 +7969,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Preview currently uses demo in-app checkout — Google Play Billing replaces it before Play Store release, and payments sync to Supabase when connected.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each submitted reference in your UPI/bank app; payments sync to Supabase when connected.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Total Collected</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">₹{totalRevenue.toLocaleString('en-IN')}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">This Month</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">₹{thisMonthRevenue.toLocaleString('en-IN')}</p></div>
@@ -7408,12 +8103,11 @@ export default function App() {
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">3</span><h4 className="mt-2 text-sm font-extrabold">Switch method ON</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Only ON methods with complete details appear as usable checkout cards.</p></article>
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">4</span><h4 className="mt-2 text-sm font-extrabold">Save + cross-check</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Save with the Admin password, then match every submitted UTR in Payment List.</p></article>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           {[
                             { label: 'UPI / QR', ready: commerceDraft.payment.upiEnabled && Boolean(commerceDraft.payment.upiId.trim()), detail: commerceDraft.payment.upiId || 'UPI ID not added' },
                             { label: 'Payment Link', ready: commerceDraft.payment.paymentLinkEnabled && /^https?:\/\//i.test(commerceDraft.payment.paymentLink.trim()), detail: commerceDraft.payment.paymentLink || 'Payment link not added' },
                             { label: 'Bank Transfer', ready: commerceDraft.payment.bankEnabled && Boolean(commerceDraft.payment.bankDetails.trim()), detail: commerceDraft.payment.bankDetails.trim() ? 'Bank details added' : 'Bank details not added' },
-                            { label: 'Demo Checkout', ready: commerceDraft.payment.demoCheckoutEnabled, detail: commerceDraft.payment.demoCheckoutEnabled ? 'Testing is ON — turn OFF for real money' : 'Testing is OFF' },
                           ].map(method => (
                             <article key={method.label} className={`rounded-3xl border p-3.5 ${method.ready ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
                               <div className="flex items-center gap-2"><h4 className="min-w-0 flex-1 truncate text-sm font-extrabold">{method.label}</h4><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold ${method.ready ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{method.ready ? 'READY' : 'NOT READY'}</span></div>
@@ -7440,15 +8134,11 @@ export default function App() {
                         <input value={commerceDraft.payment.upiId} onChange={e => updateCommercePaymentDraft({ upiId: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="yourname@upi" />
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.upiEnabled} onChange={e => updateCommercePaymentDraft({ upiEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> UPI Payment ON</label>
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.paymentLinkEnabled} onChange={e => updateCommercePaymentDraft({ paymentLinkEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Payment Link ON</label>
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.bankEnabled} onChange={e => updateCommercePaymentDraft({ bankEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Bank Transfer ON</label>
-                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.demoCheckoutEnabled} onChange={e => updateCommercePaymentDraft({ demoCheckoutEnabled: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Demo Checkout ON</label>
                     </div>
-                    {commerceDraft.payment.demoCheckoutEnabled && (
-                      <p className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-100 px-3 py-2.5 text-[11px] font-bold leading-relaxed text-amber-950"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Demo Checkout is ON. Job Seekers can activate without real payment. Turn Demo OFF before collecting real money.</p>
-                    )}
                     <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                       <div className="rounded-2xl border bg-white p-3">
                         <p className="flex items-center gap-2 text-xs font-extrabold text-slate-700"><QrCode className="h-4 w-4 text-emerald-600" /> UPI QR Image</p>
@@ -7460,7 +8150,7 @@ export default function App() {
                         <input id="admin-payment-qr-input" type="file" accept="image/*" className="hidden" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void handlePaymentQrFile(file) }} />
                         <div className="mt-3 flex gap-2">
                           <label htmlFor="admin-payment-qr-input" className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-slate-900 px-3 py-2.5 text-xs font-bold text-white ${commerceQrUploading ? 'pointer-events-none opacity-60' : ''}`}><Upload className="h-3.5 w-3.5" /> {commerceQrUploading ? 'Adding QR…' : 'Upload QR'}</label>
-                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={() => updateCommercePaymentDraft({ qrImageUrl: '' })} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
+                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={requestRemovePaymentQr} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
                         </div>
                         {!commerceDraft.payment.qrImageUrl.startsWith('data:') && (
                           <input value={commerceDraft.payment.qrImageUrl} onChange={e => updateCommercePaymentDraft({ qrImageUrl: e.target.value.trim() })} className="mt-3 w-full rounded-xl border bg-white px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500" placeholder="Or paste QR image URL (optional)" />
@@ -7494,17 +8184,14 @@ export default function App() {
                     <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                       <div>
                         {supabase && (
-                          <div className="max-w-md">
-                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Current Admin Password (required for secure Supabase save)</span><KeyRound className="h-3.5 w-3.5 text-sky-500" /></label>
-                            <input type="password" value={commerceAdminPassword} onChange={e => setCommerceAdminPassword(e.target.value)} autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder="Enter current Admin password" />
-                          </div>
+                          <p className="flex max-w-md items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-800"><ShieldCheck className="h-3.5 w-3.5 shrink-0" /> Secured by your logged-in Supabase Admin Auth session.</p>
                         )}
                         <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{adminTab === 'plan-settings'
                           ? 'Saving updates the live plan cards (price, validity, contacts/day, ON/OFF and benefits). Existing purchases keep the price and expiry recorded at their checkout time.'
                           : 'Saving updates the live checkout receiving source. Existing purchases and payment references are not changed.'}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') }} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
+                        <button type="button" onClick={requestResetCommerceChanges} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
                         <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : adminTab === 'plan-settings' ? 'Save Plan Settings' : 'Save Payment Settings'}</button>
                       </div>
                     </div>
@@ -7543,8 +8230,8 @@ export default function App() {
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
                           <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from PharmaSales Jobs. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
-                          <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
-                          <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
+                          <button onClick={() => requestRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
+                          <button onClick={() => requestApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
                         </div>
                         <p className="mt-2 text-[11px] font-semibold text-red-600">Approval permanently deletes this Job Seeker account and frees the mobile number.</p>
                       </div>
@@ -7640,7 +8327,7 @@ export default function App() {
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-base font-extrabold">All Vacancies ({jobs.length})</p>
-                    <button onClick={handleClearAllVacancies} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                    <button onClick={requestClearAllVacancies} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {jobs.length === 0 && <p className="rounded-xl bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No vacancies. Post your first vacancy from the Post Vacancy tab.</p>}
@@ -7652,7 +8339,7 @@ export default function App() {
                           <p className="text-xs text-slate-500">{job.hq} ({job.state}) • {job.type} • {job.ctc} • {job.posted}</p>
                         </div>
                         <button onClick={() => setSelected(job)} className="rounded-full border px-3 py-1.5 text-xs font-bold">View</button>
-                        <button onClick={() => handleDeleteJob(job.id)} className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+                        <button onClick={() => requestDeleteJob(job)} className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
                       </div>
                     ))}
                   </div>
@@ -7687,8 +8374,8 @@ export default function App() {
                       <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
                       <button onClick={() => setAdminTab('plan-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><Crown className="h-3.5 w-3.5" /> Plan Settings</button>
                       <button onClick={() => setAdminTab('payment-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-emerald-600 py-2.5 text-xs font-extrabold text-white"><Wallet className="h-3.5 w-3.5" /> Payment Settings</button>
-                      <button onClick={handleClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                      <button onClick={requestClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                      <button onClick={requestAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
                     <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
@@ -7947,7 +8634,7 @@ export default function App() {
                         ['Mobile Number', `+91 ${adminAccountDetail.mobile}`],
                         ['Email ID', adminAccountDetail.email],
                         ['Joined', formatAdminDate(adminAccountDetail.createdAt)],
-                        ['Password', (adminAccountDetail.hasPassword || adminAccountDetail.passwordHash) ? 'Password set • Protected' : 'No password set'],
+                        ['Supabase Auth', (adminAccountDetail.authLinked || adminAccountDetail.authUserId) ? 'Linked • Protected' : 'Auth setup pending'],
                         ...(adminAccountDetail.role === 'seeker' ? [['Job Profile', isSeekerProfileComplete(adminAccountDetail.profile) ? 'Complete' : `${seekerProfileProgress(adminAccountDetail.profile)}% complete`]] as [string, string][] : []),
                         ...(adminAccountDeletionRequest ? [['Deletion Request', `${adminAccountDeletionRequest.status === 'pending' ? 'Pending' : 'Rejected'} • ${adminAccountDeletionRequest.reasonCategory}`]] as [string, string][] : []),
                       ].map(([label, value]) => (
@@ -8169,19 +8856,20 @@ export default function App() {
 
                 <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">STEP 2 — SELECT PAYMENT METHOD</p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {getAvailableCheckoutMethods(commerceSettings).length === 0 && (
+                    <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-relaxed text-amber-900 sm:col-span-2">No payment method is available right now. Admin has not enabled UPI, a payment link or bank transfer.</p>
+                  )}
                   {getAvailableCheckoutMethods(commerceSettings).map(method => {
                     const methodHint = method.id === 'upi'
                       ? 'UPI app or QR scan'
                       : method.id === 'payment-link'
                         ? 'Open the Admin payment link'
-                        : method.id === 'bank'
-                          ? 'NEFT / IMPS bank transfer'
-                          : 'Test only — no real money'
+                        : 'NEFT / IMPS bank transfer'
                     const selectedMethod = checkoutMethod === method.id
                     return (
                       <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition disabled:opacity-50 ${selectedMethod ? 'border-slate-900 bg-slate-900 text-white shadow' : 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}>
                         <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${selectedMethod ? 'bg-white/20 text-white' : 'bg-sky-50 text-sky-700'}`}>
-                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : method.id === 'demo' ? <Info className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
+                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-extrabold leading-tight">{method.label}</span>
@@ -8232,17 +8920,11 @@ export default function App() {
                     </div>
                   )}
 
-                  {checkoutMethod === 'demo' && (
-                    <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
-                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p><b>Demo checkout:</b> no real money moves in this preview. Use it only to test automatic plan activation and expiry. Connect Play Billing or a verified payment gateway for production purchases.</p>
-                    </div>
-                  )}
 
-                  {commerceSettings.payment.instructions.trim() && checkoutMethod !== 'demo' && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
+                  {commerceSettings.payment.instructions.trim() && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
                 </div>
 
-                {checkoutMethod !== 'demo' && (
+                {checkoutMethod && (
                   <div className="mt-4 rounded-3xl border border-sky-200 bg-sky-50/60 p-4">
                     <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">STEP 3 — AFTER SUCCESSFUL PAYMENT</p>
                     <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">Enter Payment / UTR / Transaction Reference *</label>
@@ -8256,7 +8938,7 @@ export default function App() {
                 <p className="mt-5 text-center text-[10px] font-extrabold tracking-[0.12em] text-emerald-700">STEP 4 — CONFIRM • PLAN ACTIVATES AUTOMATICALLY</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
-                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : checkoutMethod === 'demo' ? 'Complete Demo Payment — Activate Plan' : 'Payment Done — Activate Plan'}</button>
+                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing || !checkoutMethod} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : 'Payment Done — Activate Plan'}</button>
                 </div>
                 <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">After activation, this purchase appears in Admin Purchase &amp; Payment Lists. Paid benefits stop automatically at expiry.</p>
               </div>
@@ -8287,7 +8969,7 @@ export default function App() {
                   </div>
                   <div className="mt-5 flex gap-2">
                     <button onClick={() => setShowDeletionRequestModal(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Close</button>
-                    <button onClick={handleWithdrawDeletionRequest} className="flex-1 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Withdraw Request</button>
+                    <button onClick={requestWithdrawDeletionRequest} className="flex-1 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Withdraw Request</button>
                   </div>
                 </div>
               ) : (
@@ -8344,6 +9026,29 @@ export default function App() {
               <div className="mt-5 flex gap-2">
                 <button onClick={() => setShowDeleteAccountConfirm(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Cancel</button>
                 <button onClick={handleDeleteRecruiterAccount} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700"><Trash2 className="h-4 w-4" /> Delete Account</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
+      {/* UNIVERSAL CONFIRMATION — logout, delete/remove, publish and Admin decisions */}
+      <AnimatePresence>
+        {confirmationRequest && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4" onClick={closeConfirmation} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }} onClick={e => e.stopPropagation()} className="w-full max-w-[440px] rounded-3xl bg-white p-6 shadow-2xl">
+              <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${confirmationRequest.tone === 'danger' ? 'bg-red-50 text-red-600' : confirmationRequest.tone === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-sky-50 text-sky-600'}`}>
+                {confirmationRequest.tone === 'danger' ? <Trash2 className="h-7 w-7" /> : confirmationRequest.tone === 'warning' ? <AlertTriangle className="h-7 w-7" /> : <ShieldCheck className="h-7 w-7" />}
+              </div>
+              <h3 id="confirmation-title" className="mt-3 text-center text-xl font-extrabold leading-tight">{confirmationRequest.title}</h3>
+              <p id="confirmation-message" className="mt-2 whitespace-pre-line text-center text-sm leading-relaxed text-slate-600">{confirmationRequest.message}</p>
+              <div className="mt-5 flex gap-2">
+                <button type="button" onClick={closeConfirmation} disabled={confirmationBusy} className="flex-1 rounded-full border py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                <button type="button" onClick={() => void confirmPendingAction()} disabled={confirmationBusy} className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${confirmationRequest.tone === 'danger' ? 'bg-red-600 hover:bg-red-700' : confirmationRequest.tone === 'warning' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-sky-600 hover:bg-sky-700'}`}>
+                  {confirmationBusy ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {confirmationBusy ? 'Please wait…' : confirmationRequest.confirmLabel}
+                </button>
               </div>
             </motion.div>
           </motion.div>
