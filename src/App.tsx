@@ -173,6 +173,13 @@ type AccountDeletionRequest = {
   reviewedAt?: string
   adminNote?: string
 }
+type ConfirmationRequest = {
+  title: string
+  message: string
+  confirmLabel: string
+  tone?: 'danger' | 'warning' | 'primary'
+  onConfirm: () => void | Promise<void>
+}
 
 type LegalTab = 'privacy' | 'terms' | 'support'
 type SupportTicketStatus = 'open' | 'in-progress' | 'resolved' | 'closed'
@@ -1107,6 +1114,8 @@ export default function App() {
   const [adminRecoveryMode, setAdminRecoveryMode] = useState(false)
   const [adminAuthLoading, setAdminAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
+  const [confirmationRequest, setConfirmationRequest] = useState<ConfirmationRequest | null>(null)
+  const [confirmationBusy, setConfirmationBusy] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
   const [deletionRequestForm, setDeletionRequestForm] = useState({ category: '', details: '' })
@@ -1217,6 +1226,27 @@ export default function App() {
   const clearAuthErrors = () => {
     setAuthError('')
     setAuthFieldErrors({})
+  }
+  const requestConfirmation = (request: ConfirmationRequest) => {
+    if (confirmationBusy) return
+    setShowAccountMenu(false)
+    setShowMobileMenu(false)
+    setShowAdminMenu(false)
+    setConfirmationRequest(request)
+  }
+  const closeConfirmation = () => {
+    if (confirmationBusy) return
+    setConfirmationRequest(null)
+  }
+  const confirmPendingAction = async () => {
+    if (!confirmationRequest || confirmationBusy) return
+    setConfirmationBusy(true)
+    try {
+      await confirmationRequest.onConfirm()
+      setConfirmationRequest(null)
+    } finally {
+      setConfirmationBusy(false)
+    }
   }
   const clearAuthFieldError = (field: AuthField) => {
     setAuthFieldErrors(prev => {
@@ -3063,6 +3093,20 @@ export default function App() {
     persistSeekerProfilePatch({ resumeName: undefined, resumeSize: undefined, resumeType: undefined, resumeUploadedAt: undefined })
     setToast('Resume removed from your account')
   }
+  const requestRemoveProfilePhoto = () => requestConfirmation({
+    title: 'Remove Profile Photo?',
+    message: 'Are you sure you want to remove your profile photo? You can upload another photo later.',
+    confirmLabel: 'Yes, Remove Photo',
+    tone: 'danger',
+    onConfirm: handleRemoveProfilePhoto,
+  })
+  const requestRemoveResume = () => requestConfirmation({
+    title: 'Remove Resume?',
+    message: 'Are you sure you want to remove the resume saved on this account/device? You can upload it again later.',
+    confirmLabel: 'Yes, Remove Resume',
+    tone: 'danger',
+    onConfirm: handleRemoveResume,
+  })
   const requireCompletedSeekerProfile = () => {
     if (isAdmin) return true
     if (currentUser?.role === 'seeker' && !isSeekerProfileComplete(currentUser.profile)) {
@@ -3276,6 +3320,13 @@ export default function App() {
     setToast('Logged out successfully')
     navigate('welcome', { resetHistory: true })
   }
+  const requestUserLogout = () => requestConfirmation({
+    title: 'Logout?',
+    message: `Are you sure you want to logout${currentUser ? ` from ${currentUser.name}'s account` : ''}? You can login again with your registered mobile/email and password.`,
+    confirmLabel: 'Yes, Logout',
+    tone: 'warning',
+    onConfirm: handleUserLogout,
+  })
   const handleDeleteRecruiterAccount = async () => {
     if (!currentUser || currentUser.role !== 'recruiter') return
     const deletedAccount = currentUser
@@ -3353,6 +3404,13 @@ export default function App() {
     setShowDeletionRequestModal(false)
     setToast('Your account deletion request has been withdrawn.')
   }
+  const requestWithdrawDeletionRequest = () => requestConfirmation({
+    title: 'Withdraw Deletion Request?',
+    message: 'Are you sure you want to withdraw your pending account-deletion request? Your Job Seeker account will remain active.',
+    confirmLabel: 'Yes, Withdraw Request',
+    tone: 'warning',
+    onConfirm: handleWithdrawDeletionRequest,
+  })
   const handleApproveDeletionRequest = async (request: AccountDeletionRequest) => {
     if (!isAdmin) return
     try {
@@ -3391,6 +3449,20 @@ export default function App() {
     try { localStorage.setItem(DELETION_REQUESTS_KEY, JSON.stringify(updatedRequests)) } catch { /* ignore */ }
     setToast(`Deletion request rejected for ${request.name}. The Job Seeker account remains active.`)
   }
+  const requestApproveDeletionRequest = (request: AccountDeletionRequest) => requestConfirmation({
+    title: 'Delete Job Seeker Account?',
+    message: `Are you sure you want to permanently delete ${request.name}'s Job Seeker account (+91 ${request.mobile})? This cannot be undone and will free the mobile number.`,
+    confirmLabel: 'Yes, Delete Account',
+    tone: 'danger',
+    onConfirm: () => handleApproveDeletionRequest(request),
+  })
+  const requestRejectDeletionRequest = (request: AccountDeletionRequest) => requestConfirmation({
+    title: 'Reject Deletion Request?',
+    message: `Are you sure you want to reject ${request.name}'s account-deletion request? The account will remain active, and the user can submit a clear new reason later.`,
+    confirmLabel: 'Yes, Reject Request',
+    tone: 'warning',
+    onConfirm: () => handleRejectDeletionRequest(request),
+  })
   const completeAdminLogin = () => {
     setIsAdmin(true)
     setPageHistory([])
@@ -3562,6 +3634,13 @@ export default function App() {
     setToast('Admin logged out. See you soon, Divakar Reddy!')
     navigate(destination, { resetHistory: true })
   }
+  const requestAdminLogout = () => requestConfirmation({
+    title: 'Admin Logout?',
+    message: 'Are you sure you want to logout from the Admin dashboard? You will need the Admin ID/email and Supabase Auth password to login again.',
+    confirmLabel: 'Yes, Logout',
+    tone: 'warning',
+    onConfirm: handleAdminLogout,
+  })
   const handlePostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
     const contactEmailError = getEmailValidationError(newJob.email)
@@ -3596,6 +3675,18 @@ export default function App() {
     setToast(`Vacancy published! ${job.company} • ${job.hq} is now LIVE on Jobs page ✅`)
     setAdminTab('manage')
   }
+  const requestPostJob = () => {
+    if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
+    const contactEmailError = getEmailValidationError(newJob.email)
+    if (contactEmailError) { setToast(contactEmailError); return }
+    requestConfirmation({
+      title: 'Publish Vacancy LIVE?',
+      message: `Are you sure you want to publish ${newJob.company.trim()} • ${newJob.title.trim() || 'Medical Representative'} LIVE for all Job Seekers now?`,
+      confirmLabel: 'Yes, Publish LIVE',
+      tone: 'primary',
+      onConfirm: handlePostJob,
+    })
+  }
   const handleDeleteJob = (id: string) => {
     setJobs(prev => prev.filter(j => j.id !== id))
     setSaved(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -3609,6 +3700,20 @@ export default function App() {
     try { localStorage.setItem(ADMIN_JOBS_KEY, '[]') } catch { /* ignore */ }
     setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
+  const requestDeleteJob = (job: Job) => requestConfirmation({
+    title: 'Delete Vacancy?',
+    message: `Are you sure you want to delete ${job.company} • ${job.title} (${job.hq})? This live vacancy will be removed for Job Seekers.`,
+    confirmLabel: 'Yes, Delete Vacancy',
+    tone: 'danger',
+    onConfirm: () => handleDeleteJob(job.id),
+  })
+  const requestClearAllVacancies = () => requestConfirmation({
+    title: 'Clear All Vacancies?',
+    message: `Are you sure you want to delete all ${jobs.length} live ${jobs.length === 1 ? 'vacancy' : 'vacancies'}? Job Seekers will no longer see them. This cannot be undone.`,
+    confirmLabel: 'Yes, Clear All',
+    tone: 'danger',
+    onConfirm: handleClearAllVacancies,
+  })
   const handleChangePassword = async () => {
     if (!supabase || !authSessionUser) { setToast('Admin Auth session expired. Please login again.'); return }
     if (!passForm.current) { setToast('Current password is wrong'); return }
@@ -3649,6 +3754,23 @@ export default function App() {
   }
   const updateCommercePaymentDraft = (patch: Partial<PaymentReceivingSettings>) => {
     setCommerceDraft(prev => ({ ...prev, payment: { ...prev.payment, ...patch } }))
+  }
+  const requestRemovePaymentQr = () => requestConfirmation({
+    title: 'Remove Payment QR?',
+    message: 'Are you sure you want to remove this payment QR image? The removal will apply after you save Payment Settings.',
+    confirmLabel: 'Yes, Remove QR',
+    tone: 'danger',
+    onConfirm: () => updateCommercePaymentDraft({ qrImageUrl: '' }),
+  })
+  const requestResetCommerceChanges = () => {
+    if (JSON.stringify(commerceDraft) === JSON.stringify(commerceSettings)) { setCommerceSettingsError(''); return }
+    requestConfirmation({
+      title: 'Reset Changes?',
+      message: 'Are you sure you want to discard the unsaved plan/payment setting changes on this screen?',
+      confirmLabel: 'Yes, Reset Changes',
+      tone: 'warning',
+      onConfirm: () => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') },
+    })
   }
   const handlePaymentQrFile = async (file: File | undefined) => {
     if (!file || commerceQrUploading) return
@@ -3875,6 +3997,20 @@ export default function App() {
     setPendingJobs(prev => prev.filter(x => x.id !== id))
     setToast('Vacancy rejected by Admin — it will not go live')
   }
+  const requestApproveJob = (pend: PendingJob) => requestConfirmation({
+    title: 'Approve & Publish LIVE?',
+    message: `Are you sure you want to approve ${pend.company} • ${pend.title} (${pend.hq}) and make it LIVE for all Job Seekers?`,
+    confirmLabel: 'Yes, Publish LIVE',
+    tone: 'primary',
+    onConfirm: () => handleApproveJob(pend),
+  })
+  const requestRejectJob = (job: PendingJob) => requestConfirmation({
+    title: 'Reject Vacancy?',
+    message: `Are you sure you want to reject ${job.company} • ${job.title} (${job.hq})? It will be removed from Pending Approvals and will not go live.`,
+    confirmLabel: 'Yes, Reject Vacancy',
+    tone: 'danger',
+    onConfirm: () => handleRejectJob(job.id),
+  })
   useEffect(() => {
     if (page !== 'jobs') setShowFilters(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -5151,7 +5287,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="border-t bg-slate-50 p-2">
-                          <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
+                          <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-white hover:text-red-600"><LogOut className="h-4 w-4" /> Logout</button>
                         </div>
                       </div>
                     </>
@@ -5310,7 +5446,7 @@ export default function App() {
                           <ChevronRight className="h-4 w-4 shrink-0 text-red-400" />
                         </button>
                       )}
-                      <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-red-50 active:scale-[0.98]">
+                      <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-3 rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-red-50 active:scale-[0.98]">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><LogOut className="h-5 w-5" /></span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-bold leading-tight text-slate-700">Logout</span>
@@ -5837,7 +5973,7 @@ export default function App() {
                       </>
                     )}
                     <button type="button" onClick={() => navigate('ai')} className="flex w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left text-sm font-bold transition hover:bg-violet-50"><MessageCircle className="h-4 w-4 text-violet-600" /><span className="flex-1">AI Chat &amp; Support Tickets</span></button>
-                    <button type="button" onClick={handleUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
+                    <button type="button" onClick={requestUserLogout} className="flex w-full items-center gap-2.5 rounded-2xl border bg-slate-50 px-4 py-3 text-left text-sm font-bold text-slate-700 transition hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /><span className="flex-1">Logout</span></button>
                   </div>
                 </div>
               </div>
@@ -5991,7 +6127,7 @@ export default function App() {
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
                             <button type="button" data-profile-field="profilePhoto" disabled={!!uploadBusy} onClick={() => profilePhotoInputRef.current?.click()} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Camera className="h-3.5 w-3.5" /> {uploadBusy === 'photo' ? 'Uploading…' : seekerProfileForm.profilePhoto ? 'Change Photo' : 'Upload Photo'}</button>
                             {seekerProfileForm.profilePhoto && (
-                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                              <button type="button" disabled={!!uploadBusy} onClick={requestRemoveProfilePhoto} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             )}
                           </div>
                         </div>
@@ -6009,7 +6145,7 @@ export default function App() {
                           {seekerProfileForm.resumeName && (
                             <>
                               <button type="button" disabled={!!uploadBusy} onClick={() => void handleDownloadResume()} className="flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-extrabold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-3.5 w-3.5" /> {uploadBusy === 'download' ? 'Opening…' : 'View / Download'}</button>
-                              <button type="button" disabled={!!uploadBusy} onClick={handleRemoveResume} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                              <button type="button" disabled={!!uploadBusy} onClick={requestRemoveResume} className="flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
                             </>
                           )}
                         </div>
@@ -7542,7 +7678,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">Preview Job Seeker Website</button>
-                  <button onClick={handleAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                  <button onClick={requestAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                 </div>
               </div>
 
@@ -7589,7 +7725,7 @@ export default function App() {
                       </div>
                       <div className="border-t bg-slate-50 px-3 py-3">
                         <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, vacancies, tickets, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
-                        <button type="button" onClick={handleAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
+                        <button type="button" onClick={requestAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
                       </div>
                     </motion.div>
                   </>
@@ -7661,7 +7797,7 @@ export default function App() {
               )}
 
               {adminTab === 'post' && (
-                <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); handlePostJob() }}>
+                <form className="mt-4 rounded-2xl border bg-white p-5" onSubmit={e => { e.preventDefault(); requestPostJob() }}>
                   <p className="text-base font-extrabold">Post New Vacancy</p>
                   <p className="text-xs text-slate-500">Fields marked * are required. As ADMIN, your vacancy goes LIVE instantly (recruiters' vacancies come to the Approvals tab first).</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -7721,8 +7857,8 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button onClick={() => setSelected(job)} className="rounded-full border bg-white px-4 py-2 text-xs font-bold">View Full Details</button>
-                          <button onClick={() => handleRejectJob(job.id)} className="ml-auto flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white"><X className="h-3.5 w-3.5" /> Reject</button>
-                          <button onClick={() => handleApproveJob(job)} className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow"><Check className="h-3.5 w-3.5" /> Approve &amp; Publish LIVE</button>
+                          <button onClick={() => requestRejectJob(job)} className="ml-auto flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white"><X className="h-3.5 w-3.5" /> Reject</button>
+                          <button onClick={() => requestApproveJob(job)} className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow"><Check className="h-3.5 w-3.5" /> Approve &amp; Publish LIVE</button>
                         </div>
                       </div>
                     ))}
@@ -8027,7 +8163,7 @@ export default function App() {
                         <input id="admin-payment-qr-input" type="file" accept="image/*" className="hidden" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void handlePaymentQrFile(file) }} />
                         <div className="mt-3 flex gap-2">
                           <label htmlFor="admin-payment-qr-input" className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-slate-900 px-3 py-2.5 text-xs font-bold text-white ${commerceQrUploading ? 'pointer-events-none opacity-60' : ''}`}><Upload className="h-3.5 w-3.5" /> {commerceQrUploading ? 'Adding QR…' : 'Upload QR'}</label>
-                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={() => updateCommercePaymentDraft({ qrImageUrl: '' })} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
+                          {commerceDraft.payment.qrImageUrl && <button type="button" onClick={requestRemovePaymentQr} className="flex items-center gap-1.5 rounded-full border px-3 py-2.5 text-xs font-bold text-red-600"><Trash2 className="h-3.5 w-3.5" /> Remove</button>}
                         </div>
                         {!commerceDraft.payment.qrImageUrl.startsWith('data:') && (
                           <input value={commerceDraft.payment.qrImageUrl} onChange={e => updateCommercePaymentDraft({ qrImageUrl: e.target.value.trim() })} className="mt-3 w-full rounded-xl border bg-white px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500" placeholder="Or paste QR image URL (optional)" />
@@ -8068,7 +8204,7 @@ export default function App() {
                           : 'Saving updates the live checkout receiving source. Existing purchases and payment references are not changed.'}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => { setCommerceDraft(commerceSettings); setCommerceSettingsError('') }} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
+                        <button type="button" onClick={requestResetCommerceChanges} className="rounded-full border bg-white px-4 py-2.5 text-xs font-extrabold">Reset Changes</button>
                         <button type="button" onClick={() => void saveCommerceSettings()} disabled={commerceSettingsSaving || commerceQrUploading} className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white disabled:opacity-60">{commerceSettingsSaving ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {commerceSettingsSaving ? 'Saving…' : adminTab === 'plan-settings' ? 'Save Plan Settings' : 'Save Payment Settings'}</button>
                       </div>
                     </div>
@@ -8107,8 +8243,8 @@ export default function App() {
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a href={`tel:+91${req.mobile}`} className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white"><Phone className="h-3 w-3" /> Call User</a>
                           <a href={`https://wa.me/91${req.mobile}?text=${encodeURIComponent('Hi ' + req.name + ', I am M Divakar Reddy from PharmaSales Jobs. I am reviewing your account deletion request.')}`} target="_blank" className="flex items-center gap-1 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white"><MessageCircle className="h-3 w-3" /> WhatsApp</a>
-                          <button onClick={() => handleRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
-                          <button onClick={() => handleApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
+                          <button onClick={() => requestRejectDeletionRequest(req)} className="ml-auto flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-bold text-red-600"><X className="h-3.5 w-3.5" /> Reject Request</button>
+                          <button onClick={() => requestApproveDeletionRequest(req)} className="flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow"><Trash2 className="h-3.5 w-3.5" /> Approve &amp; Delete Account</button>
                         </div>
                         <p className="mt-2 text-[11px] font-semibold text-red-600">Approval permanently deletes this Job Seeker account and frees the mobile number.</p>
                       </div>
@@ -8204,7 +8340,7 @@ export default function App() {
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-base font-extrabold">All Vacancies ({jobs.length})</p>
-                    <button onClick={handleClearAllVacancies} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                    <button onClick={requestClearAllVacancies} className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {jobs.length === 0 && <p className="rounded-xl bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No vacancies. Post your first vacancy from the Post Vacancy tab.</p>}
@@ -8216,7 +8352,7 @@ export default function App() {
                           <p className="text-xs text-slate-500">{job.hq} ({job.state}) • {job.type} • {job.ctc} • {job.posted}</p>
                         </div>
                         <button onClick={() => setSelected(job)} className="rounded-full border px-3 py-1.5 text-xs font-bold">View</button>
-                        <button onClick={() => handleDeleteJob(job.id)} className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+                        <button onClick={() => requestDeleteJob(job)} className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
                       </div>
                     ))}
                   </div>
@@ -8251,8 +8387,8 @@ export default function App() {
                       <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
                       <button onClick={() => setAdminTab('plan-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><Crown className="h-3.5 w-3.5" /> Plan Settings</button>
                       <button onClick={() => setAdminTab('payment-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-emerald-600 py-2.5 text-xs font-extrabold text-white"><Wallet className="h-3.5 w-3.5" /> Payment Settings</button>
-                      <button onClick={handleClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={handleAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
+                      <button onClick={requestClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
+                      <button onClick={requestAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                     </div>
                     <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
@@ -8851,7 +8987,7 @@ export default function App() {
                   </div>
                   <div className="mt-5 flex gap-2">
                     <button onClick={() => setShowDeletionRequestModal(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Close</button>
-                    <button onClick={handleWithdrawDeletionRequest} className="flex-1 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Withdraw Request</button>
+                    <button onClick={requestWithdrawDeletionRequest} className="flex-1 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white">Withdraw Request</button>
                   </div>
                 </div>
               ) : (
@@ -8908,6 +9044,29 @@ export default function App() {
               <div className="mt-5 flex gap-2">
                 <button onClick={() => setShowDeleteAccountConfirm(false)} className="flex-1 rounded-full border py-2.5 text-sm font-bold">Cancel</button>
                 <button onClick={handleDeleteRecruiterAccount} className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700"><Trash2 className="h-4 w-4" /> Delete Account</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
+      {/* UNIVERSAL CONFIRMATION — logout, delete/remove, publish and Admin decisions */}
+      <AnimatePresence>
+        {confirmationRequest && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4" onClick={closeConfirmation} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }} onClick={e => e.stopPropagation()} className="w-full max-w-[440px] rounded-3xl bg-white p-6 shadow-2xl">
+              <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${confirmationRequest.tone === 'danger' ? 'bg-red-50 text-red-600' : confirmationRequest.tone === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-sky-50 text-sky-600'}`}>
+                {confirmationRequest.tone === 'danger' ? <Trash2 className="h-7 w-7" /> : confirmationRequest.tone === 'warning' ? <AlertTriangle className="h-7 w-7" /> : <ShieldCheck className="h-7 w-7" />}
+              </div>
+              <h3 id="confirmation-title" className="mt-3 text-center text-xl font-extrabold leading-tight">{confirmationRequest.title}</h3>
+              <p id="confirmation-message" className="mt-2 whitespace-pre-line text-center text-sm leading-relaxed text-slate-600">{confirmationRequest.message}</p>
+              <div className="mt-5 flex gap-2">
+                <button type="button" onClick={closeConfirmation} disabled={confirmationBusy} className="flex-1 rounded-full border py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                <button type="button" onClick={() => void confirmPendingAction()} disabled={confirmationBusy} className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${confirmationRequest.tone === 'danger' ? 'bg-red-600 hover:bg-red-700' : confirmationRequest.tone === 'warning' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-sky-600 hover:bg-sky-700'}`}>
+                  {confirmationBusy ? <RotateCcw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {confirmationBusy ? 'Please wait…' : confirmationRequest.confirmLabel}
+                </button>
               </div>
             </motion.div>
           </motion.div>
