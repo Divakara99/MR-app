@@ -1,18 +1,22 @@
--- PharmaSales Jobs — Supabase account backend
+-- PharmaSales Jobs — Supabase Auth + app-data backend
 -- Run this once in Supabase Dashboard → SQL Editor.
 --
--- Account flow used by the app for Job Seekers and Recruiters:
--- 1) Registration collects full name, mobile number, correct email ID and a
---    password of at least 6 characters. Passwords are stored only as hashes.
--- 2) Login accepts either the registered mobile number OR registered email ID
---    together with the password.
--- 3) Forgot Password requires the registered mobile number and email ID to
---    match the same selected-role account before a new password is set.
--- The app keeps only role + mobile in its local session until the user logs out.
--- All three roles are managed here: Job Seekers + Recruiters in
--- public.app_accounts, Admin in public.app_admins (bcrypt), and every
--- Starter/Pro purchase + payment in public.app_purchases for the Admin
--- Users / Purchase / Payment lists.
+-- Supabase Auth (`auth.users`) is the only login/session authority for Job
+-- Seekers, Recruiters and Admin:
+-- 1) Registration first creates the Supabase Auth account with full name,
+--    mobile number, correct email ID and a password of at least 6
+--    characters stored as Auth user metadata for first-login profile
+--    creation. Email confirmation remains ON.
+-- 2) After confirming email, login accepts registered mobile OR email:
+--    the profile lookup resolves mobile to the registered email and
+--    Supabase Auth verifies the password. Google uses the same Auth session.
+-- 3) Forgot Password uses Supabase's secure email reset link. A pre-Auth
+--    profile links automatically when its owner creates the Auth account
+--    once with the same registered email/mobile and confirms/logs in.
+-- Job Seeker + Recruiter profiles live in public.app_accounts linked by
+-- auth_user_id. Admin is an allowlist row in public.app_admins linked to a
+-- manually created Supabase Auth user. Purchases/payments remain in
+-- public.app_purchases for Admin Users / Purchase / Payment lists.
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -101,6 +105,7 @@ create table if not exists public.app_accounts (
   mobile text not null check (mobile ~ '^[6-9][0-9]{9}$'),
   email text not null check (public.is_valid_app_email(email)),
   password_hash text,
+  auth_user_id uuid references auth.users(id) on delete set null,
   profile jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -110,6 +115,11 @@ create table if not exists public.app_accounts (
 create index if not exists app_accounts_mobile_idx on public.app_accounts (mobile);
 create index if not exists app_accounts_candidate_idx
   on public.app_accounts (role, updated_at desc);
+create index if not exists app_accounts_auth_user_idx
+  on public.app_accounts (auth_user_id);
+create unique index if not exists app_accounts_auth_role_uidx
+  on public.app_accounts (auth_user_id, role)
+  where auth_user_id is not null;
 
 -- Existing installations created before password login get the nullable hash
 -- column. Those legacy rows set their first password in the app.
@@ -518,7 +528,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Admin-managed data: Purchases/Payments + Admin accounts (all three roles).
 -- Job Seeker and Recruiter accounts live in public.app_accounts above.
--- Admin accounts live in public.app_admins with bcrypt-hashed passwords.
+-- Admin is an allowlist row in public.app_admins linked to a Supabase Auth user.
 -- The Admin dashboard reads these through the admin_list_* RPCs below.
 -- ---------------------------------------------------------------------------
 
@@ -549,7 +559,8 @@ create table if not exists public.app_admins (
   admin_id text not null unique,
   name text not null,
   email text not null default '',
-  password_hash text not null,
+  password_hash text,
+  auth_user_id uuid unique references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   last_login_at timestamptz
 );
@@ -557,10 +568,17 @@ create table if not exists public.app_admins (
 alter table public.app_admins enable row level security;
 revoke all on table public.app_admins from anon, authenticated;
 
--- Default Admin account. Change this password after first login
--- (Admin Dashboard → Settings), which updates the bcrypt hash here too.
-insert into public.app_admins (admin_id, name, email, password_hash)
-values ('divakar', 'M Divakar Reddy', 'akhildivakara@gmail.com', extensions.crypt('Divakar@2026', extensions.gen_salt('bf', 12)))
+alter table public.app_admins
+  add column if not exists auth_user_id uuid unique references auth.users(id) on delete set null;
+alter table public.app_admins
+  alter column password_hash drop not null;
+
+-- Admin allowlist row only. No Admin password is seeded or stored in this
+-- repository. Create the corresponding Supabase Auth user once in
+-- Supabase Dashboard -> Authentication -> Users -> Add user for the
+-- registered Admin email; the app links it on first successful Admin login.
+insert into public.app_admins (admin_id, name, email)
+values ('divakar', 'M Divakar Reddy', 'akhildivakara@gmail.com')
 on conflict (admin_id) do nothing;
 
 -- Admin Users List: every Job Seeker + Recruiter account (never returns hashes).
@@ -1141,16 +1159,711 @@ revoke all on function public.set_app_setting_admin(text, text, text, jsonb) fro
 grant execute on function public.get_app_setting(text) to anon, authenticated;
 grant execute on function public.set_app_setting_admin(text, text, text, jsonb) to anon, authenticated;
 
+
+-- ---------------------------------------------------------------------------
+-- Supabase Auth-only identities (applied live as migration
+-- `supabase_auth_profiles_and_admin_link`).
+--
+-- Authentication/session authority is Supabase Auth (`auth.users`) for Job
+-- Seekers, Recruiters and Admin. `public.app_accounts` is now profile/app
+-- data linked by `auth_user_id`; its legacy `password_hash` column is kept
+-- only so pre-Auth rows can be recognized/linked when their owner creates a
+-- Supabase Auth account once with the same registered email/mobile.
+-- `public.app_admins` is an Admin allowlist row linked to the Admin Auth
+-- user. Create that Auth user once in Supabase Dashboard -> Authentication
+-- -> Users -> Add user for the registered Admin email; the app links it on
+-- first successful Admin Auth login.
+-- ---------------------------------------------------------------------------
+
+alter table public.app_accounts
+  add column if not exists auth_user_id uuid references auth.users(id) on delete set null;
+
+create index if not exists app_accounts_auth_user_idx
+  on public.app_accounts (auth_user_id);
+
+create unique index if not exists app_accounts_auth_role_uidx
+  on public.app_accounts (auth_user_id, role)
+  where auth_user_id is not null;
+
+alter table public.app_admins
+  add column if not exists auth_user_id uuid unique references auth.users(id) on delete set null;
+
+alter table public.app_admins
+  alter column password_hash drop not null;
+
+create or replace function public.normalize_app_mobile(p_mobile text)
+returns text
+language sql
+immutable
+set search_path = public
+as $$
+  select case
+    when length(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')) = 12
+      and left(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 2) = '91'
+    then right(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 10)
+    when length(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')) = 11
+      and left(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 1) = '0'
+    then right(regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g'), 10)
+    else regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')
+  end;
+$$;
+
+create or replace function public.current_auth_email()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select lower(coalesce(
+    (select u.email from auth.users u where u.id = auth.uid()),
+    auth.jwt() ->> 'email',
+    ''
+  ));
+$$;
+
+drop function if exists public.find_app_accounts_by_mobile(text);
+create function public.find_app_accounts_by_mobile(p_mobile text)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select a.role, a.name, a.mobile, a.email,
+    (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+    a.auth_user_id,
+    (a.auth_user_id is not null) as auth_linked,
+    a.profile, a.created_at
+  from public.app_accounts a
+  where a.mobile = public.normalize_app_mobile(p_mobile)
+  order by a.created_at asc;
+$$;
+
+drop function if exists public.find_app_accounts_by_identifier(text);
+create function public.find_app_accounts_by_identifier(p_identifier text)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_identifier text := trim(coalesce(p_identifier, ''));
+begin
+  if position('@' in v_identifier) > 0 then
+    return query
+    select a.role, a.name, a.mobile, a.email,
+      (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+      a.auth_user_id,
+      (a.auth_user_id is not null) as auth_linked,
+      a.profile, a.created_at
+    from public.app_accounts a
+    where lower(a.email) = lower(v_identifier)
+    order by a.created_at asc;
+    return;
+  end if;
+
+  return query
+  select a.role, a.name, a.mobile, a.email,
+    (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+    a.auth_user_id,
+    (a.auth_user_id is not null) as auth_linked,
+    a.profile, a.created_at
+  from public.app_accounts a
+  where a.mobile = public.normalize_app_mobile(v_identifier)
+  order by a.created_at asc;
+end;
+$$;
+
+create or replace function public.resolve_auth_login_profile(
+  p_role text,
+  p_identifier text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_identifier text := trim(coalesce(p_identifier, ''));
+  v_role text := lower(trim(coalesce(p_role, '')));
+begin
+  if v_role not in ('seeker', 'recruiter') then
+    return;
+  end if;
+
+  if position('@' in v_identifier) > 0 then
+    return query
+    select a.role, a.name, a.mobile, a.email,
+      (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+      a.auth_user_id,
+      (a.auth_user_id is not null) as auth_linked,
+      a.profile, a.created_at
+    from public.app_accounts a
+    where a.role = v_role and lower(a.email) = lower(v_identifier)
+    order by a.created_at asc
+    limit 1;
+    return;
+  end if;
+
+  return query
+  select a.role, a.name, a.mobile, a.email,
+    (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+    a.auth_user_id,
+    (a.auth_user_id is not null) as auth_linked,
+    a.profile, a.created_at
+  from public.app_accounts a
+  where a.role = v_role and a.mobile = public.normalize_app_mobile(v_identifier)
+  order by a.created_at asc
+  limit 1;
+end;
+$$;
+
+create or replace function public.list_auth_profiles_for_current_user()
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select a.role, a.name, a.mobile, a.email, true as has_password,
+    a.auth_user_id, true as auth_linked, a.profile, a.created_at
+  from public.app_accounts a
+  where auth.uid() is not null and a.auth_user_id = auth.uid()
+  order by a.created_at asc;
+$$;
+
+create or replace function public.upsert_auth_profile(
+  p_role text,
+  p_name text,
+  p_mobile text,
+  p_email text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+declare
+  v_uid uuid := auth.uid();
+  v_auth_email text := public.current_auth_email();
+  v_role text := lower(trim(coalesce(p_role, '')));
+  v_name text := trim(regexp_replace(coalesce(p_name, ''), '[[:space:]]+', ' ', 'g'));
+  v_mobile text := public.normalize_app_mobile(p_mobile);
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_existing public.app_accounts%rowtype;
+begin
+  if v_uid is null then
+    raise exception 'Please login again to save your account profile.' using errcode = '28000';
+  end if;
+  if v_role not in ('seeker', 'recruiter') then
+    raise exception 'Please select Job Seeker or Recruiter account type.' using errcode = '23514';
+  end if;
+  if char_length(v_name) < 3 then
+    raise exception 'Enter your full name (minimum 3 letters).' using errcode = '23514';
+  end if;
+  if v_mobile !~ '^[6-9][0-9]{9}$' then
+    raise exception 'Enter a correct 10-digit Indian mobile number.' using errcode = '23514';
+  end if;
+  if not public.is_valid_app_email(v_email) then
+    raise exception 'Please enter a correct email ID. Gmail IDs must end with @gmail.com.' using errcode = '23514';
+  end if;
+  if v_auth_email = '' or v_auth_email <> v_email then
+    raise exception 'Email ID must match your Supabase Auth login email.' using errcode = '23514';
+  end if;
+  if v_role = 'seeker' and exists (
+    select 1 from public.app_accounts blocker
+    where blocker.role = 'recruiter' and blocker.mobile = v_mobile
+  ) then
+    raise exception 'This mobile is registered as a Recruiter account. Job Seeker registration is blocked until that Recruiter account is deleted.' using errcode = '23505';
+  end if;
+
+  select * into v_existing
+  from public.app_accounts acct
+  where acct.auth_user_id = v_uid and acct.role = v_role
+  limit 1;
+
+  if found then
+    if exists (
+      select 1 from public.app_accounts other_account
+      where other_account.id <> v_existing.id and other_account.role = v_role and other_account.mobile = v_mobile
+    ) then
+      raise exception 'This mobile number is already registered for this account type.' using errcode = '23505';
+    end if;
+    if exists (
+      select 1 from public.app_accounts other_account
+      where other_account.id <> v_existing.id and other_account.role = v_role and lower(other_account.email) = v_email
+    ) then
+      raise exception 'This email ID is already registered with another mobile number for this account type.' using errcode = '23505';
+    end if;
+    if v_existing.mobile <> v_mobile and exists (
+      select 1 from public.app_user_states state_row
+      where state_row.role = v_role and state_row.mobile = v_existing.mobile
+    ) then
+      raise exception 'This mobile number cannot be changed here because saved account activity is linked to it. Please contact support.' using errcode = '23514';
+    end if;
+
+    update public.app_accounts acct
+    set name = v_name,
+        mobile = v_mobile,
+        email = v_email,
+        password_hash = null,
+        updated_at = now()
+    where acct.id = v_existing.id
+    returning * into v_existing;
+
+    return query
+    select a.role, a.name, a.mobile, a.email, true, a.auth_user_id, true, a.profile, a.created_at
+    from public.app_accounts a where a.id = v_existing.id;
+    return;
+  end if;
+
+  select * into v_existing
+  from public.app_accounts acct
+  where acct.role = v_role and acct.mobile = v_mobile
+  limit 1;
+
+  if found then
+    if v_existing.auth_user_id is null and lower(v_existing.email) = v_email then
+      update public.app_accounts acct
+      set auth_user_id = v_uid,
+          name = v_name,
+          email = v_email,
+          password_hash = null,
+          updated_at = now()
+      where acct.id = v_existing.id
+      returning * into v_existing;
+
+      return query
+      select a.role, a.name, a.mobile, a.email, true, a.auth_user_id, true, a.profile, a.created_at
+      from public.app_accounts a where a.id = v_existing.id;
+      return;
+    end if;
+    if lower(v_existing.email) <> v_email then
+      raise exception 'This mobile number is already registered with another email ID for this account type.' using errcode = '23505';
+    end if;
+    raise exception 'This mobile number is already registered for this account type.' using errcode = '23505';
+  end if;
+
+  if exists (
+    select 1 from public.app_accounts email_owner
+    where email_owner.role = v_role and lower(email_owner.email) = v_email
+  ) then
+    raise exception 'This email ID is already registered with another mobile number for this account type.' using errcode = '23505';
+  end if;
+
+  insert into public.app_accounts (role, name, mobile, email, password_hash, auth_user_id)
+  values (v_role, v_name, v_mobile, v_email, null, v_uid)
+  returning * into v_existing;
+
+  return query
+  select a.role, a.name, a.mobile, a.email, true, a.auth_user_id, true, a.profile, a.created_at
+  from public.app_accounts a where a.id = v_existing.id;
+end;
+$$;
+
+create or replace function public.update_auth_profile_name(
+  p_role text,
+  p_name text
+)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := trim(regexp_replace(coalesce(p_name, ''), '[[:space:]]+', ' ', 'g'));
+begin
+  if auth.uid() is null then
+    raise exception 'Please login again to update your account.' using errcode = '28000';
+  end if;
+  if char_length(v_name) < 3 then
+    raise exception 'Enter your full name (minimum 3 letters).' using errcode = '23514';
+  end if;
+  return query
+  update public.app_accounts a
+  set name = v_name, updated_at = now()
+  where a.role = lower(trim(coalesce(p_role, ''))) and a.auth_user_id = auth.uid()
+  returning a.role, a.name, a.mobile, a.email, true, a.auth_user_id, true, a.profile, a.created_at;
+end;
+$$;
+
+create or replace function public.update_auth_seeker_profile(p_profile jsonb)
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  update public.app_accounts a
+  set profile = coalesce(p_profile, '{}'::jsonb), updated_at = now()
+  where a.role = 'seeker' and auth.uid() is not null and a.auth_user_id = auth.uid()
+  returning a.role, a.name, a.mobile, a.email, true, a.auth_user_id, true, a.profile, a.created_at;
+$$;
+
+create or replace function public.delete_auth_profile(p_role text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  if auth.uid() is null then
+    return false;
+  end if;
+  delete from public.app_accounts a
+  where a.role = lower(trim(coalesce(p_role, ''))) and a.auth_user_id = auth.uid();
+  get diagnostics deleted_count = row_count;
+  return deleted_count > 0;
+end;
+$$;
+
+create or replace function public.is_current_user_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select auth.uid() is not null and exists (
+    select 1
+    from public.app_admins a
+    where a.auth_user_id = auth.uid()
+       or (a.auth_user_id is null and lower(a.email) = public.current_auth_email())
+  );
+$$;
+
+create or replace function public.link_current_admin_auth_user()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_email text := public.current_auth_email();
+  v_admin public.app_admins%rowtype;
+begin
+  if v_uid is null or v_email = '' then
+    return false;
+  end if;
+
+  select * into v_admin from public.app_admins a where a.auth_user_id = v_uid limit 1;
+  if found then
+    update public.app_admins set last_login_at = now() where id = v_admin.id;
+    return true;
+  end if;
+
+  select * into v_admin from public.app_admins a where lower(a.email) = v_email limit 1;
+  if not found then
+    return false;
+  end if;
+  if v_admin.auth_user_id is not null and v_admin.auth_user_id <> v_uid then
+    return false;
+  end if;
+
+  update public.app_admins
+  set auth_user_id = v_uid, last_login_at = now()
+  where id = v_admin.id;
+  return true;
+end;
+$$;
+
+create or replace function public.get_admin_auth_email(p_identifier text)
+returns table (email text, auth_linked boolean)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select a.email, (a.auth_user_id is not null) as auth_linked
+  from public.app_admins a
+  where lower(a.admin_id) = lower(trim(coalesce(p_identifier, '')))
+     or lower(a.email) = lower(trim(coalesce(p_identifier, '')))
+     or (lower(trim(coalesce(p_identifier, ''))) = 'admin' and a.admin_id = 'divakar')
+  limit 1;
+$$;
+
+drop function if exists public.admin_list_accounts();
+create function public.admin_list_accounts()
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select a.role, a.name, a.mobile, a.email,
+    (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+    a.auth_user_id,
+    (a.auth_user_id is not null) as auth_linked,
+    a.profile, a.created_at
+  from public.app_accounts a
+  order by a.created_at desc;
+$$;
+
+create or replace function public.admin_list_accounts_auth()
+returns table (
+  role text,
+  name text,
+  mobile text,
+  email text,
+  has_password boolean,
+  auth_user_id uuid,
+  auth_linked boolean,
+  profile jsonb,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_current_user_admin() then
+    return;
+  end if;
+  return query
+  select a.role, a.name, a.mobile, a.email,
+    (a.password_hash is not null or a.auth_user_id is not null) as has_password,
+    a.auth_user_id,
+    (a.auth_user_id is not null) as auth_linked,
+    a.profile, a.created_at
+  from public.app_accounts a
+  order by a.created_at desc;
+end;
+$$;
+
+create or replace function public.admin_list_purchases_auth()
+returns table (
+  id text,
+  role text,
+  name text,
+  mobile text,
+  email text,
+  plan text,
+  amount_inr numeric,
+  method text,
+  status text,
+  transaction_id text,
+  purchased_at timestamptz,
+  expires_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_current_user_admin() then
+    return;
+  end if;
+  return query
+  select p.id::text, p.role, p.name, p.mobile, p.email, p.plan, p.amount_inr, p.method, p.status, p.transaction_id, p.purchased_at, p.expires_at
+  from public.app_purchases p
+  order by p.purchased_at desc;
+end;
+$$;
+
+create or replace function public.admin_delete_app_account_auth(
+  p_role text,
+  p_mobile text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  if not public.is_current_user_admin() then
+    return false;
+  end if;
+  delete from public.app_accounts a
+  where a.role = lower(trim(coalesce(p_role, '')))
+    and a.mobile = public.normalize_app_mobile(p_mobile);
+  get diagnostics deleted_count = row_count;
+  return deleted_count > 0;
+end;
+$$;
+
+create or replace function public.set_app_setting_admin_auth(
+  p_setting_key text,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_setting_key text := lower(trim(coalesce(p_setting_key, '')));
+begin
+  if not public.is_current_user_admin() then
+    return false;
+  end if;
+  if v_setting_key not in ('commerce')
+     or p_payload is null
+     or jsonb_typeof(p_payload) <> 'object'
+     or octet_length(p_payload::text) > 1048576 then
+    return false;
+  end if;
+  insert into public.app_settings (setting_key, payload)
+  values (v_setting_key, p_payload)
+  on conflict (setting_key)
+  do update set payload = excluded.payload, updated_at = now();
+  return true;
+end;
+$$;
+
+revoke all on function public.normalize_app_mobile(text) from public;
+revoke all on function public.current_auth_email() from public;
+revoke all on function public.find_app_accounts_by_mobile(text) from public;
+revoke all on function public.find_app_accounts_by_identifier(text) from public;
+revoke all on function public.resolve_auth_login_profile(text, text) from public;
+revoke all on function public.list_auth_profiles_for_current_user() from public;
+revoke all on function public.upsert_auth_profile(text, text, text, text) from public;
+revoke all on function public.update_auth_profile_name(text, text) from public;
+revoke all on function public.update_auth_seeker_profile(jsonb) from public;
+revoke all on function public.delete_auth_profile(text) from public;
+revoke all on function public.is_current_user_admin() from public;
+revoke all on function public.link_current_admin_auth_user() from public;
+revoke all on function public.get_admin_auth_email(text) from public;
+revoke all on function public.admin_list_accounts() from public;
+revoke all on function public.admin_list_accounts_auth() from public;
+revoke all on function public.admin_list_purchases_auth() from public;
+revoke all on function public.admin_delete_app_account_auth(text, text) from public;
+revoke all on function public.set_app_setting_admin_auth(text, jsonb) from public;
+
+grant execute on function public.normalize_app_mobile(text) to anon, authenticated;
+grant execute on function public.current_auth_email() to authenticated;
+grant execute on function public.find_app_accounts_by_mobile(text) to anon, authenticated;
+grant execute on function public.find_app_accounts_by_identifier(text) to anon, authenticated;
+grant execute on function public.resolve_auth_login_profile(text, text) to anon, authenticated;
+grant execute on function public.list_auth_profiles_for_current_user() to authenticated;
+grant execute on function public.upsert_auth_profile(text, text, text, text) to authenticated;
+grant execute on function public.update_auth_profile_name(text, text) to authenticated;
+grant execute on function public.update_auth_seeker_profile(jsonb) to authenticated;
+grant execute on function public.delete_auth_profile(text) to authenticated;
+grant execute on function public.is_current_user_admin() to authenticated;
+grant execute on function public.link_current_admin_auth_user() to authenticated;
+grant execute on function public.get_admin_auth_email(text) to anon, authenticated;
+grant execute on function public.admin_list_accounts() to anon, authenticated;
+grant execute on function public.admin_list_accounts_auth() to authenticated;
+grant execute on function public.admin_list_purchases_auth() to authenticated;
+grant execute on function public.admin_delete_app_account_auth(text, text) to authenticated;
+grant execute on function public.set_app_setting_admin_auth(text, jsonb) to authenticated;
+
+-- Auth-only client target state: after the Auth-only frontend is deployed,
+-- legacy custom-password RPCs are no longer callable by browser clients.
+-- (The live additive migration intentionally kept these grants until the new
+-- client replaced the old live client; run this block as the post-deploy
+-- cleanup if the functions still exist.)
+revoke execute on function public.register_app_account(text, text, text, text, text) from anon, authenticated;
+revoke execute on function public.login_app_account(text, text, text) from anon, authenticated;
+revoke execute on function public.set_app_password(text, text, text) from anon, authenticated;
+revoke execute on function public.reset_app_password_with_registered_details(text, text, text, text) from anon, authenticated;
+revoke execute on function public.update_app_account_email(text, text, text, text) from anon, authenticated;
+revoke execute on function public.update_seeker_profile(text, jsonb) from anon, authenticated;
+revoke execute on function public.delete_app_account(text, text) from anon, authenticated;
+revoke execute on function public.admin_login(text, text) from anon, authenticated;
+revoke execute on function public.admin_change_password(text, text, text) from anon, authenticated;
+revoke execute on function public.admin_reset_password_with_registered_details(text, text, text) from anon, authenticated;
+revoke execute on function public.set_app_setting_admin(text, text, text, jsonb) from anon, authenticated;
+revoke execute on function public.admin_list_accounts() from anon, authenticated;
+
 -- IMPORTANT SECURITY NOTE:
--- This schema implements the requested custom mobile/email + password flow and
--- stores passwords only as bcrypt hashes. Forgot Password currently requires
--- both registered identifiers to match because no email/OTP delivery service is
--- connected yet. Before a large public launch, migrate login/recovery to
--- Supabase Auth (or another verified OTP/email-link flow), add rate limiting,
--- and restrict account-lookup responses further. The admin_list_* RPCs return
--- every account/purchase to anon callers who know the function names (same
--- front-end Admin-lock model as the app today) — before a large public launch,
--- move Admin data behind an authenticated admin role or a service-role API.
--- Commerce-setting writes additionally require the current Admin password,
--- but should also move to that authenticated Admin session model. Manual
+-- Supabase Auth is now the login/session authority for Job Seekers,
+-- Recruiters and Admin. Direct table access remains revoked and RLS remains
+-- enabled. The pre-login find/resolve RPCs are intentionally anon-callable
+-- only so login can resolve a registered mobile to its Auth email and show
+-- role blockers; add rate limiting/abuse monitoring before a large launch.
+-- Collection-sync, per-account user-state and purchase-recording RPCs still
+-- accept mobile-keyed parameters for app data compatibility and should get a
+-- follow-up hardening pass to derive identity from auth.uid() (or move to a
+-- protected server-side API) before a large public launch. Manual
 -- UPI/bank transaction references are not independently bank-verified.

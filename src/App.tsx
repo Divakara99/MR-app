@@ -102,6 +102,8 @@ type Account = {
   createdAt: string
   passwordHash?: string
   hasPassword?: boolean
+  authUserId?: string
+  authLinked?: boolean
   profile?: SeekerProfile
 }
 type PurchaseRecord = {
@@ -380,12 +382,12 @@ const maskEmail = (e: string) => e.replace(/^(.{1})(.*)(@.*)$/, (_, a, mid, dom)
 const ADMIN_REGISTERED_EMAIL = 'akhildivakara@gmail.com'
 const ADMIN_IDS = ['divakar', 'admin', ADMIN_REGISTERED_EMAIL]
 const ADMIN_AUTH_KEY = 'mr-admin-auth-v1'
-const ADMIN_PASS_KEY = 'mr-admin-pass-v1'
 const ADMIN_JOBS_KEY = 'mr-admin-jobs-v1'
 const PENDING_JOBS_KEY = 'mr-pending-jobs-v1'
 const ACCOUNTS_KEY = 'mr-accounts-v1'
 const SESSION_KEY = 'mr-session-v1'
 const GOOGLE_ENTRY_ROLE_KEY = 'mr-google-entry-role-v1'
+const AUTH_RECOVERY_TARGET_KEY = 'mr-auth-recovery-target-v1'
 const DELETION_REQUESTS_KEY = 'mr-deletion-requests-v1'
 const SUPPORT_TICKETS_KEY = 'mr-support-tickets-v1'
 const GUEST_SUPPORT_TICKET_IDS_KEY = 'mr-guest-support-ticket-ids-v1'
@@ -628,52 +630,37 @@ const getEmailValidationError = (value: string) => {
 }
 const isValidEmail = (value: string) => validateEmailAddress(value).error === null
 const MIN_PASSWORD_LENGTH = 6
-const PASSWORD_HASH_ITERATIONS = 120000
 const getPasswordValidationError = (password: string, label = 'Password') => {
   if (!password) return `Enter your ${label.toLowerCase()}.`
   if (password.length < MIN_PASSWORD_LENGTH) return `${label} must be at least ${MIN_PASSWORD_LENGTH} characters.`
   return null
 }
-const hasAccountPassword = (account?: Account | null) => Boolean(account?.passwordHash || account?.hasPassword)
-const bytesToBase64 = (bytes: Uint8Array) => {
-  let binary = ''
-  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
-  return btoa(binary)
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error) return String((error as { message?: unknown }).message ?? '')
+  return ''
 }
-const base64ToBytes = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
-const createLocalPasswordHash = async (password: string) => {
-  if (!globalThis.crypto?.subtle || !globalThis.crypto?.getRandomValues) throw new Error('Secure password storage is not available in this browser')
-  const salt = globalThis.crypto.getRandomValues(new Uint8Array(16))
-  const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await globalThis.crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: PASSWORD_HASH_ITERATIONS, hash: 'SHA-256' },
-    key,
-    256,
-  )
-  return `pbkdf2_sha256$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(new Uint8Array(bits))}`
-}
-const verifyLocalPasswordHash = async (password: string, storedHash?: string) => {
-  if (!storedHash || !globalThis.crypto?.subtle) return false
-  const [scheme, iterationsText, saltText, expectedText] = storedHash.split('$')
-  const iterations = Number(iterationsText)
-  if (scheme !== 'pbkdf2_sha256' || !Number.isInteger(iterations) || iterations < 10000 || !saltText || !expectedText) return false
-  try {
-    const salt = base64ToBytes(saltText)
-    const expected = base64ToBytes(expectedText)
-    const key = await globalThis.crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
-    const bits = await globalThis.crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
-      key,
-      expected.length * 8,
-    )
-    const actual = new Uint8Array(bits)
-    if (actual.length !== expected.length) return false
-    let difference = 0
-    actual.forEach((byte, index) => { difference |= byte ^ expected[index] })
-    return difference === 0
-  } catch {
-    return false
+type MappedAuthError = { field?: AuthField; message: string }
+const mapAuthError = (error: unknown, fallback: string, emailField: AuthField = 'email'): MappedAuthError => {
+  const raw = getErrorMessage(error).trim()
+  const lower = raw.toLowerCase()
+  if (lower.includes('email not confirmed') || lower.includes('confirm your email')) {
+    return { field: emailField, message: 'Please confirm your email ID from the Supabase email first, then login with your registered details.' }
   }
+  if (lower.includes('invalid login credentials')) {
+    return { field: 'password', message: 'Wrong password. Please check your password or use Forgot Password below.' }
+  }
+  if (lower.includes('already registered') || lower.includes('already been registered') || lower.includes('user already exists')) {
+    return { field: emailField, message: 'This email ID already has a Supabase Auth account. Login with its existing password or use Forgot Password.' }
+  }
+  if (lower.includes('mobile')) return { field: 'mobile', message: raw }
+  if (lower.includes('full name') || (lower.includes('name') && lower.includes('minimum'))) return { field: 'name', message: raw }
+  if (lower.includes('password')) return { field: 'password', message: raw }
+  if (lower.includes('email')) return { field: emailField, message: raw }
+  if (raw && raw.length <= 240 && !lower.includes('failed to fetch') && !lower.includes('network') && !lower.includes('fetch')) {
+    return { message: raw }
+  }
+  return { message: fallback }
 }
 type ParsedAuthIdentifier = { kind: 'mobile' | 'email'; value: string; error: string | null }
 const parseAuthIdentifier = (value: string): ParsedAuthIdentifier => {
@@ -693,13 +680,22 @@ const accountMatchesIdentifier = (account: Account, identifier: ParsedAuthIdenti
     : normalizeMobile(account.mobile) === identifier.value
 )
 const mergeAccountLists = (current: Account[], incoming: Account[]) => {
-  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, account]))
+  const clean = (account: Account): Account => {
+    const { passwordHash: _legacyPasswordHash, ...rest } = account
+    void _legacyPasswordHash
+    return rest
+  }
+  const merged = new Map(current.map(account => [`${account.role}:${normalizeMobile(account.mobile)}`, clean(account)]))
   incoming.forEach(account => {
     const key = `${account.role}:${normalizeMobile(account.mobile)}`
     const previous = merged.get(key)
-    merged.set(key, previous?.passwordHash && !account.passwordHash
-      ? { ...account, passwordHash: previous.passwordHash, hasPassword: true }
-      : account)
+    const next = clean(account)
+    merged.set(key, {
+      ...next,
+      authUserId: next.authUserId ?? previous?.authUserId,
+      authLinked: Boolean(next.authLinked || next.authUserId || previous?.authLinked || previous?.authUserId),
+      hasPassword: Boolean(next.authLinked || next.authUserId || previous?.authLinked || previous?.authUserId || next.hasPassword),
+    })
   })
   return Array.from(merged.values())
 }
@@ -709,7 +705,13 @@ const loadAccounts = (): Account[] => {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return (parsed as Account[]).filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
+    return (parsed as Account[])
+      .filter(a => a && (a.role === 'seeker' || a.role === 'recruiter') && a.name && a.mobile && a.email)
+      .map(a => {
+        const { passwordHash: _legacyPasswordHash, ...rest } = a
+        void _legacyPasswordHash
+        return rest
+      })
   } catch { return [] }
 }
 const loadPurchases = (): PurchaseRecord[] => {
@@ -736,14 +738,9 @@ const loadStoredSession = (): { role: EntryRole; mobile: string } | null => {
   } catch { return null }
 }
 const loadSessionAccount = (): Account | null => {
-  const session = loadStoredSession()
-  if (!session) return null
-  const allAccounts = loadAccounts()
-  const account = allAccounts.find(a => a.role === session.role && a.mobile === session.mobile) || null
-  if (!account || !isValidEmail(account.email) || !hasAccountPassword(account)) return null
-  // Standing rule: a Recruiter account on this mobile blocks the Job Seeker session.
-  if (account.role === 'seeker' && allAccounts.some(a => a.role === 'recruiter' && a.mobile === account.mobile)) return null
-  return account
+  // Supabase Auth session is the only proof of login. The stored role/mobile
+  // below is only a preferred-profile hint after Auth verifies the session.
+  return null
 }
 const emptyUserJobState = (): UserJobState => ({
   saved: [],
@@ -859,7 +856,9 @@ const accountFromRemoteRow = (row: RemoteAccountRow): Account => {
     name: row.name,
     mobile: normalizeMobile(row.mobile),
     email: row.email,
-    hasPassword: row.has_password === true,
+    hasPassword: row.has_password === true || row.auth_linked === true || Boolean(row.auth_user_id),
+    authUserId: row.auth_user_id ?? undefined,
+    authLinked: row.auth_linked === true || Boolean(row.auth_user_id),
     createdAt: row.created_at || new Date().toISOString(),
     profile,
   }
@@ -1014,7 +1013,6 @@ export default function App() {
   const [commerceDraft, setCommerceDraft] = useState<CommerceSettings>(() => loadStoredCommerceSettings())
   const [commerceSettingsError, setCommerceSettingsError] = useState('')
   const [commerceSettingsSaving, setCommerceSettingsSaving] = useState(false)
-  const [commerceAdminPassword, setCommerceAdminPassword] = useState('')
   const [commerceQrUploading, setCommerceQrUploading] = useState(false)
   const [checkoutPlan, setCheckoutPlan] = useState<PaidPlanId | null>(null)
   const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>('demo')
@@ -1063,7 +1061,7 @@ export default function App() {
   const [jobs, setJobs] = useState<Job[]>(() => loadInitialJobs())
   useEffect(() => { try { localStorage.setItem(ADMIN_JOBS_KEY, JSON.stringify(jobs)) } catch { /* ignore */ } }, [jobs])
   // Admin auth (M Divakar Reddy only)
-  const [isAdmin, setIsAdmin] = useState(() => { try { return localStorage.getItem(ADMIN_AUTH_KEY) === '1' } catch { return false } })
+  const [isAdmin, setIsAdmin] = useState(false)
   const [adminId, setAdminId] = useState('')
   const [adminPass, setAdminPass] = useState('')
   const [showAdminPass, setShowAdminPass] = useState(false)
@@ -1113,6 +1111,10 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false)
   const [googleAuthLoading, setGoogleAuthLoading] = useState(false)
   const [googlePendingProfile, setGooglePendingProfile] = useState<{ role: EntryRole; name: string; email: string } | null>(null)
+  const [authSessionUser, setAuthSessionUser] = useState<SupabaseUser | null>(null)
+  const [authRecoveryMode, setAuthRecoveryMode] = useState(false)
+  const [adminRecoveryMode, setAdminRecoveryMode] = useState(false)
+  const [adminAuthLoading, setAdminAuthLoading] = useState(false)
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false)
   const [deletionRequests, setDeletionRequests] = useState<AccountDeletionRequest[]>(() => loadDeletionRequests())
   const [showDeletionRequestModal, setShowDeletionRequestModal] = useState(false)
@@ -1204,7 +1206,6 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
-  const remoteSessionRefreshRef = useRef(false)
   const remoteSyncLoadStartedRef = useRef(false)
   const remoteSyncLoadedRef = useRef<Record<string, boolean>>({})
   const remoteSyncPreviousRef = useRef<Record<string, SyncRecord[]>>({})
@@ -1212,6 +1213,8 @@ export default function App() {
   const remoteUserStateLoadedKeyRef = useRef('')
   const remoteUserStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const googleAuthProcessingRef = useRef(false)
+  const authSessionSyncKeyRef = useRef('')
+  const suppressAuthSessionSyncUntilRef = useRef(0)
   const authLookupIdentifierRef = useRef('')
   const rewardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const resetAuthPasswordState = () => {
@@ -1571,9 +1574,8 @@ export default function App() {
   }
 
   // ---- ADMIN: M Divakar Reddy ----
-  // No hard-coded Admin password: the local fallback exists only after a
-  // successful verified Admin login/reset has stored the current password.
-  const storedAdminPassword = () => { try { return localStorage.getItem(ADMIN_PASS_KEY) || '' } catch { return '' } }
+  // No hard-coded or locally stored Admin password. Admin access requires a
+  // verified Supabase Auth session linked to the app_admins allowlist row.
   const openAdmin = (tab: typeof adminTab = 'overview') => {
     if (!isAdmin) {
       setAdminId('')
@@ -1735,17 +1737,27 @@ export default function App() {
   }
   const destinationForRole = (r: EntryRole): typeof page => r === 'recruiter' ? 'recruiters' : 'home'
   const writeAccounts = (nextAccounts: Account[]) => {
-    setAccounts(nextAccounts)
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(nextAccounts)) } catch { /* ignore */ }
-    return nextAccounts
+    const sanitized = nextAccounts.map(account => {
+      const { passwordHash: _legacyPasswordHash, ...rest } = account
+      void _legacyPasswordHash
+      return rest
+    })
+    setAccounts(sanitized)
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(sanitized)) } catch { /* ignore */ }
+    return sanitized
   }
   const mergeAccountsForMobileState = (mobile: string, incoming: Account[]) => {
     setAccounts(prev => {
       const preservedIncoming = incoming.map(account => {
         const local = prev.find(a => a.role === account.role && normalizeMobile(a.mobile) === normalizeMobile(account.mobile))
-        return local?.passwordHash && !account.passwordHash
-          ? { ...account, passwordHash: local.passwordHash, hasPassword: true }
-          : account
+        const { passwordHash: _legacyPasswordHash, ...rest } = account
+        void _legacyPasswordHash
+        return {
+          ...rest,
+          authUserId: rest.authUserId ?? local?.authUserId,
+          authLinked: Boolean(rest.authLinked || rest.authUserId || local?.authLinked || local?.authUserId),
+          hasPassword: Boolean(rest.authLinked || rest.authUserId || local?.authLinked || local?.authUserId || rest.hasPassword),
+        }
       })
       const next = [...prev.filter(a => normalizeMobile(a.mobile) !== normalizeMobile(mobile)), ...preservedIncoming]
       try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
@@ -1873,48 +1885,38 @@ export default function App() {
     if (error) throw error
     return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
   }
-  const loginRemoteAccount = async (role: EntryRole, identifier: string, password: string): Promise<Account | null> => {
-    if (!supabase) return null
-    const { data, error } = await supabase.rpc('login_app_account', {
+  const fetchAuthProfilesForCurrentUser = async (): Promise<Account[]> => {
+    if (!supabase) return []
+    const { data, error } = await supabase.rpc('list_auth_profiles_for_current_user')
+    if (error) throw error
+    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+  }
+  const upsertAuthProfile = async (role: EntryRole, name: string, mobile: string, email: string): Promise<Account> => {
+    if (!supabase) throw new Error('Supabase Auth is not connected. Please try again later.')
+    const { data, error } = await supabase.rpc('upsert_auth_profile', {
       p_role: role,
-      p_identifier: identifier,
-      p_password: password,
+      p_name: name,
+      p_mobile: normalizeMobile(mobile),
+      p_email: email.trim().toLowerCase(),
     })
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role) ?? null
+    const account = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+      .find(a => a.role === role && normalizeMobile(a.mobile) === normalizeMobile(mobile))
+    if (!account) throw new Error('Your Supabase Auth profile was not returned. Please login again.')
+    return account
   }
-  const setRemoteAccountPassword = async (role: EntryRole, mobile: string, password: string): Promise<Account | null> => {
-    if (!supabase) return null
-    const { data, error } = await supabase.rpc('set_app_password', {
-      p_role: role,
-      p_mobile: mobile,
-      p_password: password,
-    })
+  const linkCurrentAdminAuthUser = async (): Promise<boolean> => {
+    if (!supabase) return false
+    const { data, error } = await supabase.rpc('link_current_admin_auth_user')
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
+    return data === true
   }
-  const resetRemoteAccountPassword = async (role: EntryRole, mobile: string, email: string, password: string): Promise<Account | null> => {
+  const fetchAdminAuthEmail = async (identifier: string): Promise<{ email: string; authLinked: boolean } | null> => {
     if (!supabase) return null
-    const { data, error } = await supabase.rpc('reset_app_password_with_registered_details', {
-      p_role: role,
-      p_mobile: mobile,
-      p_email: email,
-      p_password: password,
-    })
+    const { data, error } = await supabase.rpc('get_admin_auth_email', { p_identifier: identifier })
     if (error) throw error
-    return ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === role && a.mobile === mobile) ?? null
-  }
-  const authenticateExistingAccount = async (account: Account, identifier: string, password: string): Promise<Account | null> => {
-    if (supabase) {
-      const remoteAccount = await loginRemoteAccount(account.role, identifier, password)
-      if (remoteAccount) {
-        return account.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: account.passwordHash, hasPassword: true }
-          : remoteAccount
-      }
-    }
-    if (account.passwordHash && await verifyLocalPasswordHash(password, account.passwordHash)) return account
-    return null
+    const row = ((data ?? []) as Array<{ email?: string; auth_linked?: boolean }>)[0]
+    return row?.email ? { email: row.email, authLinked: row.auth_linked === true } : null
   }
   const fetchRemoteCandidateProfiles = async () => {
     if (!supabase) return
@@ -2019,8 +2021,8 @@ export default function App() {
     setAdminDataLoading(true)
     try {
       const [usersResult, purchasesResult] = await Promise.all([
-        supabase.rpc('admin_list_accounts'),
-        supabase.rpc('admin_list_purchases'),
+        supabase.rpc('admin_list_accounts_auth'),
+        supabase.rpc('admin_list_purchases_auth'),
       ])
       if (!usersResult.error && Array.isArray(usersResult.data)) setRemoteAdminUsers(usersResult.data as RemoteAccountRow[])
       if (!purchasesResult.error && Array.isArray(purchasesResult.data)) setRemotePurchases((purchasesResult.data as RemotePurchaseRow[]).map(purchaseFromRemoteRow))
@@ -2036,16 +2038,22 @@ export default function App() {
     if (!isAdmin || (adminTab !== 'plan-settings' && adminTab !== 'payment-settings')) return
     setCommerceDraft(commerceSettings)
     setCommerceSettingsError('')
-    setCommerceAdminPassword(storedAdminPassword())
     // Refresh the editor from the live settings each time Admin opens it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, adminTab])
   const deleteRemoteAccount = async (role: EntryRole, mobile: string) => {
     if (!supabase) return
-    const { error } = await supabase.rpc('delete_app_account', { p_role: role, p_mobile: mobile })
+    if (isAdmin) {
+      const { data, error } = await supabase.rpc('admin_delete_app_account_auth', { p_role: role, p_mobile: normalizeMobile(mobile) })
+      if (error) throw error
+      if (data === false) throw new Error('Account could not be deleted by Admin.')
+      return
+    }
+    const { data, error } = await supabase.rpc('delete_auth_profile', { p_role: role })
     if (error) throw error
+    if (data === false) throw new Error('Account profile could not be deleted.')
   }
-  const completeUserAuth = (account: Account, isNewAccount: boolean) => {
+  const completeUserAuth = (account: Account, isNewAccount: boolean, options?: { silent?: boolean }) => {
     setSelected(null)
     setShowPricing(false)
     setShowRewarded(null)
@@ -2067,12 +2075,109 @@ export default function App() {
     if (account.role === 'seeker' && !isSeekerProfileComplete(account.profile)) {
       setSeekerProfileForm(account.profile ?? EMPTY_SEEKER_PROFILE)
       setSeekerProfileError('')
-      setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
+      if (!options?.silent) setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}! Complete your required job profile to apply.` : `Welcome back, ${account.name}! Please complete your required job profile to apply.`)
       navigate('profile', { resetHistory: true })
       return
     }
-    setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
+    if (!options?.silent) setToast(isNewAccount ? `Account created ✅ Welcome, ${account.name}!` : `Welcome back, ${account.name}! You will stay logged in until you logout ✅`)
     navigate(destinationForRole(account.role), { resetHistory: true })
+  }
+  const fetchOrCreateAuthProfiles = async (user: SupabaseUser, preferredRole?: EntryRole | null): Promise<Account[]> => {
+    const profiles = await fetchAuthProfilesForCurrentUser()
+    if (profiles.length > 0) return profiles
+
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
+    const metaRole = metadata.app_role === 'recruiter' || metadata.app_role === 'seeker'
+      ? metadata.app_role as EntryRole
+      : preferredRole ?? null
+    const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+    const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+    if (metaRole && metaName.length >= 3 && isValidMobile(metaMobile) && user.email) {
+      const created = await upsertAuthProfile(metaRole, metaName, metaMobile, user.email)
+      return [created]
+    }
+    return []
+  }
+  const applySupabaseAuthSession = async (
+    user: SupabaseUser,
+    preferredRole?: EntryRole | null,
+    options?: { silent?: boolean; requirePreferredRole?: boolean },
+  ): Promise<Account | null> => {
+    setAuthSessionUser(user)
+
+    const adminLinked = await linkCurrentAdminAuthUser().catch(() => false)
+    if (adminLinked) {
+      setIsAdmin(true)
+      setCurrentUser(null)
+      setHasAuthenticated(false)
+      setEntryRole(null)
+      setAdminError('')
+      setShowAdminForgot(false)
+      setAdminRecoveryMode(false)
+      try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+      try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
+      return null
+    }
+    setIsAdmin(false)
+    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
+
+    const profiles = await fetchOrCreateAuthProfiles(user, preferredRole)
+    if (profiles.length === 0) return null
+    mergeIncomingAccountsState(profiles)
+    if (preferredRole && options?.requirePreferredRole && !profiles.some(a => a.role === preferredRole)) return null
+
+    const storedPreference = loadStoredSession()
+    let chosen = (preferredRole ? profiles.find(a => a.role === preferredRole) : undefined)
+      ?? (storedPreference ? profiles.find(a => a.role === storedPreference.role && normalizeMobile(a.mobile) === storedPreference.mobile) : undefined)
+      ?? profiles[0]
+
+    if (chosen.role === 'seeker') {
+      const recruiterBlock = profiles.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(chosen.mobile))
+      if (recruiterBlock) chosen = recruiterBlock
+    }
+
+    if (user.email && chosen.email.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+      try {
+        chosen = await upsertAuthProfile(chosen.role, chosen.name, chosen.mobile, user.email)
+        mergeIncomingAccountsState([chosen])
+      } catch {
+        // Keep the existing profile if the confirmed Auth email cannot be synced yet.
+      }
+    }
+
+    completeUserAuth({ ...chosen, authUserId: user.id, authLinked: true, hasPassword: true }, false, { silent: options?.silent })
+    return chosen
+  }
+  const routePasswordRecoverySession = (user: SupabaseUser) => {
+    setAuthSessionUser(user)
+    let target = ''
+    try { target = localStorage.getItem(AUTH_RECOVERY_TARGET_KEY) || '' } catch { /* ignore */ }
+    const userEmail = (user.email ?? '').trim().toLowerCase()
+    try { window.history.replaceState({}, document.title, window.location.pathname) } catch { /* ignore */ }
+
+    if (target === 'admin' || userEmail === ADMIN_REGISTERED_EMAIL) {
+      setAdminRecoveryMode(true)
+      setShowAdminForgot(true)
+      setAdminForgotId('divakar')
+      setAdminForgotEmail(userEmail || ADMIN_REGISTERED_EMAIL)
+      setAdminForgotNew('')
+      setAdminForgotConfirm('')
+      setAdminForgotError('')
+      setAdminError('')
+      navigate('admin', { resetHistory: true })
+      setToast('Email verified ✅ Set your new Admin password.')
+      return
+    }
+
+    const role: EntryRole = target.endsWith(':recruiter') ? 'recruiter' : 'seeker'
+    setEntryRole(role)
+    setAuthRecoveryMode(true)
+    setAuthStep('forgot')
+    clearAuthErrors()
+    resetAuthTouched()
+    setAuthForm(prev => ({ ...prev, email: userEmail || prev.email, identifier: userEmail || prev.identifier, password: '', confirmPassword: '' }))
+    navigate('auth', { resetHistory: true })
+    setToast('Email verified ✅ Set your new password.')
   }
   const enterAs = (r: EntryRole) => {
     setEntryRole(r)
@@ -2103,14 +2208,13 @@ export default function App() {
   const clearGoogleAuthReturn = async () => {
     try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
     try { window.history.replaceState({}, document.title, window.location.pathname) } catch { /* ignore */ }
-    if (supabase) {
-      try { await supabase.auth.signOut() } catch { /* Google identity is only a short-lived login check */ }
-    }
+    // Supabase Auth is now the real app session, so a successful Google return
+    // intentionally keeps the session instead of signing it out.
   }
   const handleGoogleLogin = async () => {
     if (authLoading || googleAuthLoading) return
     if (!supabase) {
-      setAuthError('Google login needs the Supabase connection. Please login with your mobile number/email and password.')
+      setAuthError('Supabase Auth is not connected. Google login is unavailable right now.')
       return
     }
     const selectedRole = entryRole ?? 'seeker'
@@ -2127,7 +2231,8 @@ export default function App() {
     if (error) {
       try { localStorage.removeItem(GOOGLE_ENTRY_ROLE_KEY) } catch { /* ignore */ }
       setGoogleAuthLoading(false)
-      setAuthError('Google login is not available yet. Please login with your mobile number/email and password.')
+      const mapped = mapAuthError(error, 'Google login is not available yet. Please login with your mobile number/email and password.', 'identifier')
+      setAuthError(mapped.message)
     }
     // On success the browser leaves this page for Google, then returns here.
   }
@@ -2136,70 +2241,79 @@ export default function App() {
     googleAuthProcessingRef.current = true
     setGoogleAuthLoading(true)
     clearAuthErrors()
+    setAuthSessionUser(googleUser)
     try {
       const email = (googleUser.email ?? '').trim().toLowerCase()
       if (!email || !isValidEmail(email)) throw new Error('Google did not return a valid email ID')
-      const metadata = googleUser.user_metadata ?? {}
-      const googleName = String(metadata.full_name || metadata.name || '').trim() || email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Google User'
 
-      let availableAccounts = accounts
-      if (supabase) {
-        const remoteAccounts = await fetchRemoteAccountsByIdentifier(email)
-        if (remoteAccounts) {
-          availableAccounts = mergeAccountLists(accounts, remoteAccounts)
-          writeAccounts(availableAccounts)
-        }
-      }
-
-      const matchedAccount = availableAccounts.find(a => a.role === selectedRole && a.email.trim().toLowerCase() === email)
-      if (matchedAccount) {
-        const blockedByRecruiter = selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(matchedAccount.mobile))
-        if (blockedByRecruiter) {
-          await clearGoogleAuthReturn()
-          setEntryRole(selectedRole)
-          setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
-          setAuthStep('mobile')
-          markAuthFieldTouched('identifier')
-          showAuthFieldError('identifier', 'Job Seeker login is blocked because this mobile number has a Recruiter account. Delete the Recruiter account first, or login as Recruiter.')
-          navigate('auth', { resetHistory: true })
-          return
-        }
-
-        if (!hasAccountPassword(matchedAccount)) {
-          await clearGoogleAuthReturn()
-          setEntryRole(selectedRole)
-          setGooglePendingProfile({ role: selectedRole, name: matchedAccount.name, email })
-          setAuthForm({ name: matchedAccount.name, mobile: normalizeMobile(matchedAccount.mobile), email, identifier: email, password: '', confirmPassword: '' })
-          setAuthStep('register')
-          clearAuthErrors()
-          setAuthEmailTouched(false)
-          resetAuthPasswordState()
-          navigate('auth', { resetHistory: true })
-          return
-        }
-
+      if (email === ADMIN_REGISTERED_EMAIL) {
+        await supabase?.auth.signOut().catch(() => undefined)
+        setAuthSessionUser(null)
         await clearGoogleAuthReturn()
-        completeUserAuth(matchedAccount, false)
+        setAuthError('Admin does not use Google login. Please use the separate Admin Login with Admin ID/email and password.')
+        navigate('admin', { resetHistory: true })
         return
       }
 
-      // First Google login: keep the existing registration rules. The user
-      // adds a mobile number and creates a password once, so the same person
-      // can later login with Google OR mobile/email + password.
+      const metadata = googleUser.user_metadata ?? {}
+      const googleName = String(metadata.full_name || metadata.name || '').trim() || email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Google User'
+      const profiles = await fetchAuthProfilesForCurrentUser()
+      if (profiles.length > 0) mergeIncomingAccountsState(profiles)
+      const matchedAccount = profiles.find(a => a.role === selectedRole)
+
+      if (matchedAccount) {
+        if (selectedRole === 'seeker') {
+          const byMobile = await fetchRemoteAccountsByMobile(matchedAccount.mobile).catch(() => null)
+          if (byMobile) {
+            mergeAccountsForMobileState(matchedAccount.mobile, byMobile)
+            const recruiterBlock = byMobile.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === normalizeMobile(matchedAccount.mobile))
+            if (recruiterBlock) {
+              await supabase?.auth.signOut().catch(() => undefined)
+              setAuthSessionUser(null)
+              setCurrentUser(null)
+              setHasAuthenticated(false)
+              await clearGoogleAuthReturn()
+              setEntryRole(selectedRole)
+              setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+              setAuthStep('mobile')
+              markAuthFieldTouched('identifier')
+              showAuthFieldError('identifier', 'Job Seeker login is blocked because this mobile number has a Recruiter account. Delete the Recruiter account first, or login as Recruiter.')
+              navigate('auth', { resetHistory: true })
+              return
+            }
+          }
+        }
+
+        await clearGoogleAuthReturn()
+        completeUserAuth({ ...matchedAccount, authUserId: googleUser.id, authLinked: true, hasPassword: true }, false)
+        return
+      }
+
+      const otherProfile = profiles[0]
       await clearGoogleAuthReturn()
       setEntryRole(selectedRole)
-      setGooglePendingProfile({ role: selectedRole, name: googleName, email })
-      setAuthForm({ name: googleName, mobile: '', email, identifier: email, password: '', confirmPassword: '' })
+      setGooglePendingProfile({ role: selectedRole, name: otherProfile?.name || googleName, email })
+      setAuthForm({
+        name: otherProfile?.name || googleName,
+        mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : '',
+        email,
+        identifier: email,
+        password: '',
+        confirmPassword: '',
+      })
       setAuthStep('register')
       clearAuthErrors()
       resetAuthTouched()
       navigate('auth', { resetHistory: true })
-      setToast('Google email verified ✅ Add your mobile number and create a password to finish.')
-    } catch {
+      setToast('Google email verified ✅ Add your mobile number to complete this account profile.')
+    } catch (error) {
+      await supabase?.auth.signOut().catch(() => undefined)
+      setAuthSessionUser(null)
       await clearGoogleAuthReturn()
       setEntryRole(selectedRole)
       setAuthStep('mobile')
-      setAuthError('Google login could not be completed. Please try again, or login with your mobile number/email and password.')
+      const mapped = mapAuthError(error, 'Google login could not be completed. Please try again, or login with your mobile number/email and password.', 'identifier')
+      setAuthError(mapped.message)
       navigate('auth', { resetHistory: true })
     } finally {
       googleAuthProcessingRef.current = false
@@ -2220,24 +2334,26 @@ export default function App() {
       showAuthFieldErrors(loginFieldErrors)
       return
     }
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Login is unavailable right now. Please try again later.')
+      return
+    }
 
     setAuthLoading(true)
     clearAuthErrors()
     try {
       let availableAccounts = accounts
-      if (supabase) {
-        const remoteAccounts = parsedIdentifier.kind === 'mobile'
-          ? await fetchRemoteAccountsByMobile(parsedIdentifier.value)
-          : await fetchRemoteAccountsByIdentifier(parsedIdentifier.value)
-        if (remoteAccounts) {
-          availableAccounts = parsedIdentifier.kind === 'mobile'
-            ? mergeAccountLists(
-                accounts.filter(a => normalizeMobile(a.mobile) !== parsedIdentifier.value),
-                mergeAccountLists(accounts, remoteAccounts).filter(a => normalizeMobile(a.mobile) === parsedIdentifier.value),
-              )
-            : mergeAccountLists(accounts, remoteAccounts)
-          writeAccounts(availableAccounts)
-        }
+      const remoteAccounts = parsedIdentifier.kind === 'mobile'
+        ? await fetchRemoteAccountsByMobile(parsedIdentifier.value)
+        : await fetchRemoteAccountsByIdentifier(parsedIdentifier.value)
+      if (remoteAccounts) {
+        availableAccounts = parsedIdentifier.kind === 'mobile'
+          ? mergeAccountLists(
+              accounts.filter(a => normalizeMobile(a.mobile) !== parsedIdentifier.value),
+              mergeAccountLists(accounts, remoteAccounts).filter(a => normalizeMobile(a.mobile) === parsedIdentifier.value),
+            )
+          : mergeAccountLists(accounts, remoteAccounts)
+        writeAccounts(availableAccounts)
       }
 
       const existingCandidates = availableAccounts.filter(a => a.role === selectedRole && accountMatchesIdentifier(a, parsedIdentifier))
@@ -2255,78 +2371,114 @@ export default function App() {
         }
       }
 
-      if (existing) {
-        let authenticatedAccount: Account | null = null
-        const passwordCandidates = existingCandidates.filter(hasAccountPassword)
-        for (const candidate of passwordCandidates) {
-          authenticatedAccount = await authenticateExistingAccount(candidate, parsedIdentifier.value, password)
-          if (authenticatedAccount) break
-        }
-        if (passwordCandidates.length > 0 && !authenticatedAccount) {
-          setAuthPasswordTouched(true)
-          showAuthFieldError('password', 'Wrong password. Please check your password or use Forgot Password below.')
-          return
-        }
+      const goToRegister = (otherRoleAccount?: Account) => {
+        setAuthForm(prev => ({
+          name: prev.name || otherRoleAccount?.name || '',
+          mobile: parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : (otherRoleAccount?.mobile || prev.mobile || ''),
+          email: parsedIdentifier.kind === 'email' ? parsedIdentifier.value : (prev.email || otherRoleAccount?.email || ''),
+          identifier: parsedIdentifier.value,
+          password,
+          confirmPassword: '',
+        }))
+        setAuthEmailTouched(false)
+        setAuthPasswordTouched(true)
+        setAuthConfirmPasswordTouched(false)
+        setAuthStep('register')
+        setToast(otherRoleAccount
+          ? 'Account found for the other role — complete this role registration to continue.'
+          : 'New account — first create your Supabase Auth account, confirm email, then login.')
+      }
 
-        const accountForNextStep = authenticatedAccount ?? existing
-        const existingEmailValidation = validateEmailAddress(accountForNextStep.email)
+      if (existing && !existing.authLinked && !existing.authUserId) {
+        const existingEmailValidation = validateEmailAddress(existing.email)
+        setAuthForm({
+          name: existing.name,
+          mobile: normalizeMobile(existing.mobile),
+          email: existingEmailValidation.suggestion ?? existing.email,
+          identifier: parsedIdentifier.value,
+          password,
+          confirmPassword: '',
+        })
+        setAuthStep('register')
         if (existingEmailValidation.error) {
-          setAuthForm({
-            name: accountForNextStep.name,
-            mobile: accountForNextStep.mobile,
-            email: existingEmailValidation.suggestion ?? accountForNextStep.email,
-            identifier: parsedIdentifier.value,
-            password,
-            confirmPassword: hasAccountPassword(accountForNextStep) ? password : '',
-          })
           setAuthEmailTouched(true)
+          showAuthFieldError('email', `Your saved email ID (${existing.email}) is not correct. ${existingEmailValidation.error} Please correct it, create your Supabase Auth account, confirm email, then login.`)
+        } else {
           setAuthPasswordTouched(true)
-          setAuthStep('register')
-          showAuthFieldError('email', `Your saved email ID (${accountForNextStep.email}) is not correct. ${existingEmailValidation.error} Please correct it to continue.`)
-          setToast('Please correct your email ID to continue.')
-          return
+          showAuthFieldError('confirmPassword', 'This account was created before Supabase Auth. Create your Supabase Auth account once with the same details, confirm your email, then login.')
         }
-
-        if (!hasAccountPassword(accountForNextStep)) {
-          setAuthForm({
-            name: accountForNextStep.name,
-            mobile: accountForNextStep.mobile,
-            email: accountForNextStep.email,
-            identifier: parsedIdentifier.value,
-            password,
-            confirmPassword: '',
-          })
-          setAuthEmailTouched(true)
-          setAuthPasswordTouched(true)
-          setAuthConfirmPasswordTouched(false)
-          setAuthStep('register')
-          showAuthFieldError('confirmPassword', 'This existing account was created before password login. Please confirm a password of at least 6 characters.')
-          setToast('Please set a password for your existing account.')
-          return
-        }
-
-        completeUserAuth(accountForNextStep, false)
+        setToast('Create your Supabase Auth account once to move this account to secure Auth login.')
         return
       }
 
-      const otherRoleAccount = availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier))
-      setAuthForm(prev => ({
-        name: prev.name || otherRoleAccount?.name || '',
-        mobile: parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : (otherRoleAccount?.mobile || prev.mobile || ''),
-        email: parsedIdentifier.kind === 'email' ? parsedIdentifier.value : (prev.email || otherRoleAccount?.email || ''),
+      const loginEmail = existing?.email.trim().toLowerCase()
+        || (parsedIdentifier.kind === 'email' ? parsedIdentifier.value : '')
+      if (loginEmail === ADMIN_REGISTERED_EMAIL) {
+        markAuthFieldTouched('identifier')
+        showAuthFieldError('identifier', 'This email ID is reserved for Admin. Please use the separate Admin Login.')
+        return
+      }
+      if (!loginEmail) {
+        goToRegister(availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier)))
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail, password })
+      if (error || !data.user) {
+        const rawMessage = getErrorMessage(error)
+        if (!existing && parsedIdentifier.kind === 'email' && rawMessage.toLowerCase().includes('invalid login credentials')) {
+          goToRegister(availableAccounts.find(a => accountMatchesIdentifier(a, parsedIdentifier)))
+          return
+        }
+        const mapped = mapAuthError(error, 'Unable to login right now. Please check your details and try again.', 'identifier')
+        if (mapped.field) {
+          markAuthFieldTouched(mapped.field)
+          showAuthFieldError(mapped.field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+        return
+      }
+
+      setAuthSessionUser(data.user)
+      const appliedAccount = await applySupabaseAuthSession(data.user, selectedRole, { requirePreferredRole: true })
+      if (appliedAccount) return
+
+      // Authenticated Supabase user exists, but this selected-role profile is
+      // not created yet (first Google/email-confirmation return or second role).
+      const profiles = await fetchAuthProfilesForCurrentUser().catch(() => [])
+      const otherProfile = profiles[0]
+      const metadata = (data.user.user_metadata ?? {}) as Record<string, unknown>
+      const metaName = String(metadata.full_name || metadata.name || '').trim()
+      const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+      const isGoogleUser = data.user.app_metadata?.provider === 'google'
+        || (Array.isArray(data.user.app_metadata?.providers) && data.user.app_metadata.providers.includes('google'))
+      if (isGoogleUser) {
+        setGooglePendingProfile({ role: selectedRole, name: otherProfile?.name || metaName || 'Google User', email: loginEmail })
+      }
+      setAuthForm({
+        name: otherProfile?.name || metaName || authForm.name,
+        mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : (isValidMobile(metaMobile) ? metaMobile : (parsedIdentifier.kind === 'mobile' ? parsedIdentifier.value : authForm.mobile)),
+        email: data.user.email?.trim().toLowerCase() || loginEmail,
         identifier: parsedIdentifier.value,
-        password,
+        password: '',
         confirmPassword: '',
-      }))
+      })
       setAuthEmailTouched(false)
-      setAuthPasswordTouched(true)
-      setAuthConfirmPasswordTouched(false)
+      resetAuthTouched()
       setAuthStep('register')
-      setToast(otherRoleAccount
-        ? 'Account found for the other role — complete this role registration to continue.'
-        : 'New account — complete your name, mobile, email and confirm your password.')
-    } catch {
-      setAuthError('Unable to login or check your account right now. Please check your internet connection and try again.')
+      setToast(otherProfile
+        ? 'Complete this role profile to continue with the same Supabase Auth login.'
+        : 'Supabase Auth login verified ✅ Complete your account profile to continue.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to login or check your account right now. Please check your internet connection and try again.', 'identifier')
+      if (mapped.field) {
+        markAuthFieldTouched(mapped.field)
+        showAuthFieldError(mapped.field, mapped.message)
+      } else {
+        setAuthError(mapped.message)
+      }
     } finally {
       setAuthLoading(false)
     }
@@ -2339,6 +2491,17 @@ export default function App() {
     const email = authForm.email.trim().toLowerCase()
     const password = authForm.password
     const confirmPassword = authForm.confirmPassword
+    const isGooglePending = Boolean(
+      googlePendingProfile
+      && googlePendingProfile.role === selectedRole
+      && googlePendingProfile.email === email,
+    )
+    const hasMatchingAuthSession = Boolean(
+      authSessionUser?.email
+      && authSessionUser.email.trim().toLowerCase() === email,
+    )
+    const needsPassword = isGooglePending || !hasMatchingAuthSession
+
     const registerFieldErrors: AuthFieldErrors = {}
     const mobileError = getMobileValidationError(authForm.mobile)
     if (mobileError) registerFieldErrors.mobile = mobileError
@@ -2346,9 +2509,21 @@ export default function App() {
     if (nameError) registerFieldErrors.name = nameError
     const emailError = getEmailValidationError(email)
     if (emailError) registerFieldErrors.email = emailError
+    if (email === ADMIN_REGISTERED_EMAIL) {
+      registerFieldErrors.email = 'This email ID is reserved for Admin. Please use the separate Admin Login.'
+    }
+    if (needsPassword) {
+      const passwordError = getPasswordValidationError(password)
+      if (passwordError) registerFieldErrors.password = passwordError
+      if (password !== confirmPassword) registerFieldErrors.confirmPassword = 'Password and Confirm Password do not match.'
+    }
     if (Object.keys(registerFieldErrors).length > 0) {
       markAuthFieldsTouched(Object.keys(registerFieldErrors) as AuthField[])
       showAuthFieldErrors(registerFieldErrors)
+      return
+    }
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Account creation is unavailable right now. Please try again later.')
       return
     }
 
@@ -2356,22 +2531,20 @@ export default function App() {
     clearAuthErrors()
     try {
       let availableAccounts = accounts
-      if (supabase) {
-        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
-          fetchRemoteAccountsByMobile(mobile),
-          fetchRemoteAccountsByIdentifier(email),
-        ])
-        if (remoteMobileAccounts) {
-          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
-            .filter(a => normalizeMobile(a.mobile) === mobile)
-          availableAccounts = mergeAccountLists(
-            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
-            preservedMobileAccounts,
-          )
-        }
-        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
-        writeAccounts(availableAccounts)
+      const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+        fetchRemoteAccountsByMobile(mobile),
+        fetchRemoteAccountsByIdentifier(email),
+      ])
+      if (remoteMobileAccounts) {
+        const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+          .filter(a => normalizeMobile(a.mobile) === mobile)
+        availableAccounts = mergeAccountLists(
+          accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+          preservedMobileAccounts,
+        )
       }
+      if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
+      writeAccounts(availableAccounts)
 
       if (selectedRole === 'seeker') {
         const recruiterAccount = availableAccounts.find(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)
@@ -2389,121 +2562,118 @@ export default function App() {
         showAuthFieldError('email', 'This email ID is already registered with another mobile number for this account type. Login with that email ID and password, or use the correct registered mobile number.')
         return
       }
-
-      const needsPasswordSetup = !existing || !hasAccountPassword(existing)
-      const passwordError = getPasswordValidationError(password, needsPasswordSetup ? 'Password' : 'Current password')
-      const passwordFieldErrors: AuthFieldErrors = {}
-      if (passwordError) passwordFieldErrors.password = passwordError
-      if (needsPasswordSetup && password !== confirmPassword) passwordFieldErrors.confirmPassword = 'Password and Confirm Password do not match.'
-      if (Object.keys(passwordFieldErrors).length > 0) {
-        markAuthFieldsTouched(Object.keys(passwordFieldErrors) as AuthField[])
-        showAuthFieldErrors(passwordFieldErrors)
-        return
-      }
-
-      if (existing && hasAccountPassword(existing)) {
-        const authenticatedAccount = await authenticateExistingAccount(existing, mobile, password)
-        if (!authenticatedAccount) {
-          setAuthPasswordTouched(true)
-          showAuthFieldError('password', 'Wrong current password. Please check your password or use Forgot Password from the login screen.')
-          return
-        }
-
-        if (isValidEmail(authenticatedAccount.email)) {
-          completeUserAuth(authenticatedAccount, false)
-          return
-        }
-
-        let correctedAccount: Account = { ...authenticatedAccount, name, email }
-        if (supabase) {
-          const { data, error } = await supabase.rpc('update_app_account_email', {
-            p_role: selectedRole,
-            p_name: name,
-            p_mobile: mobile,
-            p_email: email,
-          })
-          if (error) throw error
-          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-          if (!updated) throw new Error('Corrected account was not returned')
-          correctedAccount = authenticatedAccount.passwordHash && !updated.passwordHash
-            ? { ...updated, passwordHash: authenticatedAccount.passwordHash, hasPassword: true }
-            : updated
-        }
-        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? correctedAccount : a))
-        completeUserAuth(correctedAccount, false)
-        return
-      }
-
-      if (existing) {
-        let updatedAccount: Account = { ...existing, name, email }
-        if (supabase && !isValidEmail(existing.email)) {
-          const { data, error } = await supabase.rpc('update_app_account_email', {
-            p_role: selectedRole,
-            p_name: name,
-            p_mobile: mobile,
-            p_email: email,
-          })
-          if (error) throw error
-          const updated = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-          if (!updated) throw new Error('Corrected account was not returned')
-          updatedAccount = updated
-        }
-        if (supabase) {
-          const remotePasswordAccount = await setRemoteAccountPassword(selectedRole, mobile, password)
-          if (remotePasswordAccount) updatedAccount = { ...remotePasswordAccount, name, email }
-        }
-        updatedAccount = {
-          ...updatedAccount,
-          passwordHash: updatedAccount.passwordHash || await createLocalPasswordHash(password),
-          hasPassword: true,
-        }
-        writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
-        completeUserAuth(updatedAccount, false)
-        setToast('Password set successfully ✅ You can now login with your mobile or email and password.')
-        return
-      }
-
-      let account: Account
-      if (supabase) {
-        const { data, error } = await supabase.rpc('register_app_account', {
-          p_role: selectedRole,
-          p_name: name,
-          p_mobile: mobile,
-          p_email: email,
-          p_password: password,
-        })
-        if (error) throw error
-        const created = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === selectedRole && a.mobile === mobile)
-        if (!created) throw new Error('Account was not returned')
-        account = created
-      } else {
-        account = {
-          role: selectedRole,
-          name,
-          mobile,
-          email,
-          passwordHash: await createLocalPasswordHash(password),
-          hasPassword: true,
-          createdAt: new Date().toISOString(),
-        }
-      }
-      const updatedAccounts = [...availableAccounts.filter(a => !(a.role === selectedRole && normalizeMobile(a.mobile) === mobile)), account]
-      writeAccounts(updatedAccounts)
-      completeUserAuth(account, true)
-    } catch (error) {
-      const message = (error as { message?: string } | null)?.message ?? ''
-      const lowerMessage = message.toLowerCase()
-      if (lowerMessage.includes('email')) {
-        markAuthFieldTouched('email')
-        showAuthFieldError('email', message)
-      } else if (lowerMessage.includes('password')) {
-        markAuthFieldTouched('password')
-        showAuthFieldError('password', message)
-      } else if (lowerMessage.includes('mobile')) {
+      if (existing && existing.email.trim().toLowerCase() !== email) {
         markAuthFieldTouched('mobile')
-        showAuthFieldError('mobile', message)
+        showAuthFieldError('mobile', 'This mobile number is already registered with another email ID for this account type. Use the registered email ID or contact support.')
+        return
+      }
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
+      const sessionUser = sessionData.session?.user ?? authSessionUser
+
+      if (sessionUser) {
+        if ((sessionUser.email ?? '').trim().toLowerCase() !== email) {
+          setAuthError('You are signed in with another email ID. Please logout first, then create this account.')
+          return
+        }
+        setAuthSessionUser(sessionUser)
+        if (isGooglePending) {
+          suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+          const { data: updatedUserData, error: updateUserError } = await supabase.auth.updateUser({ password })
+          if (updateUserError) throw updateUserError
+          if (updatedUserData.user) setAuthSessionUser(updatedUserData.user)
+        }
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: sessionUser.id, authLinked: true, hasPassword: true }, !existing)
+        return
+      }
+
+      if (existing && (existing.authLinked || existing.authUserId)) {
+        setAuthStep('mobile')
+        setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+        resetAuthTouched()
+        setToast('Account already created in Supabase Auth ✅ Login with your registered mobile/email + password.')
+        return
+      }
+
+      if (isGooglePending) {
+        setAuthError('Your Google session expired. Please use Continue with Google again.')
+        return
+      }
+
+      const passwordError = getPasswordValidationError(password)
+      const signUpPasswordErrors: AuthFieldErrors = {}
+      if (passwordError) signUpPasswordErrors.password = passwordError
+      if (password !== confirmPassword) signUpPasswordErrors.confirmPassword = 'Password and Confirm Password do not match.'
+      if (Object.keys(signUpPasswordErrors).length > 0) {
+        markAuthFieldsTouched(Object.keys(signUpPasswordErrors) as AuthField[])
+        showAuthFieldErrors(signUpPasswordErrors)
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: {
+            full_name: name,
+            name,
+            mobile,
+            app_role: selectedRole,
+          },
+        },
+      })
+      if (error) throw error
+
+      if (data.session?.user) {
+        setAuthSessionUser(data.session.user)
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: data.session.user.id, authLinked: true, hasPassword: true }, !existing)
+        return
+      }
+
+      const identities = data.user?.identities ?? []
+      if (data.user && identities.length === 0) {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+        if (signInError || !signInData.user) {
+          const mapped = mapAuthError(signInError, 'This email ID already has a Supabase Auth account. Login with its existing password or use Forgot Password.', 'email')
+          if (mapped.field) {
+            markAuthFieldTouched(mapped.field)
+            showAuthFieldError(mapped.field, mapped.message)
+          } else {
+            setAuthError(mapped.message)
+          }
+          return
+        }
+        setAuthSessionUser(signInData.user)
+        const profile = await upsertAuthProfile(selectedRole, name, mobile, email)
+        writeAccounts(mergeAccountLists(availableAccounts, [profile]))
+        setGooglePendingProfile(null)
+        completeUserAuth({ ...profile, authUserId: signInData.user.id, authLinked: true, hasPassword: true }, !existing)
+        return
+      }
+
+      setGooglePendingProfile(null)
+      setAuthStep('mobile')
+      setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+      resetAuthTouched()
+      setToast('Account created in Supabase Auth ✅ Confirm your email, then login with your registered details.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to create your Supabase Auth account right now. Please check your internet connection and try again.', 'email')
+      if (mapped.field) {
+        const field = mapped.field === 'identifier' ? 'email' : mapped.field
+        markAuthFieldTouched(field)
+        showAuthFieldError(field, mapped.message)
       } else {
-        setAuthError('Unable to create or update your account right now. Please check your internet connection and try again.')
+        setAuthError(mapped.message)
       }
     } finally {
       setAuthLoading(false)
@@ -2511,6 +2681,8 @@ export default function App() {
   }
   const openForgotPassword = () => {
     const parsedIdentifier = parseAuthIdentifier(authForm.identifier)
+    setAuthRecoveryMode(false)
+    try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
     setAuthForm(prev => ({
       ...prev,
       mobile: parsedIdentifier.kind === 'mobile' && !parsedIdentifier.error ? parsedIdentifier.value : prev.mobile,
@@ -2528,14 +2700,80 @@ export default function App() {
     const mobile = normalizeMobile(authForm.mobile)
     const email = authForm.email.trim().toLowerCase()
     const password = authForm.password
+
+    if (!supabase) {
+      setAuthError('Supabase Auth is not connected. Password reset is unavailable right now. Please try again later.')
+      return
+    }
+
+    if (authRecoveryMode) {
+      const recoveryFieldErrors: AuthFieldErrors = {}
+      const passwordError = getPasswordValidationError(password, 'New password')
+      if (passwordError) recoveryFieldErrors.password = passwordError
+      if (password !== authForm.confirmPassword) recoveryFieldErrors.confirmPassword = 'New password and Confirm Password do not match.'
+      if (Object.keys(recoveryFieldErrors).length > 0) {
+        markAuthFieldsTouched(Object.keys(recoveryFieldErrors) as AuthField[])
+        showAuthFieldErrors(recoveryFieldErrors)
+        return
+      }
+
+      setAuthLoading(true)
+      clearAuthErrors()
+      try {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data, error } = await supabase.auth.updateUser({ password })
+        if (error) throw error
+        const recoveredUser = data.user ?? authSessionUser
+        try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
+        setAuthRecoveryMode(false)
+        if (recoveredUser) {
+          setAuthSessionUser(recoveredUser)
+          const appliedAccount = await applySupabaseAuthSession(recoveredUser, selectedRole, { requirePreferredRole: true })
+          if (appliedAccount) {
+            setToast('Password reset successful ✅ You are now logged in.')
+            return
+          }
+          const profiles = await fetchAuthProfilesForCurrentUser().catch(() => [])
+          const otherProfile = profiles[0]
+          setAuthForm(prev => ({
+            ...prev,
+            name: otherProfile?.name || prev.name,
+            mobile: otherProfile ? normalizeMobile(otherProfile.mobile) : prev.mobile,
+            email: recoveredUser.email?.trim().toLowerCase() || email,
+            identifier: recoveredUser.email?.trim().toLowerCase() || email,
+            password: '',
+            confirmPassword: '',
+          }))
+          setAuthStep('register')
+          setToast('Password updated ✅ Complete your account profile to continue.')
+          return
+        }
+        setAuthStep('mobile')
+        setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+        setToast('Password reset successful ✅ Login with your new password.')
+      } catch (error) {
+        const mapped = mapAuthError(error, 'Unable to reset your password right now. Please check your internet connection and try again.', 'email')
+        if (mapped.field) {
+          const field = mapped.field === 'identifier' ? 'password' : mapped.field
+          markAuthFieldTouched(field)
+          showAuthFieldError(field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+      } finally {
+        setAuthLoading(false)
+      }
+      return
+    }
+
     const forgotFieldErrors: AuthFieldErrors = {}
     const mobileError = getMobileValidationError(authForm.mobile)
     if (mobileError) forgotFieldErrors.mobile = mobileError
     const emailError = getEmailValidationError(email)
     if (emailError) forgotFieldErrors.email = emailError
-    const passwordError = getPasswordValidationError(password, 'New password')
-    if (passwordError) forgotFieldErrors.password = passwordError
-    if (password !== authForm.confirmPassword) forgotFieldErrors.confirmPassword = 'New password and Confirm Password do not match.'
+    if (email === ADMIN_REGISTERED_EMAIL) {
+      forgotFieldErrors.email = 'This email ID is reserved for Admin. Please use Forgot Admin Password from Admin Login.'
+    }
     if (Object.keys(forgotFieldErrors).length > 0) {
       markAuthFieldsTouched(Object.keys(forgotFieldErrors) as AuthField[])
       showAuthFieldErrors(forgotFieldErrors)
@@ -2545,24 +2783,21 @@ export default function App() {
     setAuthLoading(true)
     clearAuthErrors()
     try {
-      const localPasswordHash = await createLocalPasswordHash(password)
       let availableAccounts = accounts
-      if (supabase) {
-        const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
-          fetchRemoteAccountsByMobile(mobile),
-          fetchRemoteAccountsByIdentifier(email),
-        ])
-        if (remoteMobileAccounts) {
-          const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
-            .filter(a => normalizeMobile(a.mobile) === mobile)
-          availableAccounts = mergeAccountLists(
-            accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
-            preservedMobileAccounts,
-          )
-        }
-        if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
-        writeAccounts(availableAccounts)
+      const [remoteMobileAccounts, remoteEmailAccounts] = await Promise.all([
+        fetchRemoteAccountsByMobile(mobile),
+        fetchRemoteAccountsByIdentifier(email),
+      ])
+      if (remoteMobileAccounts) {
+        const preservedMobileAccounts = mergeAccountLists(accounts, remoteMobileAccounts)
+          .filter(a => normalizeMobile(a.mobile) === mobile)
+        availableAccounts = mergeAccountLists(
+          accounts.filter(a => normalizeMobile(a.mobile) !== mobile),
+          preservedMobileAccounts,
+        )
       }
+      if (remoteEmailAccounts) availableAccounts = mergeAccountLists(availableAccounts, remoteEmailAccounts)
+      writeAccounts(availableAccounts)
 
       if (selectedRole === 'seeker' && availableAccounts.some(a => a.role === 'recruiter' && normalizeMobile(a.mobile) === mobile)) {
         markAuthFieldTouched('mobile')
@@ -2580,25 +2815,41 @@ export default function App() {
         return
       }
 
-      let updatedAccount: Account = existing
-      if (supabase) {
-        const remoteAccount = await resetRemoteAccountPassword(selectedRole, mobile, email, password)
-        if (!remoteAccount) {
-          markAuthFieldsTouched(['mobile', 'email'])
-          showAuthFieldErrors({
-            mobile: 'Registered mobile number and email ID do not match the same account. Please check this mobile number.',
-            email: 'Registered mobile number and email ID do not match the same account. Please check this email ID.',
-          })
-          return
-        }
-        updatedAccount = remoteAccount
+      if (!existing.authLinked && !existing.authUserId) {
+        setAuthForm(prev => ({
+          ...prev,
+          name: existing.name,
+          mobile: normalizeMobile(existing.mobile),
+          email: existing.email.trim().toLowerCase(),
+          identifier: existing.email.trim().toLowerCase(),
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        showAuthFieldError('confirmPassword', 'This account was created before Supabase Auth. Create your Supabase Auth account once with the same details, confirm your email, then login.')
+        setToast('Create your Supabase Auth account once to set a new secure password.')
+        return
       }
-      updatedAccount = { ...updatedAccount, passwordHash: localPasswordHash, hasPassword: true }
-      writeAccounts(availableAccounts.map(a => a.role === selectedRole && normalizeMobile(a.mobile) === mobile ? updatedAccount : a))
-      completeUserAuth(updatedAccount, false)
-      setToast('Password reset successful ✅ You are now logged in.')
-    } catch {
-      setAuthError('Unable to reset your password right now. Please check your internet connection and try again.')
+
+      try { localStorage.setItem(AUTH_RECOVERY_TARGET_KEY, `member:${selectedRole}`) } catch { /* ignore */ }
+      const { error } = await supabase.auth.resetPasswordForEmail(existing.email.trim().toLowerCase(), {
+        redirectTo: window.location.origin,
+      })
+      if (error) throw error
+
+      setAuthStep('mobile')
+      setAuthForm(prev => ({ ...prev, identifier: email, password: '', confirmPassword: '' }))
+      resetAuthTouched()
+      setToast('Password reset email sent ✅ Open the email link to set your new password.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to send the password reset email right now. Please check your internet connection and try again.', 'email')
+      if (mapped.field) {
+        const field = mapped.field === 'identifier' ? 'email' : mapped.field
+        markAuthFieldTouched(field)
+        showAuthFieldError(field, mapped.message)
+      } else {
+        setAuthError(mapped.message)
+      }
     } finally {
       setAuthLoading(false)
     }
@@ -2665,6 +2916,10 @@ export default function App() {
     if (field === 'email') {
       const emailError = getEmailValidationError(nextValue)
       if (emailError) { setAccountEditError(emailError); return }
+      if (nextValue === ADMIN_REGISTERED_EMAIL) {
+        setAccountEditError('This email is reserved for Admin. Please use another email ID.')
+        return
+      }
       const emailAlreadyUsed = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile) && account.email.trim().toLowerCase() === nextValue)
       if (emailAlreadyUsed) {
         setAccountEditError('This email is already used by another account in this role.')
@@ -2679,20 +2934,41 @@ export default function App() {
     setAccountSaving(true)
     setAccountEditError('')
     try {
-      let updatedAccount: Account = { ...currentUser, [field]: nextValue }
-      if (supabase) {
-        const { data, error } = await supabase.rpc('update_app_account_email', {
-          p_role: currentUser.role,
-          p_name: updatedAccount.name,
-          p_mobile: currentUser.mobile,
-          p_email: updatedAccount.email,
-        })
+      if (!supabase || !authSessionUser) {
+        setAccountEditError('Your Supabase Auth session expired. Please login again to update your account.')
+        return
+      }
+
+      if (field === 'email') {
+        const remoteEmailAccounts = await fetchRemoteAccountsByIdentifier(nextValue).catch(() => null)
+        if (remoteEmailAccounts?.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) !== normalizeMobile(currentUser.mobile))) {
+          setAccountEditError('This email is already used by another account in this role.')
+          return
+        }
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { error } = await supabase.auth.updateUser(
+          { email: nextValue },
+          { emailRedirectTo: window.location.origin },
+        )
         if (error) throw error
-        const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
-        if (!remoteAccount) throw new Error('Updated account was not returned')
-        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
-          : remoteAccount
+        cancelAccountFieldEdit()
+        setToast('Check your new email to confirm the change ✅ Your login email updates after confirmation.')
+        return
+      }
+
+      const { data, error } = await supabase.rpc('update_auth_profile_name', {
+        p_role: currentUser.role,
+        p_name: nextValue,
+      })
+      if (error) throw error
+      const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow)
+        .find(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
+      if (!remoteAccount) throw new Error('Updated account was not returned')
+      const updatedAccount: Account = {
+        ...remoteAccount,
+        authUserId: authSessionUser.id,
+        authLinked: true,
+        hasPassword: true,
       }
       const hasLocalAccount = accounts.some(account => account.role === currentUser.role && normalizeMobile(account.mobile) === normalizeMobile(currentUser.mobile))
       const nextAccounts = hasLocalAccount
@@ -2701,9 +2977,10 @@ export default function App() {
       writeAccounts(nextAccounts)
       setCurrentUser(updatedAccount)
       cancelAccountFieldEdit()
-      setToast(`${field === 'name' ? 'Name' : 'Email'} updated in My Account ✅`)
-    } catch {
-      setAccountEditError('Unable to save this detail right now. Please check it and try again.')
+      setToast('Name updated in My Account ✅')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to save this detail right now. Please check it and try again.', 'email')
+      setAccountEditError(mapped.message)
     } finally {
       setAccountSaving(false)
     }
@@ -2877,16 +3154,19 @@ export default function App() {
     try {
       let updatedAccount: Account = { ...currentUser, profile }
       if (supabase) {
-        const { data, error } = await supabase.rpc('update_seeker_profile', {
-          p_mobile: currentUser.mobile,
+        if (!authSessionUser) throw new Error('Supabase Auth session expired. Please login again.')
+        const { data, error } = await supabase.rpc('update_auth_seeker_profile', {
           p_profile: profile,
         })
         if (error) throw error
         const remoteAccount = ((data ?? []) as RemoteAccountRow[]).map(accountFromRemoteRow).find(a => a.role === 'seeker' && a.mobile === currentUser.mobile)
         if (!remoteAccount) throw new Error('Profile was not returned')
-        updatedAccount = currentUser.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: currentUser.passwordHash, hasPassword: true }
-          : remoteAccount
+        updatedAccount = {
+          ...remoteAccount,
+          authUserId: authSessionUser.id,
+          authLinked: true,
+          hasPassword: true,
+        }
       }
       const updatedAccounts = accounts.map(a => a.role === 'seeker' && a.mobile === currentUser.mobile ? updatedAccount : a)
       writeAccounts(updatedAccounts)
@@ -2990,7 +3270,10 @@ export default function App() {
     setSupportTickets(prev => prev.map(ticket => ticket.id === ticketId ? { ...ticket, status, updatedAt } : ticket))
     setToast('Support ticket status updated')
   }
-  const handleUserLogout = () => {
+  const handleUserLogout = async () => {
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
+    setAuthRecoveryMode(false)
     setShowAccountMenu(false)
     setSelectedCandidate(null)
     setSelected(null)
@@ -3023,6 +3306,8 @@ export default function App() {
       setToast('Unable to delete this Recruiter account right now. Please try again.')
       return
     }
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
     const updatedAccounts = accounts.filter(a => !(a.role === 'recruiter' && a.mobile === deletedAccount.mobile))
     writeAccounts(updatedAccounts)
     deleteStoredUserJobState(deletedAccount)
@@ -3130,61 +3415,152 @@ export default function App() {
   const completeAdminLogin = () => {
     setIsAdmin(true)
     setPageHistory([])
-    try { localStorage.setItem(ADMIN_AUTH_KEY, '1') } catch { /* ignore */ }
+    try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
     setAdminError(''); setAdminPass('')
     setShowAdminForgot(false); setAdminForgotError('')
     setToast('Welcome back, M Divakar Reddy! 👑 Admin dashboard unlocked')
   }
   const handleAdminLogin = async () => {
+    if (adminAuthLoading) return
     const enteredId = adminId.trim().toLowerCase()
-    // When Supabase is connected, the Admin account is verified from app_admins.
-    // Any RPC/network problem falls back to this device's Admin password.
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('admin_login', { p_admin_id: enteredId, p_password: adminPass })
-        if (!error && data === true) { try { localStorage.setItem(ADMIN_PASS_KEY, adminPass) } catch { /* keep local copy in sync with Supabase */ } completeAdminLogin(); return }
-        if (!error && data === false) { setAdminError('Wrong Admin ID/Email or Password. Please try again.'); return }
-      } catch { /* fall through to local Admin login */ }
+    if (!enteredId || !adminPass) {
+      setAdminError('Enter Admin ID/Email and password.')
+      return
     }
-    const idOk = ADMIN_IDS.includes(enteredId)
-    if (idOk && adminPass && storedAdminPassword() && adminPass === storedAdminPassword()) {
+    if (!supabase) {
+      setAdminError('Supabase Auth is not connected. Admin login is unavailable right now.')
+      return
+    }
+
+    setAdminAuthLoading(true)
+    setAdminError('')
+    try {
+      const adminEmailInfo = await fetchAdminAuthEmail(enteredId)
+      if (!adminEmailInfo) {
+        setAdminError('Wrong Admin ID/Email or Password. Please try again.')
+        return
+      }
+
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: adminEmailInfo.email,
+        password: adminPass,
+      })
+      if (error || !data.user) {
+        const raw = getErrorMessage(error).toLowerCase()
+        setAdminError(raw.includes('email not confirmed')
+          ? 'Please confirm the Admin email first, then login.'
+          : 'Wrong Admin ID/Email or Password. If the Admin Auth user is not created yet, create the registered Admin email once in Supabase Dashboard → Authentication → Users → Add user, then login here.')
+        return
+      }
+
+      setAuthSessionUser(data.user)
+      const linked = await linkCurrentAdminAuthUser().catch(() => false)
+      if (!linked) {
+        await supabase.auth.signOut().catch(() => undefined)
+        setAuthSessionUser(null)
+        setAdminError('This Supabase Auth user is not authorized as Admin.')
+        return
+      }
+
+      setCurrentUser(null)
+      setHasAuthenticated(false)
+      setEntryRole(null)
+      try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
       completeAdminLogin()
-    } else {
-      setAdminError('Wrong Admin ID/Email or Password. Please try again.')
+    } catch {
+      setAdminError('Unable to login to Admin right now. Please check your internet connection and try again.')
+    } finally {
+      setAdminAuthLoading(false)
     }
   }
   const handleAdminForgotPassword = async () => {
+    if (adminAuthLoading) return
+    if (!supabase) {
+      setAdminForgotError('Supabase Auth is not connected. Password reset is unavailable right now.')
+      return
+    }
+
+    if (adminRecoveryMode) {
+      if (adminForgotNew.length < 6) { setAdminForgotError('New password must be at least 6 characters.'); return }
+      if (adminForgotNew !== adminForgotConfirm) { setAdminForgotError('New password and confirm password do not match.'); return }
+
+      setAdminAuthLoading(true)
+      setAdminForgotError('')
+      try {
+        suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+        const { data, error } = await supabase.auth.updateUser({ password: adminForgotNew })
+        if (error) throw error
+        const recoveredUser = data.user ?? authSessionUser
+        try { localStorage.removeItem(AUTH_RECOVERY_TARGET_KEY) } catch { /* ignore */ }
+        setAdminRecoveryMode(false)
+        setAdminForgotNew('')
+        setAdminForgotConfirm('')
+        if (recoveredUser) {
+          setAuthSessionUser(recoveredUser)
+          const linked = await linkCurrentAdminAuthUser().catch(() => false)
+          if (linked) {
+            setCurrentUser(null)
+            setHasAuthenticated(false)
+            setEntryRole(null)
+            try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+            completeAdminLogin()
+            setToast('Admin password reset successful 🔐 You are now logged in.')
+            return
+          }
+          await supabase.auth.signOut().catch(() => undefined)
+          setAuthSessionUser(null)
+        }
+        setShowAdminForgot(false)
+        setAdminId('')
+        setAdminPass('')
+        setAdminError('')
+        setToast('Admin password reset successful 🔐 Login with your new password')
+      } catch (error) {
+        const mapped = mapAuthError(error, 'Unable to reset Admin password right now. Please try again.')
+        setAdminForgotError(mapped.message)
+      } finally {
+        setAdminAuthLoading(false)
+      }
+      return
+    }
+
     const forgotId = adminForgotId.trim().toLowerCase()
     const forgotEmail = adminForgotEmail.trim().toLowerCase()
     if (!forgotId || !forgotEmail) { setAdminForgotError('Enter Admin ID and registered Admin email.'); return }
     const forgotEmailError = getEmailValidationError(forgotEmail)
     if (forgotEmailError) { setAdminForgotError(forgotEmailError); return }
-    if (adminForgotNew.length < 6) { setAdminForgotError('New password must be at least 6 characters.'); return }
-    if (adminForgotNew !== adminForgotConfirm) { setAdminForgotError('New password and confirm password do not match.'); return }
-    const localDetailsOk = (forgotId === 'divakar' || forgotId === 'admin') && forgotEmail === ADMIN_REGISTERED_EMAIL
-    const finishAdminReset = () => {
-      try { localStorage.setItem(ADMIN_PASS_KEY, adminForgotNew) } catch { /* ignore */ }
+
+    setAdminAuthLoading(true)
+    setAdminForgotError('')
+    try {
+      const adminEmailInfo = await fetchAdminAuthEmail(forgotId)
+      if (!adminEmailInfo || adminEmailInfo.email.trim().toLowerCase() !== forgotEmail) {
+        setAdminForgotError('Admin ID and registered Admin email do not match.')
+        return
+      }
+      try { localStorage.setItem(AUTH_RECOVERY_TARGET_KEY, 'admin') } catch { /* ignore */ }
+      const { error } = await supabase.auth.resetPasswordForEmail(adminEmailInfo.email, {
+        redirectTo: window.location.origin,
+      })
+      if (error) throw error
+      setShowAdminForgot(false)
       setAdminId('')
       setAdminPass('')
       setAdminError('')
-      setAdminForgotError('')
-      setAdminForgotNew('')
-      setAdminForgotConfirm('')
-      setShowAdminForgot(false)
-      setToast('Admin password reset successfully 🔐 Login with your new password')
+      setToast('Admin password reset email requested ✅ If the Admin Auth user exists, open the email link to set a new password.')
+    } catch (error) {
+      const mapped = mapAuthError(error, 'Unable to send Admin password reset email right now. Please try again.')
+      setAdminForgotError(mapped.message)
+    } finally {
+      setAdminAuthLoading(false)
     }
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('admin_reset_password_with_registered_details', { p_admin_id: forgotId, p_email: forgotEmail, p_new_password: adminForgotNew })
-        if (!error && data === true) { finishAdminReset(); return }
-        if (!error && data === false) { setAdminForgotError('Admin ID and registered Admin email do not match.'); return }
-      } catch { /* fall through to local Admin reset */ }
-    }
-    if (localDetailsOk) { finishAdminReset(); return }
-    setAdminForgotError('Admin ID and registered Admin email do not match.')
   }
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
     const destination = hasAuthenticated && currentUser ? getAccountDestination(currentUser) : entryRole ? 'auth' : 'welcome'
+    try { await supabase?.auth.signOut() } catch { /* ignore */ }
+    setAuthSessionUser(null)
+    setAdminRecoveryMode(false)
     setAdminId('')
     setIsAdmin(false)
     try { localStorage.removeItem(ADMIN_AUTH_KEY) } catch { /* ignore */ }
@@ -3256,18 +3632,31 @@ export default function App() {
     try { localStorage.setItem(ADMIN_JOBS_KEY, '[]') } catch { /* ignore */ }
     setToast('All vacancies cleared. Post a real vacancy to make it live.')
   }
-  const handleChangePassword = () => {
-    if (!passForm.current || !storedAdminPassword() || passForm.current !== storedAdminPassword()) { setToast('Current password is wrong'); return }
+  const handleChangePassword = async () => {
+    if (!supabase || !authSessionUser) { setToast('Admin Auth session expired. Please login again.'); return }
+    if (!passForm.current) { setToast('Current password is wrong'); return }
     if (passForm.next.length < 6) { setToast('New password must be at least 6 characters'); return }
     if (passForm.next !== passForm.confirm) { setToast('New password and confirm password do not match'); return }
+
     const nextPassword = passForm.next
     const currentPassword = passForm.current
-    try { localStorage.setItem(ADMIN_PASS_KEY, nextPassword) } catch { /* ignore */ }
-    if (supabase) {
-      void supabase.rpc('admin_change_password', { p_admin_id: adminId.trim().toLowerCase() || 'divakar', p_current_password: currentPassword, p_new_password: nextPassword }).then(() => undefined, () => undefined)
+    try {
+      suppressAuthSessionSyncUntilRef.current = Date.now() + 8000
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: ADMIN_REGISTERED_EMAIL,
+        password: currentPassword,
+      })
+      if (error || !data.user) { setToast('Current password is wrong'); return }
+      setAuthSessionUser(data.user)
+      const linked = await linkCurrentAdminAuthUser().catch(() => false)
+      if (!linked) { setToast('This Supabase Auth user is not authorized as Admin.'); return }
+      const { error: updateError } = await supabase.auth.updateUser({ password: nextPassword })
+      if (updateError) throw updateError
+      setPassForm({ current: '', next: '', confirm: '' })
+      setToast('Admin password changed successfully 🔐 Use it from next login')
+    } catch {
+      setToast('Unable to change Admin password right now. Please try again.')
     }
-    setPassForm({ current: '', next: '', confirm: '' })
-    setToast('Admin password changed successfully 🔐 Use it from next login')
   }
   // ---- ADMIN: JOB SEEKER PLANS + PAYMENT RECEIVING SOURCE ----
   const updateCommercePlanDraft = (planId: PaidPlanId, patch: Partial<PaidPlanConfig>) => {
@@ -3306,28 +3695,26 @@ export default function App() {
     const normalized = normalizeCommerceSettings({ ...commerceDraft, updatedAt: new Date().toISOString() })
     const validationError = validateCommerceSettings(normalized)
     if (validationError) { setCommerceSettingsError(validationError); return }
-    if (supabase && !commerceAdminPassword) {
-      setCommerceSettingsError('Enter the current Admin password to securely save these payment settings to Supabase.')
+    if (supabase && (!isAdmin || !authSessionUser)) {
+      setCommerceSettingsError('Admin Auth session expired. Please login to Admin again to save these settings.')
       return
     }
     setCommerceSettingsSaving(true)
     setCommerceSettingsError('')
     try {
       if (supabase) {
-        const { data, error } = await supabase.rpc('set_app_setting_admin', {
-          p_admin_id: 'divakar',
-          p_admin_password: commerceAdminPassword,
+        const { data, error } = await supabase.rpc('set_app_setting_admin_auth', {
           p_setting_key: 'commerce',
           p_payload: normalized,
         })
         if (error) throw error
-        if (data !== true) throw new Error('Admin password was not accepted. Payment settings were not saved.')
+        if (data !== true) throw new Error('Admin Auth session was not accepted. Payment settings were not saved.')
       }
       setCommerceSettings(normalized)
       setCommerceDraft(normalized)
       setToast(supabase ? 'Plans & payment receiving source saved live ✅ Job Seekers will see the new price, validity and payment details.' : 'Plans & payment receiving source saved on this device ✅')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save these settings. Please check the Admin password and try again.'
+      const message = error instanceof Error ? error.message : 'Unable to save these settings. Please check your Admin session and try again.'
       setCommerceSettingsError(message)
     } finally {
       setCommerceSettingsSaving(false)
@@ -3517,76 +3904,149 @@ export default function App() {
   }, [page])
 
   useEffect(() => {
-    if (!supabase || remoteSessionRefreshRef.current) return
-    remoteSessionRefreshRef.current = true
-    const storedSession = loadStoredSession()
-    if (!storedSession) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const remoteAccounts = await fetchRemoteAccountsByMobile(storedSession.mobile)
-        if (cancelled || !remoteAccounts) return
-        mergeAccountsForMobileState(storedSession.mobile, remoteAccounts)
-        const remoteAccount = remoteAccounts.find(a => a.role === storedSession.role)
-        const localAccount = accounts.find(a => a.role === storedSession.role && normalizeMobile(a.mobile) === storedSession.mobile)
-        const account = remoteAccount && localAccount?.passwordHash && !remoteAccount.passwordHash
-          ? { ...remoteAccount, passwordHash: localAccount.passwordHash, hasPassword: true }
-          : remoteAccount
-        const blockedByRecruiter = storedSession.role === 'seeker' && remoteAccounts.some(a => a.role === 'recruiter' && a.mobile === storedSession.mobile)
-        if (!account || blockedByRecruiter || !isValidEmail(account.email) || !hasAccountPassword(account)) {
-          try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
-          setCurrentUser(null)
-          setHasAuthenticated(false)
-          setEntryRole(storedSession.role)
-          navigate('welcome', { resetHistory: true })
-          return
-        }
-        setCurrentUser(account)
-        setHasAuthenticated(true)
-        setEntryRole(account.role)
-        if (page === 'welcome') navigate(getAccountDestination(account), { resetHistory: true })
-      } catch {
-        // Keep the locally saved login when the device is offline.
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
     if (!supabase) return
-    let pendingRole: EntryRole | null = null
-    try {
-      const storedRole = localStorage.getItem(GOOGLE_ENTRY_ROLE_KEY)
-      if (storedRole === 'seeker' || storedRole === 'recruiter') pendingRole = storedRole
-    } catch { /* ignore */ }
-    if (!pendingRole) return
+    let cancelled = false
+
+    const readStoredValue = (key: string): string => {
+      try { return localStorage.getItem(key) || '' } catch { return '' }
+    }
+    const pendingGoogleRoleRaw = readStoredValue(GOOGLE_ENTRY_ROLE_KEY)
+    const pendingGoogleRole: EntryRole | null = pendingGoogleRoleRaw === 'seeker' || pendingGoogleRoleRaw === 'recruiter'
+      ? pendingGoogleRoleRaw
+      : null
+    const recoveryTargetAtLoad = readStoredValue(AUTH_RECOVERY_TARGET_KEY)
 
     const searchParams = new URLSearchParams(window.location.search)
     const hashParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '')
     const oauthError = searchParams.get('error_description') || searchParams.get('error') || hashParams.get('error_description') || hashParams.get('error')
     if (oauthError) {
       void clearGoogleAuthReturn()
-      setEntryRole(pendingRole)
-      setAuthStep('mobile')
-      setAuthError('Google login was not completed. If this continues, the Google provider may not be enabled yet. You can login with your mobile number/email and password.')
-      navigate('auth', { resetHistory: true })
-      return
+      if (recoveryTargetAtLoad === 'admin') {
+        setShowAdminForgot(true)
+        setAdminForgotError('This password reset link is expired or invalid. Please request a new Admin password reset email.')
+        navigate('admin', { resetHistory: true })
+        return
+      }
+      if (recoveryTargetAtLoad.startsWith('member:')) {
+        const role: EntryRole = recoveryTargetAtLoad.endsWith(':recruiter') ? 'recruiter' : 'seeker'
+        setEntryRole(role)
+        setAuthStep('forgot')
+        setAuthError('This password reset link is expired or invalid. Please request a new password reset email.')
+        navigate('auth', { resetHistory: true })
+        return
+      }
+      if (pendingGoogleRole) {
+        setEntryRole(pendingGoogleRole)
+        setAuthStep('mobile')
+        setAuthError('Google login was not completed. If this continues, the Google provider may not be enabled yet. You can login with your mobile number/email and password.')
+        navigate('auth', { resetHistory: true })
+        return
+      }
     }
 
-    let cancelled = false
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!cancelled && session?.user) {
-        const googleUser = session.user
-        // Supabase recommends deferring other Supabase calls out of this
-        // callback; the account lookup runs on the next tick.
-        window.setTimeout(() => { if (!cancelled) void completeGoogleLogin(googleUser, pendingRole) }, 0)
+    const handleSession = async (session: { user: SupabaseUser } | null, event: string) => {
+      if (cancelled) return
+      const user = session?.user ?? null
+      setAuthSessionUser(user)
+
+      if (event === 'PASSWORD_RECOVERY' && user) {
+        routePasswordRecoverySession(user)
+        return
       }
-    })
-    void supabase.auth.getUser().then(({ data }) => {
-      if (!cancelled && data.user) void completeGoogleLogin(data.user, pendingRole)
+      if (!user) {
+        if (event === 'SIGNED_OUT') {
+          authSessionSyncKeyRef.current = ''
+          setCurrentUser(null)
+          setHasAuthenticated(false)
+          setIsAdmin(false)
+          setAuthRecoveryMode(false)
+          setAdminRecoveryMode(false)
+        }
+        return
+      }
+      if (event === 'TOKEN_REFRESHED') return
+      if (event === 'SIGNED_IN' && suppressAuthSessionSyncUntilRef.current > Date.now()) return
+
+      const recoveryTarget = readStoredValue(AUTH_RECOVERY_TARGET_KEY)
+      if (recoveryTarget && event === 'USER_UPDATED') return
+
+      const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
+      const metaRole: EntryRole | null = metadata.app_role === 'seeker' || metadata.app_role === 'recruiter'
+        ? metadata.app_role as EntryRole
+        : null
+      const storedPreference = loadStoredSession()
+      const preferredRole: EntryRole | null = pendingGoogleRole ?? metaRole ?? storedPreference?.role ?? null
+      const syncKey = `${user.id}:${preferredRole ?? ''}:${user.email ?? ''}`
+      if (authSessionSyncKeyRef.current === syncKey) return
+      authSessionSyncKeyRef.current = syncKey
+
+      try {
+        const providers = Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers : []
+        const isGoogleUser = user.app_metadata?.provider === 'google' || providers.includes('google')
+        if (isGoogleUser) {
+          await completeGoogleLogin(user, preferredRole ?? 'seeker')
+          return
+        }
+
+        const appliedAccount = await applySupabaseAuthSession(user, preferredRole, { silent: event === 'INITIAL_SESSION' })
+        if (appliedAccount) return
+        if ((user.email ?? '').trim().toLowerCase() === ADMIN_REGISTERED_EMAIL) return
+
+        const roleForProfile = preferredRole ?? 'seeker'
+        const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+        const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+        setEntryRole(roleForProfile)
+        setAuthForm(prev => ({
+          ...prev,
+          name: metaName || prev.name,
+          mobile: isValidMobile(metaMobile) ? metaMobile : prev.mobile,
+          email: user.email?.trim().toLowerCase() || prev.email,
+          identifier: user.email?.trim().toLowerCase() || prev.identifier,
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        navigate('auth', { resetHistory: true })
+        if (event !== 'INITIAL_SESSION') setToast('Supabase Auth login verified ✅ Complete your account profile to continue.')
+      } catch (error) {
+        if (cancelled) return
+        const roleForProfile = preferredRole ?? 'seeker'
+        const metaName = String(metadata.full_name || metadata.name || '').trim().replace(/\s+/g, ' ')
+        const metaMobile = normalizeMobile(String(metadata.mobile || metadata.phone || ''))
+        setEntryRole(roleForProfile)
+        setAuthForm(prev => ({
+          ...prev,
+          name: metaName || prev.name,
+          mobile: isValidMobile(metaMobile) ? metaMobile : prev.mobile,
+          email: user.email?.trim().toLowerCase() || prev.email,
+          identifier: user.email?.trim().toLowerCase() || prev.identifier,
+          password: '',
+          confirmPassword: '',
+        }))
+        setAuthStep('register')
+        const mapped = mapAuthError(error, 'Unable to complete your Supabase Auth profile right now. Please check your details and try again.', 'email')
+        if (mapped.field) {
+          const field = mapped.field === 'identifier' ? 'email' : mapped.field
+          markAuthFieldTouched(field)
+          showAuthFieldError(field, mapped.message)
+        } else {
+          setAuthError(mapped.message)
+        }
+        navigate('auth', { resetHistory: true })
+      }
+    }
+
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled) void handleSession(data.session, 'INITIAL_SESSION')
     }, () => undefined)
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Defer other Supabase calls out of the auth callback.
+      window.setTimeout(() => { if (!cancelled) void handleSession(session, event) }, 0)
+    })
+
     return () => { cancelled = true; subscription.unsubscribe() }
-    // Run once when the browser returns from Google.
+    // Restore/handle the Supabase Auth session once on app load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -3964,8 +4424,17 @@ export default function App() {
     : authRegisterExistingAccount
   const authExistingEmailValidation = authExistingAccount ? validateEmailAddress(authExistingAccount.email) : null
   const authExistingEmailError = authExistingEmailValidation?.error ?? null
-  const authExistingNeedsPasswordSetup = Boolean(authExistingAccount && !hasAccountPassword(authExistingAccount))
-  const authRegisterNeedsPasswordSetup = !authRegisterExistingAccount || !hasAccountPassword(authRegisterExistingAccount)
+  const authExistingNeedsPasswordSetup = Boolean(authExistingAccount && !authExistingAccount.authLinked && !authExistingAccount.authUserId)
+  const authRegisterGooglePending = Boolean(
+    googlePendingProfile
+    && entryRole === googlePendingProfile.role
+    && authForm.email.trim().toLowerCase() === googlePendingProfile.email,
+  )
+  const authRegisterHasAuthSession = Boolean(
+    authSessionUser?.email
+    && authForm.email.trim().toLowerCase() === authSessionUser.email.trim().toLowerCase(),
+  )
+  const authRegisterNeedsPasswordSetup = authRegisterGooglePending || !authRegisterHasAuthSession
   const authIdentifierFieldError = authFieldErrors.identifier ?? (authIdentifierTouched ? parsedAuthIdentifier.error : null)
   const authNameFieldError = authFieldErrors.name ?? (authNameTouched ? getNameValidationError(authForm.name) : null)
   const authMobileFieldError = authFieldErrors.mobile ?? (authMobileTouched ? getMobileValidationError(authForm.mobile) : null)
@@ -5114,7 +5583,7 @@ export default function App() {
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-extrabold text-white">{authExistingAccount.name.trim().charAt(0).toUpperCase()}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-extrabold">Welcome back, {authExistingAccount.name}!</p>
-                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingNeedsPasswordSetup ? 'Password setup needed' : authExistingAccount.email}</p>
+                        <p className="truncate text-[11px] text-slate-600">{entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account found • {authExistingNeedsPasswordSetup ? 'Supabase Auth setup needed' : authExistingAccount.email}</p>
                       </div>
                       <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-600" />
                     </div>
@@ -5136,7 +5605,7 @@ export default function App() {
                     <button type="button" onClick={openForgotPassword} className="text-xs font-extrabold text-sky-700 hover:text-sky-900 hover:underline">Forgot Password?</button>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading || googleAuthLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Set Password & Continue' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading || googleAuthLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"><LogIn className="h-4 w-4" /> {authLoading ? 'Checking Account...' : authRecruiterBlockAccount ? 'Job Seeker Login Blocked' : authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingEmailError ? 'Verify & Correct Email ID' : authExistingAccount ? 'Login & Continue' : 'Continue to Register'}</button>
                   {isSupabaseConfigured && (
                     <>
                       <div className="my-4 flex items-center gap-3" aria-hidden="true">
@@ -5155,10 +5624,10 @@ export default function App() {
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleForgotPasswordReset() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
                     <p className="text-sm font-extrabold text-sky-900">Forgot Password</p>
-                    <p className="text-[11px] font-medium leading-relaxed text-sky-700">Enter the same registered mobile number and email ID used for this {entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account, then create a new password.</p>
+                    <p className="text-[11px] font-medium leading-relaxed text-sky-700">{authRecoveryMode ? 'Email verified. Set your new password below.' : `Enter the same registered mobile number and email ID used for this ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} account. We will email you a secure reset link.`}</p>
                   </div>
                   <div className="mt-4 space-y-3">
-                    <div>
+                    <div className={authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Mobile Number *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-extrabold text-slate-500">+91</span>
@@ -5168,7 +5637,7 @@ export default function App() {
                         <p id="auth-mobile-message" className="mt-1 flex items-start gap-1 text-[11px] font-semibold leading-relaxed text-red-600"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{authMobileFieldError}</span></p>
                       )}
                     </div>
-                    <div>
+                    <div className={authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Email ID *</label>
                       <input value={authForm.email} onChange={e => updateAuthField('email', e.target.value)} onBlur={() => setAuthEmailTouched(true)} type="email" autoComplete="email" placeholder="yourname@gmail.com" aria-invalid={showAuthEmailError} aria-describedby="auth-email-message" className={`w-full rounded-xl border bg-white px-3 py-3 text-sm outline-none ${showAuthEmailError ? 'border-red-400 focus:border-red-500' : showAuthEmailSuccess ? 'border-emerald-400 focus:border-emerald-500' : 'focus:border-sky-500'}`} />
                       {showAuthEmailError ? (
@@ -5179,7 +5648,7 @@ export default function App() {
                         <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Both registered mobile and email must match the same account.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
@@ -5194,7 +5663,7 @@ export default function App() {
                         <p id="auth-password-message" className="mt-1 text-[11px] font-medium text-slate-400">Minimum 6 characters.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password *</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><KeyRound className="h-4 w-4" /></span>
@@ -5211,14 +5680,14 @@ export default function App() {
                     </div>
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><KeyRound className="h-4 w-4" /> {authLoading ? 'Resetting Password...' : 'Reset Password & Login'}</button>
-                  <button type="button" onClick={() => { setAuthStep('mobile'); clearAuthErrors(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })); resetAuthTouched() }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Return to Login</button>
+                  <button type="submit" disabled={authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><KeyRound className="h-4 w-4" /> {authLoading ? (authRecoveryMode ? 'Setting New Password...' : 'Sending Reset Email...') : authRecoveryMode ? 'Set New Password & Login' : 'Email Password Reset Link'}</button>
+                  <button type="button" onClick={() => { setAuthRecoveryMode(false); setAuthStep('mobile'); clearAuthErrors(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })); resetAuthTouched() }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Return to Login</button>
                 </form>
               ) : (
                 <form className="mt-5" onSubmit={e => { e.preventDefault(); handleRegister() }}>
                   <div className="rounded-2xl bg-sky-50 p-3 text-center">
-                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Your Password' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
-                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'This account was created before password login. Set a minimum-6-character password to secure it.' : authExistingAccount ? 'Enter your current password to login to this existing account.' : 'Register with your name, mobile number, correct email ID and a minimum-6-character password.'}</p>
+                    <p className="text-sm font-extrabold text-sky-900">{authExistingEmailError ? 'Correct Your Email ID' : authExistingAccount && authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingAccount ? 'Account Already Registered' : `New ${entryRole === 'recruiter' ? 'Recruiter' : 'Job Seeker'} Account`}</p>
+                    <p className="text-[11px] font-medium text-sky-700">{authExistingEmailError ? 'Your account was saved earlier with an incorrect email format. Correct it to continue.' : authExistingAccount && authExistingNeedsPasswordSetup ? 'This account was created before Supabase Auth. Create your secure Auth account once, confirm email, then login.' : authExistingAccount ? 'This account is already created. Login with your registered mobile/email and password.' : 'First create your Supabase Auth account with name, mobile, correct email ID and a minimum-6-character password. Confirm email, then login.'}</p>
                   </div>
                   {activeGooglePendingProfile && (
                     <div className="mt-3 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-left">
@@ -5271,7 +5740,7 @@ export default function App() {
                         <p id="auth-email-message" className="mt-1 text-[11px] font-medium text-slate-400">Gmail IDs must end with @gmail.com.</p>
                       )}
                     </div>
-                    <div>
+                    <div className={!authRegisterNeedsPasswordSetup ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">{authRegisterNeedsPasswordSetup ? 'Create Password *' : 'Current Password *'}</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><LockKeyhole className="h-4 w-4" /></span>
@@ -5305,7 +5774,7 @@ export default function App() {
                     )}
                   </div>
                   {authError && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{authError}</p>}
-                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authRegisterNeedsPasswordSetup && authExistingAccount ? 'Setting Password...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError && authRegisterNeedsPasswordSetup ? 'Correct Email & Set Password' : authExistingEmailError ? 'Correct Email & Continue' : authExistingAccount && authRegisterNeedsPasswordSetup ? 'Set Password & Continue' : authExistingAccount ? 'Login & Continue' : 'Register & Continue'}</button>
+                  <button type="submit" disabled={!!authRecruiterBlockAccount || authLoading} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" /> {authLoading ? (authExistingEmailError ? 'Saving Correction...' : authExistingNeedsPasswordSetup ? 'Creating Supabase Auth Account...' : 'Creating Account...') : authRecruiterBlockAccount ? 'Job Seeker Registration Blocked' : authExistingEmailError ? 'Correct Email & Continue' : authExistingNeedsPasswordSetup ? 'Create Supabase Auth Account' : authExistingAccount && !authRegisterNeedsPasswordSetup ? 'Complete Profile & Continue' : authExistingAccount ? 'Login & Continue' : 'Create Account'}</button>
                   <button type="button" onClick={() => { setAuthStep('mobile'); clearAuthErrors(); setGooglePendingProfile(null); resetAuthTouched(); setAuthForm(prev => ({ ...prev, password: '', confirmPassword: '' })) }} className="mt-2 w-full rounded-full border py-2.5 text-xs font-bold text-slate-600">Use another mobile number or email</button>
                 </form>
               )}
@@ -7021,30 +7490,30 @@ export default function App() {
                     </div>
                   </div>
                   {adminError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminError}</p>}
-                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700"><LogIn className="h-4 w-4" /> Login to Dashboard</button>
+                  <button type="submit" disabled={adminAuthLoading} className="flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 py-3 text-sm font-bold text-white shadow hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"><LogIn className="h-4 w-4" /> {adminAuthLoading ? 'Checking Admin Auth...' : 'Login to Dashboard'}</button>
                 </form>
                 <button type="button" onClick={() => { setShowAdminForgot(v => !v); setAdminForgotError('') }} className="mx-auto mt-3 block text-xs font-extrabold text-sky-700 hover:underline">Forgot Admin Password?</button>
                 {showAdminForgot && (
                   <form className="mt-3 space-y-3 rounded-2xl bg-slate-50 p-4 text-left" onSubmit={e => { e.preventDefault(); void handleAdminForgotPassword() }}>
-                    <p className="text-xs leading-relaxed text-slate-600"><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email to set a new password.</p>
-                    <div>
+                    <p className="text-xs leading-relaxed text-slate-600">{adminRecoveryMode ? <><b className="text-slate-900">Email verified:</b> set your new Admin password below.</> : <><b className="text-slate-900">Reset Admin password:</b> enter the Admin ID and registered Admin email. We will email a secure reset link if the Admin Auth user exists.</>}</p>
+                    <div className={adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Admin ID</label>
                       <input value={adminForgotId} onChange={e => setAdminForgotId(e.target.value)} name="admin-forgot-id" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Registered Admin Email</label>
                       <input value={adminForgotEmail} onChange={e => setAdminForgotEmail(e.target.value)} name="admin-registered-email" autoCapitalize="none" autoComplete="off" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={!adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">New Password</label>
                       <input type="password" value={adminForgotNew} onChange={e => setAdminForgotNew(e.target.value)} placeholder="Minimum 6 characters" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
-                    <div>
+                    <div className={!adminRecoveryMode ? 'hidden' : ''}>
                       <label className="mb-1 block text-xs font-bold text-slate-600">Confirm New Password</label>
                       <input type="password" value={adminForgotConfirm} onChange={e => setAdminForgotConfirm(e.target.value)} placeholder="Enter new password again" autoComplete="new-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm outline-none focus:border-sky-500" />
                     </div>
                     {adminForgotError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{adminForgotError}</p>}
-                    <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800"><KeyRound className="h-4 w-4" /> Reset Admin Password</button>
+                    <button type="submit" disabled={adminAuthLoading} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-sm font-bold text-white shadow hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"><KeyRound className="h-4 w-4" /> {adminAuthLoading ? 'Please wait...' : adminRecoveryMode ? 'Set New Admin Password' : 'Email Admin Reset Link'}</button>
                   </form>
                 )}
               </div>
@@ -7332,7 +7801,7 @@ export default function App() {
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                           {account.role === 'seeker' && <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSeekerProfileComplete(account.profile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isSeekerProfileComplete(account.profile) ? 'Profile Complete' : `Profile ${seekerProfileProgress(account.profile)}%`}</span>}
-                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.hasPassword || account.passwordHash) ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>{(account.hasPassword || account.passwordHash) ? 'Password Set' : 'No Password'}</span>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(account.authLinked || account.authUserId) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{(account.authLinked || account.authUserId) ? 'Supabase Auth' : 'Auth Pending'}</span>
                           <button type="button" onClick={() => setAdminAccountDetail(account)} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-extrabold text-white shadow-sm transition hover:bg-slate-800"><Eye className="h-3.5 w-3.5" /> View Account</button>
                         </div>
                       </div>
@@ -7615,10 +8084,7 @@ export default function App() {
                     <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                       <div>
                         {supabase && (
-                          <div className="max-w-md">
-                            <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-600"><span>Current Admin Password (required for secure Supabase save)</span><KeyRound className="h-3.5 w-3.5 text-sky-500" /></label>
-                            <input type="password" value={commerceAdminPassword} onChange={e => setCommerceAdminPassword(e.target.value)} autoComplete="current-password" className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-sky-500" placeholder="Enter current Admin password" />
-                          </div>
+                          <p className="flex max-w-md items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-800"><ShieldCheck className="h-3.5 w-3.5 shrink-0" /> Secured by your logged-in Supabase Admin Auth session.</p>
                         )}
                         <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{adminTab === 'plan-settings'
                           ? 'Saving updates the live plan cards (price, validity, contacts/day, ON/OFF and benefits). Existing purchases keep the price and expiry recorded at their checkout time.'
@@ -8068,7 +8534,7 @@ export default function App() {
                         ['Mobile Number', `+91 ${adminAccountDetail.mobile}`],
                         ['Email ID', adminAccountDetail.email],
                         ['Joined', formatAdminDate(adminAccountDetail.createdAt)],
-                        ['Password', (adminAccountDetail.hasPassword || adminAccountDetail.passwordHash) ? 'Password set • Protected' : 'No password set'],
+                        ['Supabase Auth', (adminAccountDetail.authLinked || adminAccountDetail.authUserId) ? 'Linked • Protected' : 'Auth setup pending'],
                         ...(adminAccountDetail.role === 'seeker' ? [['Job Profile', isSeekerProfileComplete(adminAccountDetail.profile) ? 'Complete' : `${seekerProfileProgress(adminAccountDetail.profile)}% complete`]] as [string, string][] : []),
                         ...(adminAccountDeletionRequest ? [['Deletion Request', `${adminAccountDeletionRequest.status === 'pending' ? 'Pending' : 'Rejected'} • ${adminAccountDeletionRequest.reasonCategory}`]] as [string, string][] : []),
                       ].map(([label, value]) => (
