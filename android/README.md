@@ -36,12 +36,13 @@ keystore, Play service-account JSON, or production secret.
 
 ## 3. Ads and Billing
 
-- The current sponsored placements and Starter/Pro checkout are in-app demo
-  flows. They are not production AdMob or Google Play Billing integrations.
+- The current sponsored placements are in-app placements, and Starter/Pro
+  checkout uses Admin-configured manual UPI/payment-link/bank receiving
+  details. They are not production AdMob or Google Play Billing integrations.
 - Add production AdMob IDs only when the AdMob account/app is created.
 - Create Play subscription/product IDs and implement server-side receipt
-  verification before charging real users. Do not treat a locally recorded
-  demo purchase as proof of payment.
+  verification before charging real users through Google Play. Do not treat a
+  locally recorded manual payment reference as independent proof of payment.
 
 ## 4. Play Console Steps
 

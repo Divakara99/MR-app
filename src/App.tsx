@@ -140,14 +140,13 @@ type PaymentReceivingSettings = {
   bankDetails: string
   bankEnabled: boolean
   instructions: string
-  demoCheckoutEnabled: boolean
 }
 type CommerceSettings = {
   plans: Record<PaidPlanId, PaidPlanConfig>
   payment: PaymentReceivingSettings
   updatedAt?: string
 }
-type CheckoutMethod = 'upi' | 'payment-link' | 'bank' | 'demo'
+type CheckoutMethod = 'upi' | 'payment-link' | 'bank'
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
   name: string
@@ -202,7 +201,7 @@ type SupportTicket = {
 type RemoteSyncCollectionKey = 'jobs' | 'pending_jobs' | 'support_tickets' | 'deletion_requests'
 type SyncRecord = { id: string }
 
-// Vacancies are real only: no seeded/demo jobs are bundled with the app.
+// Vacancies are real only: no seeded jobs are bundled with the app.
 
 const LOCATIONS = ['All India', 'Telangana', 'Karnataka', 'Andhra Pradesh', 'Tamil Nadu', 'Maharashtra', 'Gujarat', 'Uttar Pradesh', 'Madhya Pradesh', 'West Bengal', 'Delhi']
 const EXP_OPTIONS = ['All Experience', 'Fresher', 'Below 6 months', 'Above 6 months'] as const
@@ -269,7 +268,6 @@ const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
     bankDetails: '',
     bankEnabled: false,
     instructions: 'Pay the exact plan amount using the Admin payment source shown here. After payment, enter the UPI/UTR/transaction reference and tap Payment Done — Activate Plan.',
-    demoCheckoutEnabled: true,
   },
 }
 const asSettingsRecord = (value: unknown): Record<string, unknown> => (
@@ -319,7 +317,6 @@ const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
       bankDetails: settingsString(payment.bankDetails, DEFAULT_COMMERCE_SETTINGS.payment.bankDetails, 1200),
       bankEnabled: settingsBoolean(payment.bankEnabled, DEFAULT_COMMERCE_SETTINGS.payment.bankEnabled),
       instructions: settingsString(payment.instructions, DEFAULT_COMMERCE_SETTINGS.payment.instructions, 1200) || DEFAULT_COMMERCE_SETTINGS.payment.instructions,
-      demoCheckoutEnabled: settingsBoolean(payment.demoCheckoutEnabled, DEFAULT_COMMERCE_SETTINGS.payment.demoCheckoutEnabled),
     },
     updatedAt: settingsString(source.updatedAt, '', 60) || undefined,
   }
@@ -348,7 +345,7 @@ const validateCommerceSettings = (settings: CommerceSettings): string => {
     } catch { return 'Enter a correct payment link, or turn Payment Link off.' }
   }
   if (payment.bankEnabled && !payment.bankDetails.trim()) return 'Enter bank receiving details, or turn Bank Transfer off.'
-  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled && !payment.demoCheckoutEnabled) return 'Enable at least one payment receiving method.'
+  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled) return 'Enable at least one real payment receiving method.'
   return ''
 }
 const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
@@ -423,7 +420,7 @@ const loadDailyJobAccess = (): StoredDailyJobAccess => {
     }
   } catch { return emptyDailyJobAccess() }
 }
-const LEGACY_DEMO_JOB_IDS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
+const LEGACY_SEEDED_JOB_IDS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])
 const loadInitialJobs = (): Job[] => {
   try {
     const raw = localStorage.getItem(ADMIN_JOBS_KEY)
@@ -431,8 +428,8 @@ const loadInitialJobs = (): Job[] => {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     // Keep only real Admin-posted/Admin-approved jobs already saved on this
-    // device. Old bundled demo vacancies (IDs 1–15) are never restored.
-    return (parsed as Job[]).filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))
+    // device. Old bundled seeded vacancies (IDs 1–15) are never restored.
+    return (parsed as Job[]).filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))
   } catch { return [] }
 }
 const SEEKER_QUALIFICATIONS = ['B.Pharm', 'M.Pharm', 'D.Pharm', 'Pharm.D', 'B.Sc', 'M.Sc', 'B.Sc + MBA', 'Any Graduate', 'Other']
@@ -1013,7 +1010,7 @@ export default function App() {
   const [commerceSettingsSaving, setCommerceSettingsSaving] = useState(false)
   const [commerceQrUploading, setCommerceQrUploading] = useState(false)
   const [checkoutPlan, setCheckoutPlan] = useState<PaidPlanId | null>(null)
-  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod>('demo')
+  const [checkoutMethod, setCheckoutMethod] = useState<CheckoutMethod | null>(null)
   const [checkoutReference, setCheckoutReference] = useState('')
   const [checkoutError, setCheckoutError] = useState('')
   const [checkoutProcessing, setCheckoutProcessing] = useState(false)
@@ -3825,8 +3822,7 @@ export default function App() {
     if (settings.payment.upiEnabled && settings.payment.upiId.trim()) methods.push({ id: 'upi', label: 'UPI' })
     if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) methods.push({ id: 'payment-link', label: 'Payment Link' })
     if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) methods.push({ id: 'bank', label: 'Bank Transfer' })
-    if (settings.payment.demoCheckoutEnabled) methods.push({ id: 'demo', label: 'Demo Checkout' })
-    return methods.length > 0 ? methods : [{ id: 'demo', label: 'Demo Checkout' }]
+    return methods
   }
   const getPlanCheckoutExpiry = (planId: PaidPlanId, validityDays: number): string => {
     const now = Date.now()
@@ -3860,7 +3856,7 @@ export default function App() {
       setShowPricing(false)
       if (isAdmin) {
         openAdmin('plan-settings')
-        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to test a purchase.')
+        setToast('Admin: set plan prices, validity and the payment receiving source here. Login as a Job Seeker to purchase a plan.')
       } else {
         setToast('Please login as a Job Seeker to purchase a plan.')
       }
@@ -3872,8 +3868,13 @@ export default function App() {
       setToast(`Your ${activePurchaseNow.planName} plan is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Starter can be purchased after it expires.`)
       return
     }
+    const availableMethods = getAvailableCheckoutMethods(latestSettings)
+    if (availableMethods.length === 0) {
+      setToast('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+      return
+    }
     setCheckoutPlan(nextTier)
-    setCheckoutMethod(getAvailableCheckoutMethods(latestSettings)[0].id)
+    setCheckoutMethod(availableMethods[0].id)
     setCheckoutReference('')
     setCheckoutError('')
     setShowPricing(false)
@@ -3883,15 +3884,17 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) { setCheckoutError('Please login as a Job Seeker to activate this plan.'); return }
     const planConfig = commerceSettings.plans[checkoutPlan]
     if (!planConfig.enabled) { setCheckoutError(`${planConfig.name} is not available for purchase right now.`); return }
+    if (!checkoutMethod || !getAvailableCheckoutMethods(commerceSettings).some(method => method.id === checkoutMethod)) {
+      setCheckoutError('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+      return
+    }
     const enteredReference = checkoutReference.trim().replace(/\s+/g, '')
-    if (checkoutMethod !== 'demo' && enteredReference.length < 6) {
+    if (enteredReference.length < 6) {
       setCheckoutError('Enter the UPI/UTR/transaction reference shown after payment (minimum 6 characters).')
       return
     }
     if (enteredReference.length > 100) { setCheckoutError('Payment reference is too long. Please enter only the transaction/UTR reference.'); return }
-    const transactionId = checkoutMethod === 'demo'
-      ? 'TXN' + Date.now().toString(36).toUpperCase()
-      : enteredReference
+    const transactionId = enteredReference
     const knownPurchases = [...purchases, ...(remotePurchases ?? [])]
     if (knownPurchases.some(record => record.transactionId.trim().toLowerCase() === transactionId.toLowerCase())) {
       setCheckoutError('This payment reference has already been used. Enter the new transaction/UTR reference for this payment.')
@@ -3901,9 +3904,7 @@ export default function App() {
       ? 'UPI'
       : checkoutMethod === 'payment-link'
         ? 'Payment Link'
-        : checkoutMethod === 'bank'
-          ? 'Bank Transfer'
-          : 'In-App Checkout (Demo)'
+        : 'Bank Transfer'
     const now = new Date()
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
@@ -4197,7 +4198,7 @@ export default function App() {
     }
 
     void Promise.all([
-      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_DEMO_JOB_IDS.has(String(job.id)))),
+      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))),
       loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs(), setPendingJobs),
       loadCollection<SupportTicket>('support_tickets', loadSupportTickets(), setSupportTickets),
       loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests(), setDeletionRequests),
@@ -4624,7 +4625,7 @@ export default function App() {
       return { id: `registered-${index}-${anonymousCandidateCode(a.mobile)}`, code: anonymousCandidateCode(a.mobile), source: 'registered' as const, profile: publicProfile }
     })
   const registeredCandidateProfiles: CandidateProfileView[] = isSupabaseConfigured ? remoteCandidateProfiles : localRegisteredCandidateProfiles
-  // Only real registered Job Seeker profiles are shown — no sample/demo profiles.
+  // Only real registered Job Seeker profiles are shown — no sample profiles.
   const candidateProfiles: CandidateProfileView[] = registeredCandidateProfiles
   const candidateStates = ['All India', ...Array.from(new Set(candidateProfiles.map(c => c.profile.state).filter(Boolean)))]
   const filteredCandidateProfiles = candidateProfiles.filter(c => {
@@ -4907,7 +4908,7 @@ export default function App() {
     const steps = [
       { title: 'Choose a plan', text: 'Open Plans & Benefits and select Free, Starter or Pro.', icon: Crown },
       { title: 'Check the amount', text: 'Confirm the plan name, exact amount, validity and receiver name.', icon: Eye },
-      { title: 'Make the payment', text: 'Use the UPI, payment link, bank or demo option switched on by Admin.', icon: Wallet },
+      { title: 'Make the payment', text: 'Use the UPI, payment link or bank option switched on by Admin.', icon: Wallet },
       { title: 'Save the reference', text: 'Copy the UPI/UTR/transaction number. Use a new reference for every payment.', icon: FileText },
       { title: 'Plan auto-activates', text: 'Tap “Payment Done”. The new expiry date will appear in Payment & My Plan.', icon: BadgeCheck },
     ]
@@ -4957,15 +4958,6 @@ export default function App() {
         summary: 'Transfer the exact plan amount to the Admin bank account shown at checkout.',
         detail: `Receiver: ${paymentSettings.receiverName}. Full bank details are shown after plan selection.`,
         note: 'Enter the UTR/NEFT/IMPS reference after transfer.',
-      },
-      {
-        id: 'demo' as CheckoutMethod,
-        title: 'Demo Checkout',
-        icon: Info,
-        available: paymentSettings.demoCheckoutEnabled,
-        summary: 'Test activation only. No real money moves to any bank or UPI account.',
-        detail: 'Use this only to check how plan activation and expiry work.',
-        note: 'Do not treat a demo activation as a real payment.',
       },
     ]
 
@@ -7977,7 +7969,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Preview currently uses demo in-app checkout — Google Play Billing replaces it before Play Store release, and payments sync to Supabase when connected.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each submitted reference in your UPI/bank app; payments sync to Supabase when connected.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Total Collected</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">₹{totalRevenue.toLocaleString('en-IN')}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">This Month</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">₹{thisMonthRevenue.toLocaleString('en-IN')}</p></div>
@@ -8111,12 +8103,11 @@ export default function App() {
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">3</span><h4 className="mt-2 text-sm font-extrabold">Switch method ON</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Only ON methods with complete details appear as usable checkout cards.</p></article>
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">4</span><h4 className="mt-2 text-sm font-extrabold">Save + cross-check</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Save with the Admin password, then match every submitted UTR in Payment List.</p></article>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           {[
                             { label: 'UPI / QR', ready: commerceDraft.payment.upiEnabled && Boolean(commerceDraft.payment.upiId.trim()), detail: commerceDraft.payment.upiId || 'UPI ID not added' },
                             { label: 'Payment Link', ready: commerceDraft.payment.paymentLinkEnabled && /^https?:\/\//i.test(commerceDraft.payment.paymentLink.trim()), detail: commerceDraft.payment.paymentLink || 'Payment link not added' },
                             { label: 'Bank Transfer', ready: commerceDraft.payment.bankEnabled && Boolean(commerceDraft.payment.bankDetails.trim()), detail: commerceDraft.payment.bankDetails.trim() ? 'Bank details added' : 'Bank details not added' },
-                            { label: 'Demo Checkout', ready: commerceDraft.payment.demoCheckoutEnabled, detail: commerceDraft.payment.demoCheckoutEnabled ? 'Testing is ON — turn OFF for real money' : 'Testing is OFF' },
                           ].map(method => (
                             <article key={method.label} className={`rounded-3xl border p-3.5 ${method.ready ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
                               <div className="flex items-center gap-2"><h4 className="min-w-0 flex-1 truncate text-sm font-extrabold">{method.label}</h4><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold ${method.ready ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{method.ready ? 'READY' : 'NOT READY'}</span></div>
@@ -8143,15 +8134,11 @@ export default function App() {
                         <input value={commerceDraft.payment.upiId} onChange={e => updateCommercePaymentDraft({ upiId: e.target.value.trim() })} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500" placeholder="yourname@upi" />
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.upiEnabled} onChange={e => updateCommercePaymentDraft({ upiEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> UPI Payment ON</label>
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.paymentLinkEnabled} onChange={e => updateCommercePaymentDraft({ paymentLinkEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Payment Link ON</label>
                       <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.bankEnabled} onChange={e => updateCommercePaymentDraft({ bankEnabled: e.target.checked })} className="h-4 w-4 accent-emerald-600" /> Bank Transfer ON</label>
-                      <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs font-bold"><input type="checkbox" checked={commerceDraft.payment.demoCheckoutEnabled} onChange={e => updateCommercePaymentDraft({ demoCheckoutEnabled: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Demo Checkout ON</label>
                     </div>
-                    {commerceDraft.payment.demoCheckoutEnabled && (
-                      <p className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-100 px-3 py-2.5 text-[11px] font-bold leading-relaxed text-amber-950"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Demo Checkout is ON. Job Seekers can activate without real payment. Turn Demo OFF before collecting real money.</p>
-                    )}
                     <div className="mt-4 grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                       <div className="rounded-2xl border bg-white p-3">
                         <p className="flex items-center gap-2 text-xs font-extrabold text-slate-700"><QrCode className="h-4 w-4 text-emerald-600" /> UPI QR Image</p>
@@ -8869,19 +8856,20 @@ export default function App() {
 
                 <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">STEP 2 — SELECT PAYMENT METHOD</p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {getAvailableCheckoutMethods(commerceSettings).length === 0 && (
+                    <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-relaxed text-amber-900 sm:col-span-2">No payment method is available right now. Admin has not enabled UPI, a payment link or bank transfer.</p>
+                  )}
                   {getAvailableCheckoutMethods(commerceSettings).map(method => {
                     const methodHint = method.id === 'upi'
                       ? 'UPI app or QR scan'
                       : method.id === 'payment-link'
                         ? 'Open the Admin payment link'
-                        : method.id === 'bank'
-                          ? 'NEFT / IMPS bank transfer'
-                          : 'Test only — no real money'
+                        : 'NEFT / IMPS bank transfer'
                     const selectedMethod = checkoutMethod === method.id
                     return (
                       <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition disabled:opacity-50 ${selectedMethod ? 'border-slate-900 bg-slate-900 text-white shadow' : 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}>
                         <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${selectedMethod ? 'bg-white/20 text-white' : 'bg-sky-50 text-sky-700'}`}>
-                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : method.id === 'demo' ? <Info className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
+                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-extrabold leading-tight">{method.label}</span>
@@ -8932,17 +8920,11 @@ export default function App() {
                     </div>
                   )}
 
-                  {checkoutMethod === 'demo' && (
-                    <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
-                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p><b>Demo checkout:</b> no real money moves in this preview. Use it only to test automatic plan activation and expiry. Connect Play Billing or a verified payment gateway for production purchases.</p>
-                    </div>
-                  )}
 
-                  {commerceSettings.payment.instructions.trim() && checkoutMethod !== 'demo' && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
+                  {commerceSettings.payment.instructions.trim() && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
                 </div>
 
-                {checkoutMethod !== 'demo' && (
+                {checkoutMethod && (
                   <div className="mt-4 rounded-3xl border border-sky-200 bg-sky-50/60 p-4">
                     <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">STEP 3 — AFTER SUCCESSFUL PAYMENT</p>
                     <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">Enter Payment / UTR / Transaction Reference *</label>
@@ -8956,7 +8938,7 @@ export default function App() {
                 <p className="mt-5 text-center text-[10px] font-extrabold tracking-[0.12em] text-emerald-700">STEP 4 — CONFIRM • PLAN ACTIVATES AUTOMATICALLY</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
-                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : checkoutMethod === 'demo' ? 'Complete Demo Payment — Activate Plan' : 'Payment Done — Activate Plan'}</button>
+                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing || !checkoutMethod} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : 'Payment Done — Activate Plan'}</button>
                 </div>
                 <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">After activation, this purchase appears in Admin Purchase &amp; Payment Lists. Paid benefits stop automatically at expiry.</p>
               </div>

@@ -282,7 +282,7 @@ full cross-device backend coverage is required:
 
 Current checkout can display Admin-configured manual UPI, payment-link, or
 bank receiving details and records the Job Seeker-entered transaction/UTR
-reference; Demo Checkout can also be enabled for testing. Manual-reference
+reference. Manual-reference
 activation is **not** independent bank/gateway verification and is not proof
 of a real gateway or Google Play payment. Admin should cross-check manual
 references, and production digital subscriptions should move to verified
@@ -305,7 +305,7 @@ hardening pass before a large public launch:
 - After the Auth-only client is production-verified, apply the cleaned
   schema drop statements so old custom-password RPCs and public-table
   password columns are permanently removed from the live database.
-- Replace manual-reference/demo payment activation with verified
+- Replace manual-reference payment activation with verified
   gateway/Google Play Billing receipts.
 - Never expose the `service_role` key in the browser application.
 
