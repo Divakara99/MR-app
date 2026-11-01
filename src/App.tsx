@@ -63,6 +63,21 @@ type Job = {
 type PendingJob = Job & { submittedAt: string; submittedBy: string; submittedByRole?: 'recruiter' | 'seeker' }
 type EntryRole = 'seeker' | 'recruiter'
 type AppPage = 'welcome' | 'auth' | 'home' | 'jobs' | 'pricing' | 'payment' | 'recruiters' | 'candidates' | 'ai' | 'saved' | 'admin' | 'postjob' | 'profile' | 'account' | 'legal'
+type AdminTab = 'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plan-settings' | 'payment-settings' | 'accounts' | 'support' | 'manage' | 'settings'
+const ADMIN_TAB_TITLES: Record<AdminTab, string> = {
+  overview: 'Overview',
+  post: 'Post Vacancy',
+  approvals: 'Approvals',
+  users: 'Users List',
+  purchases: 'Purchase List',
+  payments: 'Payment List',
+  'plan-settings': 'Plan Settings',
+  'payment-settings': 'Payment Settings',
+  accounts: 'Account Requests',
+  support: 'Support Tickets',
+  manage: 'Manage Vacancies',
+  settings: 'Settings',
+}
 type SeekerProfile = {
   experienceType: 'fresher' | 'experienced'
   desiredRole: string
@@ -1071,7 +1086,7 @@ export default function App() {
   const [adminForgotNew, setAdminForgotNew] = useState('')
   const [adminForgotConfirm, setAdminForgotConfirm] = useState('')
   const [adminForgotError, setAdminForgotError] = useState('')
-  const [adminTab, setAdminTab] = useState<'overview' | 'post' | 'approvals' | 'users' | 'purchases' | 'payments' | 'plan-settings' | 'payment-settings' | 'accounts' | 'support' | 'manage' | 'settings'>('overview')
+  const [adminTab, setAdminTab] = useState<AdminTab>('overview')
   const [showAdminMenu, setShowAdminMenu] = useState(false)
   const [adminUserRoleFilter, setAdminUserRoleFilter] = useState<'all' | 'seeker' | 'recruiter' | 'admin'>('all')
   const [adminUserSearch, setAdminUserSearch] = useState('')
@@ -1598,7 +1613,7 @@ export default function App() {
   // ---- ADMIN: M Divakar Reddy ----
   // No hard-coded or locally stored Admin password. Admin access requires a
   // verified Supabase Auth session linked to the app_admins allowlist row.
-  const openAdmin = (tab: typeof adminTab = 'overview') => {
+  const openAdmin = (tab: AdminTab = 'overview') => {
     if (!isAdmin) {
       setAdminId('')
       setAdminPass('')
@@ -1606,6 +1621,7 @@ export default function App() {
       setShowAdminPass(false)
     }
     setAdminTab(tab)
+    setAdminAccountDetail(null)
     setSelected(null)
     setSelectedCandidate(null)
     setShowPricing(false)
@@ -1726,8 +1742,7 @@ export default function App() {
       return
     }
     if (page === 'admin' && isAdmin && adminTab !== 'overview') {
-      setAdminTab('overview')
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+      openAdmin('overview')
       return
     }
 
@@ -3685,7 +3700,7 @@ export default function App() {
     setJobs(prev => [job, ...prev])
     setNewJob({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR', exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
     setToast(`Vacancy published! ${job.company} • ${job.hq} is now LIVE on Jobs page ✅`)
-    setAdminTab('manage')
+    openAdmin('manage')
   }
   const requestPostJob = () => {
     if (!newJob.company.trim() || !newJob.ctc.trim() || !newJob.phone.trim() || !newJob.email.trim()) { setToast('Please fill Company, CTC, Contact Phone and Contact Email to publish'); return }
@@ -7658,13 +7673,13 @@ export default function App() {
                       <ArrowLeft className="h-5 w-5" strokeWidth={2.5} />
                     </button>
                   )}
-                  <button onClick={() => openAdmin('overview')} aria-label="PharmaSales Jobs Admin overview" className="flex min-w-0 flex-1 items-center gap-2.5 text-left min-[420px]:gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5 text-left min-[420px]:gap-3">
                     <img src="/icon-192.png" alt="PharmaSales Jobs" className="h-9 w-9 shrink-0 rounded-[22%] bg-white object-cover shadow-[0_8px_20px_rgba(8,47,73,0.32),0_0_0_2px_rgba(255,255,255,0.92)] min-[380px]:h-10 min-[380px]:w-10 min-[420px]:h-11 min-[420px]:w-11" />
                     <span className="min-w-0">
                       <span className="block truncate text-[16px] font-extrabold leading-none tracking-tight text-white [text-shadow:0_1px_2px_rgba(8,47,73,0.38)] min-[380px]:text-[17px] min-[420px]:text-[19px]">PharmaSales Jobs</span>
                       <span className="mt-1 block truncate text-[8px] font-extrabold leading-none tracking-wide text-sky-50 min-[420px]:text-[9px]">The MR to NSM Jobs Network</span>
                     </span>
-                  </button>
+                  </div>
                   <div className="ml-auto flex shrink-0 items-center gap-2">
                     <span className="hidden rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold tracking-[0.14em] text-sky-800 shadow-sm sm:inline-flex">ADMIN</span>
                     <button type="button" onClick={() => setShowAdminMenu(true)} aria-label="Open Admin Menu" title="Admin Menu" className="relative flex h-11 min-w-11 items-center justify-center gap-2 rounded-2xl bg-white px-2.5 text-sky-800 shadow-md transition hover:bg-sky-50 active:scale-95 min-[420px]:px-3.5">
@@ -7678,7 +7693,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 border-t border-white/20 bg-slate-950/15 px-3 py-2 min-[420px]:px-3.5 sm:px-4">
                   <p className="shrink-0 text-[9px] font-extrabold tracking-[0.14em] text-sky-100">ADMIN MENU</p>
-                  <p className="min-w-0 flex-1 truncate text-xs font-extrabold text-white">{({ overview: 'Overview', post: 'Post Vacancy', approvals: 'Approvals', users: 'Users List', purchases: 'Purchase List', payments: 'Payment List', 'plan-settings': 'Plan Settings', 'payment-settings': 'Payment Settings', accounts: 'Account Requests', support: 'Support Tickets', manage: 'Manage Vacancies', settings: 'Settings' } as Record<string, string>)[adminTab]}</p>
+                  <p className="min-w-0 flex-1 truncate text-xs font-extrabold text-white">{ADMIN_TAB_TITLES[adminTab]}</p>
                   <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-extrabold text-white"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-300' : 'bg-amber-300'}`} />{isSupabaseConfigured ? 'Supabase Live' : 'This Device'}</span>
                 </div>
               </div>
@@ -7692,10 +7707,6 @@ export default function App() {
                     <span className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-bold"><span className="h-1.5 w-1.5 rounded-full bg-white" /> Logged in</span>
                   </div>
                   <p className="mt-1 text-sm opacity-90">Admin Dashboard — you have full access: post vacancies, delete jobs, unlimited contact reveal.</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => navigate('home')} className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900">Preview Job Seeker Website</button>
-                  <button onClick={requestAdminLogout} className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white"><LogOut className="h-3.5 w-3.5" /> Logout</button>
                 </div>
               </div>
 
@@ -7719,7 +7730,7 @@ export default function App() {
                             { id: 'post' as const, label: 'Post Vacancy', sub: 'Publish instantly as Admin', icon: Plus, badge: undefined, badgeClass: '' },
                             { id: 'approvals' as const, label: 'Approvals', sub: 'Vacancies waiting for approval', icon: Clock3, badge: pendingJobs.length, badgeClass: 'bg-amber-400 text-slate-900' },
                             { id: 'users' as const, label: 'Users List', sub: 'Job Seekers • Recruiters • Admin', icon: Users, badge: displayedAdminUsers.length + 1, badgeClass: 'bg-sky-100 text-sky-700' },
-                            { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Crown, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
+                            { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Package, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
                             { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
                             { id: 'plan-settings' as const, label: 'Plan Settings', sub: 'Price • validity • contacts • benefits', icon: Crown, badge: undefined, badgeClass: '' },
                             { id: 'payment-settings' as const, label: 'Payment Settings', sub: 'Receiver • UPI/QR • link • bank', icon: Wallet, badge: undefined, badgeClass: '' },
@@ -7728,7 +7739,7 @@ export default function App() {
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
                             { id: 'settings' as const, label: 'Settings', sub: 'My Account • Admin ID divakar • Password', icon: Settings, badge: undefined, badgeClass: '' },
                           ].map(item => (
-                            <button key={item.id} type="button" onClick={() => { setAdminTab(item.id); setShowAdminMenu(false) }} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.98] ${adminTab === item.id ? 'bg-slate-900 text-white shadow' : 'hover:bg-slate-50'}`}>
+                            <button key={item.id} type="button" aria-current={adminTab === item.id ? 'page' : undefined} onClick={() => openAdmin(item.id)} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.98] ${adminTab === item.id ? 'bg-slate-900 text-white shadow' : 'hover:bg-slate-50'}`}>
                               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${adminTab === item.id ? 'bg-white/15 text-white' : 'bg-sky-50 text-sky-600'}`}><item.icon className="h-5 w-5" /></span>
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-sm font-extrabold leading-tight">{item.label}</span>
@@ -7742,6 +7753,7 @@ export default function App() {
                       </div>
                       <div className="border-t bg-slate-50 px-3 py-3">
                         <p className="flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase connected — accounts, vacancies, tickets, purchases & payments sync live.' : 'Showing this device’s data — connect Supabase to sync all accounts.'}</p>
+                        <button type="button" onClick={() => { setShowAdminMenu(false); navigate('home') }} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-sky-700 shadow-sm transition hover:bg-sky-50"><Eye className="h-4 w-4" /><span className="flex-1">Preview Job Seeker Website</span><ChevronRight className="h-4 w-4 text-slate-400" /></button>
                         <button type="button" onClick={requestAdminLogout} className="mt-2 flex w-full items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left text-sm font-bold text-red-600 shadow-sm transition hover:bg-red-50"><LogOut className="h-4 w-4" /><span className="flex-1">Admin Logout</span></button>
                       </div>
                     </motion.div>
@@ -7755,21 +7767,18 @@ export default function App() {
                     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
                       <Clock3 className="h-6 w-6 shrink-0 text-amber-600" />
                       <p className="flex-1 text-sm"><b>{pendingJobs.length} recruiter {pendingJobs.length === 1 ? 'vacancy is' : 'vacancies are'} waiting for your approval.</b> <span className="text-slate-600">They are NOT live yet — approve to publish.</span></p>
-                      <button onClick={() => setAdminTab('approvals')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Now</button>
                     </div>
                   )}
                   {pendingDeletionRequests.length > 0 && (
                     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
                       <FileText className="h-6 w-6 shrink-0 text-red-500" />
                       <p className="flex-1 text-sm"><b>{pendingDeletionRequests.length} Job Seeker account-deletion {pendingDeletionRequests.length === 1 ? 'request is' : 'requests are'} waiting.</b> <span className="text-slate-600">Delete an account only if the user has given a proper reason.</span></p>
-                      <button onClick={() => setAdminTab('accounts')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Requests</button>
                     </div>
                   )}
                   {openSupportTickets.length > 0 && (
                     <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4">
                       <MessageCircle className="h-6 w-6 shrink-0 text-sky-600" />
                       <p className="flex-1 text-sm"><b>{openSupportTickets.length} user support {openSupportTickets.length === 1 ? 'ticket needs' : 'tickets need'} attention.</b> <span className="text-slate-600">Users raise tickets from AI Chat with a proper reason.</span></p>
-                      <button onClick={() => setAdminTab('support')} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white">Review Tickets</button>
                     </div>
                   )}
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -7788,11 +7797,6 @@ export default function App() {
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Review Job Seeker account-deletion requests</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Review &amp; update AI Chat support tickets</p>
                       <p className="flex items-center gap-2"><Check className="h-4 w-4 shrink-0 text-emerald-600" /> Change admin password anytime</p>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button onClick={() => setAdminTab('post')} className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-2 text-sm font-bold text-white"><Plus className="h-4 w-4" /> Post New Vacancy</button>
-                      <button onClick={() => setAdminTab('manage')} className="rounded-full border px-4 py-2 text-sm font-bold">Manage Vacancies</button>
-                      <button onClick={() => navigate('jobs')} className="rounded-full border px-4 py-2 text-sm font-bold">See Jobs Page</button>
                     </div>
                   </div>
                   <div className="mt-4 rounded-2xl border bg-white p-5">
@@ -7918,7 +7922,6 @@ export default function App() {
                           <p className="text-xs text-sky-100">Admin ID: divakar • App Founder — PharmaSales Jobs</p>
                         </div>
                         <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-extrabold">Full Access</span>
-                        <button type="button" onClick={() => setAdminTab('settings')} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-extrabold text-sky-700 shadow-sm"><Eye className="h-3.5 w-3.5" /> View Account</button>
                       </div>
                     )}
                     {filteredAdminUsers.map(account => (
@@ -8037,18 +8040,6 @@ export default function App() {
                   <p className="mt-1 max-w-4xl text-xs leading-relaxed text-slate-600">{adminTab === 'plan-settings'
                     ? 'This page controls only what a plan is: name, price, validity, daily contacts, purchase ON/OFF and the benefit lines shown on each Job Seeker plan card. Save after changing anything.'
                     : 'This page controls only where money is received: receiver name, UPI ID/QR, payment link, bank details, instructions and which methods are ON. Job Seekers see this latest source only after you save.'}</p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <button type="button" onClick={() => setAdminTab('plan-settings')} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition ${adminTab === 'plan-settings' ? 'border-sky-600 bg-sky-700 text-white shadow' : 'border-sky-100 bg-sky-50 text-sky-950 hover:border-sky-300'}`}>
-                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${adminTab === 'plan-settings' ? 'bg-white/20' : 'bg-white text-sky-700'}`}><Crown className="h-5 w-5" /></span>
-                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Plan Settings</span><span className={`mt-0.5 block text-[11px] font-semibold ${adminTab === 'plan-settings' ? 'text-sky-100' : 'text-sky-700'}`}>What the Job Seeker gets</span></span>
-                      {adminTab === 'plan-settings' && <span className="rounded-full bg-white px-2 py-1 text-[9px] font-extrabold text-sky-800">OPEN</span>}
-                    </button>
-                    <button type="button" onClick={() => setAdminTab('payment-settings')} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition ${adminTab === 'payment-settings' ? 'border-emerald-700 bg-emerald-700 text-white shadow' : 'border-emerald-100 bg-emerald-50 text-emerald-950 hover:border-emerald-300'}`}>
-                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${adminTab === 'payment-settings' ? 'bg-white/20' : 'bg-white text-emerald-700'}`}><Wallet className="h-5 w-5" /></span>
-                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Payment Settings</span><span className={`mt-0.5 block text-[11px] font-semibold ${adminTab === 'payment-settings' ? 'text-emerald-100' : 'text-emerald-700'}`}>Where the money is received</span></span>
-                      {adminTab === 'payment-settings' && <span className="rounded-full bg-white px-2 py-1 text-[9px] font-extrabold text-emerald-800">OPEN</span>}
-                    </button>
-                  </div>
                   {commerceSettings.updatedAt && <p className="mt-2 text-[11px] font-bold text-slate-400">Last saved: {formatAdminDate(commerceSettings.updatedAt)}</p>}
 
                   {adminTab === 'plan-settings' && (
@@ -8395,13 +8386,6 @@ export default function App() {
                       <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs leading-relaxed text-sky-950"><b>All user accounts:</b> open <b>Users List → View Account</b> to review any Job Seeker/Recruiter account, profile, plan and purchases. User passwords are never shown, and no universal/master password is enabled.</div>
                       <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-xs leading-relaxed text-emerald-950"><b>Current paid plans:</b> {commerceSettings.plans.starter.name} {formatINR(commerceSettings.plans.starter.price)}/{commerceSettings.plans.starter.validityDays} days • {commerceSettings.plans.pro.name} {formatINR(commerceSettings.plans.pro.price)}/{commerceSettings.plans.pro.validityDays} days. Receiver: {commerceSettings.payment.receiverName}.</div>
                     </div>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                      <button onClick={() => setAdminTab('users')} className="flex items-center justify-center gap-1.5 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Eye className="h-3.5 w-3.5" /> View All Accounts</button>
-                      <button onClick={() => setAdminTab('plan-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-sky-600 py-2.5 text-xs font-extrabold text-white"><Crown className="h-3.5 w-3.5" /> Plan Settings</button>
-                      <button onClick={() => setAdminTab('payment-settings')} className="flex items-center justify-center gap-1.5 rounded-full bg-emerald-600 py-2.5 text-xs font-extrabold text-white"><Wallet className="h-3.5 w-3.5" /> Payment Settings</button>
-                      <button onClick={requestClearAllVacancies} className="flex items-center justify-center gap-1.5 rounded-full border py-2.5 text-xs font-bold"><Trash2 className="h-3.5 w-3.5" /> Clear All Vacancies</button>
-                      <button onClick={requestAdminLogout} className="flex items-center justify-center gap-1.5 rounded-full bg-red-600 py-2.5 text-xs font-bold text-white sm:col-span-2"><LogOut className="h-3.5 w-3.5" /> Logout</button>
-                    </div>
                     <p className="mt-3 text-xs leading-relaxed text-slate-500">Keep your Admin password private and change it regularly. It is also required to securely save live payment receiving settings.</p>
                   </div>
                 </div>
@@ -8706,11 +8690,6 @@ export default function App() {
                       <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountPurchases.length}</p><p className="text-[10px] font-bold text-slate-500">Purchases</p></div>
                       <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountSupportTickets.length}</p><p className="text-[10px] font-bold text-slate-500">Tickets</p></div>
                       <div className="rounded-2xl bg-slate-50 px-2 py-3"><p className="text-lg font-extrabold">{adminAccountLiveJobs.length + adminAccountPendingJobs.length}</p><p className="text-[10px] font-bold text-slate-500">Vacancies</p></div>
-                    </div>
-                    <div className="mt-4 grid gap-2">
-                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('purchases') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 py-2.5 text-xs font-extrabold text-white"><Crown className="h-4 w-4" /> Open Purchase List</button>
-                      <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('support') }} className="flex w-full items-center justify-center gap-2 rounded-full border bg-white py-2.5 text-xs font-extrabold"><MessageCircle className="h-4 w-4 text-sky-600" /> Open Support Tickets</button>
-                      {adminAccountPendingJobs.length > 0 && <button type="button" onClick={() => { setAdminAccountDetail(null); setAdminTab('approvals') }} className="flex w-full items-center justify-center gap-2 rounded-full bg-amber-500 py-2.5 text-xs font-extrabold text-white"><Clock3 className="h-4 w-4" /> Review Pending Vacancies ({adminAccountPendingJobs.length})</button>}
                     </div>
                   </div>
                 </div>
