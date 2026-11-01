@@ -555,6 +555,449 @@ revoke all on function public.list_anonymous_candidate_profiles() from public, a
 grant execute on function public.list_anonymous_candidate_profiles() to authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Google Play Billing (Bubblewrap TWA / Digital Goods API)
+--
+-- The browser receives a Google purchase token from Play, but it can never
+-- grant a plan by itself. The Supabase Edge Function
+-- `verify-google-play-purchase` validates the signed-in Job Seeker, calls the
+-- Google Play Developer API with a server-only service account, and only then
+-- calls the service-role-only RPC below. This private ledger stores the raw
+-- purchase token solely so the server can re-check subscriptions later; raw
+-- tokens must never be returned by browser/Admin RPCs or shown in Admin lists.
+-- Admin lists receive only the Google order ID through public.app_purchases.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.app_google_play_purchases (
+  id uuid primary key default gen_random_uuid(),
+  auth_user_id uuid not null references auth.users(id) on delete cascade,
+  account_mobile text not null,
+  account_email text not null default '',
+  plan text not null check (plan in ('starter', 'pro')),
+  product_id text not null check (char_length(product_id) between 1 and 160),
+  product_type text not null check (product_type in ('subscription', 'one-time')),
+  purchase_token_hash text not null unique check (purchase_token_hash ~ '^[a-f0-9]{64}$'),
+  purchase_token text not null check (char_length(purchase_token) between 10 and 10000),
+  linked_purchase_token_hash text check (
+    linked_purchase_token_hash is null or linked_purchase_token_hash ~ '^[a-f0-9]{64}$'
+  ),
+  order_id text,
+  latest_successful_order_id text,
+  app_purchase_id uuid references public.app_purchases(id) on delete set null,
+  google_state text not null default '',
+  entitlement_status text not null default 'pending' check (entitlement_status in ('paid', 'pending', 'failed')),
+  acknowledged boolean not null default false,
+  consumed boolean not null default false,
+  purchased_at timestamptz,
+  expires_at timestamptz,
+  finalized_at timestamptz,
+  last_verified_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists app_google_play_purchases_user_idx
+  on public.app_google_play_purchases (auth_user_id, purchased_at desc);
+create index if not exists app_google_play_purchases_order_idx
+  on public.app_google_play_purchases (order_id);
+create index if not exists app_google_play_purchases_expiry_idx
+  on public.app_google_play_purchases (entitlement_status, expires_at);
+
+alter table public.app_google_play_purchases enable row level security;
+revoke all on table public.app_google_play_purchases from public, anon, authenticated;
+grant select, insert, update, delete on table public.app_google_play_purchases to service_role;
+
+comment on table public.app_google_play_purchases is
+  'Private server-only Google Play purchase-token ledger. Raw tokens are required for server sync and must never be returned to browser/Admin RPCs.';
+comment on column public.app_google_play_purchases.purchase_token is
+  'Sensitive Google Play purchase token. Service-role server code only; never expose to the browser or Admin UI.';
+
+-- Apply one Google-verified purchase to the signed-in Job Seeker account.
+-- The caller is the Edge Function using service_role after it has verified the
+-- token with Google. Product -> plan/type, price and one-time validity are
+-- derived from Admin commerce settings in the database. Subscription expiry
+-- and state come from Google. Token/order reuse by another account is raised
+-- as an error instead of silently transferring entitlement.
+create or replace function public.apply_google_play_purchase(
+  p_auth_user_id uuid,
+  p_product_id text,
+  p_purchase_token_hash text,
+  p_purchase_token text,
+  p_linked_purchase_token_hash text,
+  p_order_id text,
+  p_latest_successful_order_id text,
+  p_google_state text,
+  p_entitlement_status text,
+  p_acknowledged boolean,
+  p_consumed boolean,
+  p_purchased_at timestamptz,
+  p_expires_at timestamptz
+)
+returns table (
+  id text,
+  role text,
+  name text,
+  mobile text,
+  email text,
+  plan text,
+  amount_inr numeric,
+  method text,
+  status text,
+  transaction_id text,
+  purchased_at timestamptz,
+  expires_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_now timestamptz := now();
+  v_product_id text := lower(trim(coalesce(p_product_id, '')));
+  v_token_hash text := lower(trim(coalesce(p_purchase_token_hash, '')));
+  v_linked_token_hash text := nullif(lower(trim(coalesce(p_linked_purchase_token_hash, ''))), '');
+  v_order_id text := nullif(trim(coalesce(p_order_id, '')), '');
+  v_latest_successful_order_id text := coalesce(nullif(trim(coalesce(p_latest_successful_order_id, '')), ''), v_order_id);
+  v_status text := lower(trim(coalesce(p_entitlement_status, '')));
+  v_google_state text := trim(coalesce(p_google_state, ''));
+  v_purchased_at timestamptz := coalesce(p_purchased_at, v_now);
+  v_account public.app_accounts%rowtype;
+  v_commerce jsonb;
+  v_google_config jsonb;
+  v_plan_config jsonb;
+  v_plan text;
+  v_product_type text;
+  v_method text;
+  v_price numeric;
+  v_validity_days integer;
+  v_existing public.app_google_play_purchases%rowtype;
+  v_existing_found boolean := false;
+  v_app_purchase public.app_purchases%rowtype;
+  v_app_purchase_id uuid;
+  v_expires_at timestamptz;
+  v_expiry_base timestamptz;
+begin
+  if p_auth_user_id is null
+     or v_product_id = ''
+     or v_token_hash !~ '^[a-f0-9]{64}$'
+     or char_length(coalesce(p_purchase_token, '')) < 10
+     or char_length(coalesce(p_purchase_token, '')) > 10000
+     or v_status not in ('paid', 'pending', 'failed') then
+    raise exception 'Invalid Google Play purchase verification payload.' using errcode = '22023';
+  end if;
+
+  select * into v_account
+  from public.app_accounts a
+  where a.role = 'seeker'
+    and a.auth_user_id = p_auth_user_id
+  limit 1;
+
+  if not found then
+    raise exception 'Google Play purchases can be linked only to a signed-in Job Seeker account.' using errcode = '42501';
+  end if;
+
+  select st.payload into v_commerce
+  from public.app_settings st
+  where st.setting_key = 'commerce'
+  limit 1;
+
+  if v_commerce is null then
+    raise exception 'Google Play Billing is not configured in Payment Settings.' using errcode = '22023';
+  end if;
+
+  v_google_config := coalesce(v_commerce #> '{payment,googlePlay}', '{}'::jsonb);
+
+  if lower(coalesce(v_google_config->>'enabled', 'false')) not in ('true', '1', 'yes') then
+    raise exception 'Google Play Billing is not switched ON in Payment Settings.' using errcode = '22023';
+  end if;
+
+  if v_product_id = nullif(lower(trim(coalesce(v_google_config->>'starterSubscriptionId', ''))), '') then
+    v_plan := 'starter';
+    v_product_type := 'subscription';
+  elsif v_product_id = nullif(lower(trim(coalesce(v_google_config->>'starterOneTimeId', ''))), '') then
+    v_plan := 'starter';
+    v_product_type := 'one-time';
+  elsif v_product_id = nullif(lower(trim(coalesce(v_google_config->>'proSubscriptionId', ''))), '') then
+    v_plan := 'pro';
+    v_product_type := 'subscription';
+  elsif v_product_id = nullif(lower(trim(coalesce(v_google_config->>'proOneTimeId', ''))), '') then
+    v_plan := 'pro';
+    v_product_type := 'one-time';
+  else
+    raise exception 'This Google Play product is not configured for PharmaSales Jobs.' using errcode = '22023';
+  end if;
+
+  v_plan_config := coalesce(v_commerce #> array['plans', v_plan], '{}'::jsonb);
+  v_price := case
+    when coalesce(v_plan_config->>'price', '') ~ '^[0-9]+(\.[0-9]+)?$'
+      then (v_plan_config->>'price')::numeric
+    when v_plan = 'starter' then 99
+    else 499
+  end;
+  v_validity_days := case
+    when coalesce(v_plan_config->>'validityDays', '') ~ '^[0-9]+$'
+      then least(greatest((v_plan_config->>'validityDays')::integer, 1), 3650)
+    else 30
+  end;
+  v_method := case
+    when v_product_type = 'subscription' then 'Google Play Subscription'
+    else 'Google Play One-Time'
+  end;
+
+  perform pg_advisory_xact_lock(hashtext('google_play_token:' || v_token_hash));
+  if v_linked_token_hash is not null then
+    perform pg_advisory_xact_lock(hashtext('google_play_token:' || v_linked_token_hash));
+  end if;
+  perform pg_advisory_xact_lock(hashtext('app_purchase:' || v_account.mobile || ':' || v_plan));
+
+  select * into v_existing
+  from public.app_google_play_purchases gp
+  where gp.purchase_token_hash = v_token_hash
+  for update;
+  v_existing_found := found;
+
+  if not v_existing_found and v_linked_token_hash is not null then
+    select * into v_existing
+    from public.app_google_play_purchases gp
+    where gp.purchase_token_hash = v_linked_token_hash
+    for update;
+    v_existing_found := found;
+  end if;
+
+  if v_existing_found then
+    if v_existing.auth_user_id <> p_auth_user_id then
+      raise exception 'This Google Play purchase is already linked to another PharmaSales Jobs account.' using errcode = '42501';
+    end if;
+    if v_existing.product_id <> v_product_id or v_existing.product_type <> v_product_type or v_existing.plan <> v_plan then
+      raise exception 'This Google Play purchase does not match the configured product for this account.' using errcode = '22023';
+    end if;
+  end if;
+
+  if v_order_id is not null then
+    select * into v_app_purchase
+    from public.app_purchases ap
+    where ap.transaction_id = v_order_id
+    limit 1;
+
+    if found then
+      if v_app_purchase.role <> 'seeker'
+         or v_app_purchase.mobile <> v_account.mobile
+         or v_app_purchase.plan <> v_plan
+         or v_app_purchase.method <> v_method then
+        raise exception 'This Google Play order is already linked to another payment record.' using errcode = '42501';
+      end if;
+      v_app_purchase_id := v_app_purchase.id;
+    end if;
+  end if;
+
+  if v_app_purchase_id is null
+     and v_existing_found
+     and v_existing.app_purchase_id is not null
+     and (v_product_type = 'one-time' or coalesce(v_existing.order_id, '') = coalesce(v_order_id, '')) then
+    select * into v_app_purchase
+    from public.app_purchases ap
+    where ap.id = v_existing.app_purchase_id
+    limit 1;
+
+    if found then
+      if v_app_purchase.role <> 'seeker'
+         or v_app_purchase.mobile <> v_account.mobile
+         or v_app_purchase.plan <> v_plan
+         or v_app_purchase.method <> v_method then
+        raise exception 'This Google Play purchase record does not match this account.' using errcode = '42501';
+      end if;
+      v_app_purchase_id := v_app_purchase.id;
+      v_order_id := coalesce(v_order_id, v_app_purchase.transaction_id);
+      v_latest_successful_order_id := coalesce(v_latest_successful_order_id, v_order_id);
+    end if;
+  end if;
+
+  if v_product_type = 'subscription' then
+    v_expires_at := p_expires_at;
+    if v_status in ('paid', 'pending') and v_expires_at is null then
+      raise exception 'Google did not return a subscription expiry for this purchase.' using errcode = '22023';
+    end if;
+  elsif v_app_purchase_id is not null then
+    if v_status = 'paid' and v_app_purchase.status <> 'paid' then
+      select max(ap.expires_at) into v_expiry_base
+      from public.app_purchases ap
+      where ap.id <> v_app_purchase_id
+        and ap.role = 'seeker'
+        and ap.mobile = v_account.mobile
+        and ap.plan = v_plan
+        and ap.status = 'paid'
+        and ap.expires_at > v_now;
+      v_expires_at := coalesce(v_expiry_base, v_now) + make_interval(days => v_validity_days);
+    else
+      v_expires_at := v_app_purchase.expires_at;
+    end if;
+  elsif v_status in ('paid', 'pending') then
+    select max(ap.expires_at) into v_expiry_base
+    from public.app_purchases ap
+    where ap.role = 'seeker'
+      and ap.mobile = v_account.mobile
+      and ap.plan = v_plan
+      and ap.status = 'paid'
+      and ap.expires_at > v_now;
+    v_expires_at := coalesce(v_expiry_base, v_now) + make_interval(days => v_validity_days);
+  else
+    v_expires_at := p_expires_at;
+  end if;
+
+  if v_app_purchase_id is not null then
+    update public.app_purchases ap
+    set role = 'seeker',
+        name = v_account.name,
+        mobile = v_account.mobile,
+        email = lower(v_account.email),
+        plan = v_plan,
+        amount_inr = v_price,
+        method = v_method,
+        status = v_status,
+        expires_at = v_expires_at
+    where ap.id = v_app_purchase_id
+    returning * into v_app_purchase;
+  elsif v_status in ('paid', 'pending') then
+    if v_order_id is null then
+      raise exception 'Google did not return an order ID for this purchase.' using errcode = '22023';
+    end if;
+
+    insert into public.app_purchases (
+      role, name, mobile, email, plan, amount_inr, method, status,
+      transaction_id, purchased_at, expires_at
+    ) values (
+      'seeker',
+      v_account.name,
+      v_account.mobile,
+      lower(v_account.email),
+      v_plan,
+      v_price,
+      v_method,
+      v_status,
+      v_order_id,
+      case when v_existing_found and v_product_type = 'subscription' then v_now else v_purchased_at end,
+      v_expires_at
+    )
+    returning * into v_app_purchase;
+    v_app_purchase_id := v_app_purchase.id;
+  end if;
+
+  if v_existing_found then
+    update public.app_google_play_purchases gp
+    set auth_user_id = p_auth_user_id,
+        account_mobile = v_account.mobile,
+        account_email = lower(v_account.email),
+        plan = v_plan,
+        product_id = v_product_id,
+        product_type = v_product_type,
+        purchase_token_hash = v_token_hash,
+        purchase_token = p_purchase_token,
+        linked_purchase_token_hash = coalesce(v_linked_token_hash, gp.linked_purchase_token_hash),
+        order_id = coalesce(v_order_id, gp.order_id),
+        latest_successful_order_id = coalesce(v_latest_successful_order_id, gp.latest_successful_order_id),
+        app_purchase_id = coalesce(v_app_purchase_id, gp.app_purchase_id),
+        google_state = case when v_google_state = '' then gp.google_state else v_google_state end,
+        entitlement_status = v_status,
+        acknowledged = gp.acknowledged or coalesce(p_acknowledged, false),
+        consumed = gp.consumed or coalesce(p_consumed, false),
+        purchased_at = coalesce(gp.purchased_at, v_purchased_at),
+        expires_at = coalesce(v_expires_at, gp.expires_at),
+        finalized_at = case
+          when gp.acknowledged or gp.consumed or coalesce(p_acknowledged, false) or coalesce(p_consumed, false)
+            then coalesce(gp.finalized_at, v_now)
+          else gp.finalized_at
+        end,
+        last_verified_at = v_now,
+        updated_at = v_now
+    where gp.id = v_existing.id;
+  else
+    insert into public.app_google_play_purchases (
+      auth_user_id, account_mobile, account_email, plan, product_id, product_type,
+      purchase_token_hash, purchase_token, linked_purchase_token_hash, order_id,
+      latest_successful_order_id, app_purchase_id, google_state, entitlement_status,
+      acknowledged, consumed, purchased_at, expires_at, finalized_at, last_verified_at
+    ) values (
+      p_auth_user_id,
+      v_account.mobile,
+      lower(v_account.email),
+      v_plan,
+      v_product_id,
+      v_product_type,
+      v_token_hash,
+      p_purchase_token,
+      v_linked_token_hash,
+      v_order_id,
+      v_latest_successful_order_id,
+      v_app_purchase_id,
+      v_google_state,
+      v_status,
+      coalesce(p_acknowledged, false),
+      coalesce(p_consumed, false),
+      v_purchased_at,
+      v_expires_at,
+      case when coalesce(p_acknowledged, false) or coalesce(p_consumed, false) then v_now else null end,
+      v_now
+    );
+  end if;
+
+  if v_app_purchase_id is not null then
+    return query
+    select ap.id::text, ap.role, ap.name, ap.mobile, ap.email, ap.plan,
+           ap.amount_inr, ap.method, ap.status, ap.transaction_id,
+           ap.purchased_at, ap.expires_at
+    from public.app_purchases ap
+    where ap.id = v_app_purchase_id;
+  end if;
+
+  return;
+end;
+$$;
+
+-- Mark Google finalization after the Edge Function acknowledges a
+-- subscription or consumes a one-time product through the Play Developer API.
+create or replace function public.mark_google_play_purchase_finalized(
+  p_auth_user_id uuid,
+  p_purchase_token_hash text,
+  p_acknowledged boolean,
+  p_consumed boolean,
+  p_google_state text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_count integer;
+  v_now timestamptz := now();
+begin
+  update public.app_google_play_purchases gp
+  set acknowledged = gp.acknowledged or coalesce(p_acknowledged, false),
+      consumed = gp.consumed or coalesce(p_consumed, false),
+      google_state = case
+        when trim(coalesce(p_google_state, '')) = '' then gp.google_state
+        else trim(p_google_state)
+      end,
+      finalized_at = case
+        when gp.acknowledged or gp.consumed or coalesce(p_acknowledged, false) or coalesce(p_consumed, false)
+          then coalesce(gp.finalized_at, v_now)
+        else gp.finalized_at
+      end,
+      last_verified_at = v_now,
+      updated_at = v_now
+  where gp.auth_user_id = p_auth_user_id
+    and gp.purchase_token_hash = lower(trim(coalesce(p_purchase_token_hash, '')));
+
+  get diagnostics updated_count = row_count;
+  return updated_count > 0;
+end;
+$$;
+
+revoke all on function public.apply_google_play_purchase(uuid, text, text, text, text, text, text, text, text, boolean, boolean, timestamptz, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_google_play_purchase_finalized(uuid, text, boolean, boolean, text) from public, anon, authenticated;
+grant execute on function public.apply_google_play_purchase(uuid, text, text, text, text, text, text, text, text, boolean, boolean, timestamptz, timestamptz) to service_role;
+grant execute on function public.mark_google_play_purchase_finalized(uuid, text, boolean, boolean, text) to service_role;
+
+-- ---------------------------------------------------------------------------
 -- Cross-device app collections: live vacancies, pending approvals, support
 -- tickets, and Job Seeker account-deletion requests. Records keep the app's
 -- JSON payload plus a stable position so list order is preserved across
@@ -1508,8 +1951,16 @@ begin
   with target as (
     select p.id
     from public.app_purchases p
-    where p.id::text = v_purchase_id
-       or (v_transaction_id <> '' and public.normalize_app_payment_reference(p.transaction_id) = v_transaction_id)
+    where p.method not ilike 'Google Play%'
+      and not exists (
+        select 1
+        from public.app_google_play_purchases gp
+        where gp.app_purchase_id = p.id
+      )
+      and (
+        p.id::text = v_purchase_id
+        or (v_transaction_id <> '' and public.normalize_app_payment_reference(p.transaction_id) = v_transaction_id)
+      )
     order by case when p.id::text = v_purchase_id then 0 else 1 end, p.purchased_at desc
     limit 1
   )
@@ -1644,3 +2095,6 @@ $$;
 -- the payment reference server-side; manual UPI/bank references are still
 -- not independently bank-verified. Admin can mark a bad reference failed or
 -- restore/confirm a checked payment through the Admin-only status RPC.
+-- Google Play purchase tokens live only in the private service-role ledger;
+-- browser/Admin purchase RPCs expose Google order IDs only, and the manual
+-- Admin status RPC refuses to override Google-verified purchase rows.

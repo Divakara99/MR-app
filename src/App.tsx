@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { isSupabaseConfigured, supabase, type RemoteAccountRow, type RemoteAppSettingRow, type RemoteCandidateRow, type RemotePurchaseRow, type RemoteSyncRecordRow, type RemoteUserStateRow } from './supabase'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { LEGAL_POLICY_DATE, PRIVACY_SECTIONS, SUPPORT_EMAIL, SUPPORT_TICKET_REASONS, TERMS_SECTIONS } from './legalSupport'
+import { buyGooglePlayProduct, formatGooglePlayPrice, GooglePlayBillingError, listGooglePlayPurchases, loadGooglePlayCatalog, type GooglePlayItemDetails, type GooglePlayProductType } from './googlePlayBilling'
 
 // TYPES
 type Tier = 'free' | 'starter' | 'pro'
@@ -145,6 +146,14 @@ type PaidPlanConfig = {
   popular: boolean
   features: string[]
 }
+type GooglePlayBillingSettings = {
+  enabled: boolean
+  packageName: string
+  starterSubscriptionId: string
+  starterOneTimeId: string
+  proSubscriptionId: string
+  proOneTimeId: string
+}
 type PaymentReceivingSettings = {
   receiverName: string
   upiId: string
@@ -155,13 +164,32 @@ type PaymentReceivingSettings = {
   bankDetails: string
   bankEnabled: boolean
   instructions: string
+  googlePlay: GooglePlayBillingSettings
 }
 type CommerceSettings = {
   plans: Record<PaidPlanId, PaidPlanConfig>
   payment: PaymentReceivingSettings
   updatedAt?: string
 }
-type CheckoutMethod = 'upi' | 'payment-link' | 'bank'
+type ManualCheckoutMethod = 'upi' | 'payment-link' | 'bank'
+type GooglePlayCheckoutMethod = 'google-play-subscription' | 'google-play-onetime'
+type CheckoutMethod = ManualCheckoutMethod | GooglePlayCheckoutMethod
+type CheckoutMethodOption = {
+  id: CheckoutMethod
+  label: string
+  available: boolean
+  reason?: string
+  productId?: string
+  productType?: GooglePlayProductType
+  detail?: GooglePlayItemDetails
+}
+type GooglePlayVerificationResult = {
+  status: 'paid' | 'pending'
+  purchase?: RemotePurchaseRow
+  message?: string
+  alreadyGranted?: boolean
+  finalizationPending?: boolean
+}
 type AuthStep = 'mobile' | 'register' | 'forgot'
 type AuthFormState = {
   name: string
@@ -283,6 +311,14 @@ const DEFAULT_COMMERCE_SETTINGS: CommerceSettings = {
     bankDetails: '',
     bankEnabled: false,
     instructions: 'Pay the exact plan amount using the Admin payment source shown here. After payment, enter the UPI/UTR/transaction reference and tap Payment Done — Activate Plan.',
+    googlePlay: {
+      enabled: false,
+      packageName: '',
+      starterSubscriptionId: 'starter_monthly',
+      starterOneTimeId: 'starter_30_days',
+      proSubscriptionId: 'pro_monthly',
+      proOneTimeId: 'pro_30_days',
+    },
   },
 }
 const asSettingsRecord = (value: unknown): Record<string, unknown> => (
@@ -317,6 +353,7 @@ const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
   const source = asSettingsRecord(value)
   const plans = asSettingsRecord(source.plans)
   const payment = asSettingsRecord(source.payment)
+  const googlePlay = asSettingsRecord(payment.googlePlay)
   const starter = normalizePaidPlanConfig(plans.starter, DEFAULT_COMMERCE_SETTINGS.plans.starter)
   const pro = normalizePaidPlanConfig(plans.pro, DEFAULT_COMMERCE_SETTINGS.plans.pro)
   if (starter.popular && pro.popular) pro.popular = false
@@ -332,6 +369,14 @@ const normalizeCommerceSettings = (value: unknown): CommerceSettings => {
       bankDetails: settingsString(payment.bankDetails, DEFAULT_COMMERCE_SETTINGS.payment.bankDetails, 1200),
       bankEnabled: settingsBoolean(payment.bankEnabled, DEFAULT_COMMERCE_SETTINGS.payment.bankEnabled),
       instructions: settingsString(payment.instructions, DEFAULT_COMMERCE_SETTINGS.payment.instructions, 1200) || DEFAULT_COMMERCE_SETTINGS.payment.instructions,
+      googlePlay: {
+        enabled: settingsBoolean(googlePlay.enabled, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.enabled),
+        packageName: settingsString(googlePlay.packageName, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.packageName, 140).toLowerCase(),
+        starterSubscriptionId: settingsString(googlePlay.starterSubscriptionId, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.starterSubscriptionId, 120).trim().toLowerCase(),
+        starterOneTimeId: settingsString(googlePlay.starterOneTimeId, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.starterOneTimeId, 120).trim().toLowerCase(),
+        proSubscriptionId: settingsString(googlePlay.proSubscriptionId, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.proSubscriptionId, 120).trim().toLowerCase(),
+        proOneTimeId: settingsString(googlePlay.proOneTimeId, DEFAULT_COMMERCE_SETTINGS.payment.googlePlay.proOneTimeId, 120).trim().toLowerCase(),
+      },
     },
     updatedAt: settingsString(source.updatedAt, '', 60) || undefined,
   }
@@ -360,13 +405,25 @@ const validateCommerceSettings = (settings: CommerceSettings): string => {
     } catch { return 'Enter a correct payment link, or turn Payment Link off.' }
   }
   if (payment.bankEnabled && !payment.bankDetails.trim()) return 'Enter bank receiving details, or turn Bank Transfer off.'
-  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled) return 'Enable at least one real payment receiving method.'
+  const googlePlay = payment.googlePlay
+  if (googlePlay.enabled) {
+    if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(googlePlay.packageName.trim())) return 'Enter the final Android package name for Google Play Billing, or turn Google Play Billing off.'
+    const productIds = [
+      googlePlay.starterSubscriptionId,
+      googlePlay.starterOneTimeId,
+      googlePlay.proSubscriptionId,
+      googlePlay.proOneTimeId,
+    ].map(productId => productId.trim())
+    if (productIds.some(productId => !/^[a-z][a-z0-9._]*$/.test(productId))) return 'Enter all four Google Play product IDs exactly as created in Play Console (lowercase letters, numbers, dots or underscores).'
+    if (new Set(productIds).size !== productIds.length) return 'Each Google Play product ID must be different. Do not reuse one product ID for two plans or purchase types.'
+  }
+  if (!payment.upiEnabled && !payment.paymentLinkEnabled && !payment.bankEnabled && !googlePlay.enabled) return 'Enable at least one real payment receiving method.'
   return ''
 }
 const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 const normalizePaymentReference = (value: string) => value.trim().replace(/[\s-]+/g, '').toUpperCase()
 const isLikelyUpiUtr = (value: string) => /^\d{12}$/.test(value) && !/^(\d)\1{11}$/.test(value)
-const getCheckoutReferenceError = (method: CheckoutMethod, normalizedReference: string): string => {
+const getCheckoutReferenceError = (method: ManualCheckoutMethod, normalizedReference: string): string => {
   if (method === 'upi') {
     return isLikelyUpiUtr(normalizedReference)
       ? ''
@@ -379,7 +436,37 @@ const getCheckoutReferenceError = (method: CheckoutMethod, normalizedReference: 
   }
   return ''
 }
-const getCheckoutMethodLabel = (method: CheckoutMethod) => method === 'upi' ? 'UPI' : method === 'payment-link' ? 'Payment Link' : 'Bank Transfer'
+const getCheckoutMethodLabel = (method: CheckoutMethod) => method === 'upi'
+  ? 'UPI'
+  : method === 'payment-link'
+    ? 'Payment Link'
+    : method === 'bank'
+      ? 'Bank Transfer'
+      : method === 'google-play-subscription'
+        ? 'Google Play Subscription'
+        : 'Google Play 30-Day'
+const isGooglePlayCheckoutMethod = (method: CheckoutMethod | null | undefined): method is GooglePlayCheckoutMethod => (
+  method === 'google-play-subscription' || method === 'google-play-onetime'
+)
+const isManualCheckoutMethod = (method: CheckoutMethod | null | undefined): method is ManualCheckoutMethod => (
+  method === 'upi' || method === 'payment-link' || method === 'bank'
+)
+const getGooglePlayProductId = (
+  settings: CommerceSettings,
+  planId: PaidPlanId,
+  productType: GooglePlayProductType,
+): string => {
+  const googlePlay = settings.payment.googlePlay
+  if (planId === 'starter') return productType === 'subscription' ? googlePlay.starterSubscriptionId.trim() : googlePlay.starterOneTimeId.trim()
+  return productType === 'subscription' ? googlePlay.proSubscriptionId.trim() : googlePlay.proOneTimeId.trim()
+}
+const getGooglePlayProductIds = (settings: CommerceSettings): string[] => Array.from(new Set(([
+  settings.payment.googlePlay.starterSubscriptionId,
+  settings.payment.googlePlay.starterOneTimeId,
+  settings.payment.googlePlay.proSubscriptionId,
+  settings.payment.googlePlay.proOneTimeId,
+]).map(productId => productId.trim()).filter(Boolean)))
+const isGooglePlayPurchaseRecord = (record: PurchaseRecord): boolean => record.method.trim().toLowerCase().startsWith('google play')
 const getPaidPlanLimit = (plan: PaidPlanConfig) => plan.unlimited ? 9999 : Math.max(1, Math.round(plan.dailyLimit) || 1)
 const getActivePlanPurchase = (records: PurchaseRecord[], mobile: string, now = Date.now()): PurchaseRecord | undefined => {
   const normalizedMobile = normalizeMobile(mobile)
@@ -1049,6 +1136,12 @@ export default function App() {
   const [checkoutReference, setCheckoutReference] = useState('')
   const [checkoutError, setCheckoutError] = useState('')
   const [checkoutProcessing, setCheckoutProcessing] = useState(false)
+  const [googlePlaySupported, setGooglePlaySupported] = useState<boolean | null>(null)
+  const [googlePlayDetails, setGooglePlayDetails] = useState<Record<string, GooglePlayItemDetails>>({})
+  const [googlePlayCatalogLoading, setGooglePlayCatalogLoading] = useState(false)
+  const [googlePlayRestoring, setGooglePlayRestoring] = useState(false)
+  const googlePlayRestoreAttemptRef = useRef('')
+  const googlePlayServerSyncAttemptRef = useRef('')
   const [planClock, setPlanClock] = useState(() => Date.now())
   const [planPurchaseSyncReady, setPlanPurchaseSyncReady] = useState(() => !isSupabaseConfigured)
   const previousTierRef = useRef<Tier>('free')
@@ -2039,6 +2132,118 @@ export default function App() {
     if (error) throw error
     return ((data ?? []) as RemotePurchaseRow[]).map(purchaseFromRemoteRow)
   }
+  const applyVerifiedPurchaseRecord = (record: PurchaseRecord) => {
+    setPurchases(prev => mergePurchaseRecords([record], prev))
+    setRemotePurchases(prev => (prev ? mergePurchaseRecords([record], prev) : prev))
+    if (record.status === 'paid' && (record.plan === 'starter' || record.plan === 'pro')) {
+      previousTierRef.current = record.plan
+      setTier(record.plan)
+    }
+    setPlanClock(Date.now())
+  }
+  const getSupabaseFunctionErrorMessage = async (error: unknown, fallback: string): Promise<string> => {
+    const possibleError = error as { message?: unknown; context?: Response }
+    if (possibleError.context && typeof possibleError.context.clone === 'function') {
+      try {
+        const body = await possibleError.context.clone().json() as { message?: unknown; error?: unknown }
+        const bodyMessage = typeof body.message === 'string' ? body.message : typeof body.error === 'string' ? body.error : ''
+        if (bodyMessage) return bodyMessage
+      } catch { /* Use the SDK error message below. */ }
+    }
+    return typeof possibleError.message === 'string' && possibleError.message ? possibleError.message : fallback
+  }
+  const verifyGooglePlayPurchaseOnServer = async (productId: string, purchaseToken: string): Promise<PurchaseRecord> => {
+    if (!supabase) throw new Error('Supabase is not connected, so this Google Play purchase cannot be verified or activated.')
+    const { data, error } = await supabase.functions.invoke<GooglePlayVerificationResult>('verify-google-play-purchase', {
+      body: { action: 'verify', productId, purchaseToken },
+    })
+    if (error) {
+      throw new Error(await getSupabaseFunctionErrorMessage(error, 'Google Play purchase could not be verified on the server. The plan was not activated.'))
+    }
+    if (!data?.purchase) {
+      throw new Error(data?.message || 'Google Play payment is still pending. The plan will activate only after Google confirms the payment.')
+    }
+    const record = purchaseFromRemoteRow(data.purchase)
+    applyVerifiedPurchaseRecord(record)
+    if (data.status === 'pending' || record.status === 'pending') {
+      throw new Error(data.message || 'Google Play payment is still pending. The plan will activate only after Google confirms the payment.')
+    }
+    if (record.status !== 'paid') {
+      throw new Error(data.message || 'Google Play could not confirm this purchase, so the plan was not activated.')
+    }
+    return record
+  }
+  const refreshGooglePlayCatalog = async (settings: CommerceSettings = commerceSettings) => {
+    if (!settings.payment.googlePlay.enabled) {
+      setGooglePlaySupported(false)
+      setGooglePlayDetails({})
+      setGooglePlayCatalogLoading(false)
+      return { supported: false, detailsById: {} as Record<string, GooglePlayItemDetails> }
+    }
+    setGooglePlayCatalogLoading(true)
+    try {
+      const result = await loadGooglePlayCatalog(getGooglePlayProductIds(settings))
+      setGooglePlaySupported(result.supported)
+      setGooglePlayDetails(result.detailsById)
+      return result
+    } catch {
+      setGooglePlaySupported(false)
+      setGooglePlayDetails({})
+      return { supported: false, detailsById: {} as Record<string, GooglePlayItemDetails> }
+    } finally {
+      setGooglePlayCatalogLoading(false)
+    }
+  }
+  const restoreGooglePlayPurchases = async (manual = false): Promise<number> => {
+    if (googlePlayRestoring) return 0
+    if (!supabase || !currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) {
+      if (manual) setToast('Login as a Job Seeker to restore Google Play purchases.')
+      return 0
+    }
+    if (!commerceSettings.payment.googlePlay.enabled) {
+      if (manual) setToast('Google Play Billing is not switched ON by Admin yet.')
+      return 0
+    }
+    setGooglePlayRestoring(true)
+    let restoredCount = 0
+    let firstError = ''
+    try {
+      const configuredProductIds = new Set(getGooglePlayProductIds(commerceSettings))
+      const ownedPurchases = await listGooglePlayPurchases()
+      for (const ownedPurchase of ownedPurchases) {
+        if (!configuredProductIds.has(ownedPurchase.itemId)) continue
+        try {
+          await verifyGooglePlayPurchaseOnServer(ownedPurchase.itemId, ownedPurchase.purchaseToken)
+          restoredCount += 1
+        } catch (error) {
+          if (!firstError) firstError = error instanceof Error ? error.message : 'A Google Play purchase could not be restored.'
+        }
+      }
+      const remoteRecords = await fetchRemotePurchasesForMobile(currentUser.mobile).catch(() => null)
+      if (remoteRecords) setPurchases(prev => mergePurchaseRecords(remoteRecords, prev))
+      if (manual) {
+        setToast(restoredCount > 0
+          ? `Google Play purchase restored ✅ ${restoredCount} purchase${restoredCount === 1 ? '' : 's'} verified on this account.`
+          : firstError || 'No active Google Play purchase was found for this Google account on this device.')
+      }
+      return restoredCount
+    } catch (error) {
+      if (manual) setToast(error instanceof Error ? error.message : 'Google Play purchases could not be restored.')
+      return 0
+    } finally {
+      setGooglePlayRestoring(false)
+    }
+  }
+  const syncGooglePlaySubscriptionsOnServer = async (): Promise<number> => {
+    if (!supabase || !currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) return 0
+    const { data, error } = await supabase.functions.invoke<{ purchases?: RemotePurchaseRow[] }>('verify-google-play-purchase', {
+      body: { action: 'sync' },
+    })
+    if (error) throw new Error(await getSupabaseFunctionErrorMessage(error, 'Google Play subscription sync failed.'))
+    const rows = Array.isArray(data?.purchases) ? data.purchases : []
+    rows.map(purchaseFromRemoteRow).forEach(applyVerifiedPurchaseRecord)
+    return rows.length
+  }
   useEffect(() => {
     if (!supabase || !currentUser || currentUser.role !== 'seeker') {
       setPlanPurchaseSyncReady(!isSupabaseConfigured)
@@ -2073,6 +2278,83 @@ export default function App() {
     // Load the Admin-set plans/payment receiving source once when the app opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  useEffect(() => {
+    const googlePlay = commerceSettings.payment.googlePlay
+    if (!googlePlay.enabled) {
+      setGooglePlaySupported(false)
+      setGooglePlayDetails({})
+      setGooglePlayCatalogLoading(false)
+      return
+    }
+    let cancelled = false
+    setGooglePlayCatalogLoading(true)
+    void loadGooglePlayCatalog(getGooglePlayProductIds(commerceSettings))
+      .then(result => {
+        if (cancelled) return
+        setGooglePlaySupported(result.supported)
+        setGooglePlayDetails(result.detailsById)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setGooglePlaySupported(false)
+        setGooglePlayDetails({})
+      })
+      .finally(() => { if (!cancelled) setGooglePlayCatalogLoading(false) })
+    return () => { cancelled = true }
+    // Reload Play product details only when Admin changes the Play configuration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    commerceSettings.payment.googlePlay.enabled,
+    commerceSettings.payment.googlePlay.starterSubscriptionId,
+    commerceSettings.payment.googlePlay.starterOneTimeId,
+    commerceSettings.payment.googlePlay.proSubscriptionId,
+    commerceSettings.payment.googlePlay.proOneTimeId,
+  ])
+  useEffect(() => {
+    if (!supabase || !currentUser || currentUser.role !== 'seeker' || !hasAuthenticated || !planPurchaseSyncReady) return
+    if (!commerceSettings.payment.googlePlay.enabled || googlePlaySupported !== true) return
+    const attemptKey = `${currentUser.authUserId || currentUser.mobile}:${getGooglePlayProductIds(commerceSettings).join('|')}`
+    if (googlePlayRestoreAttemptRef.current === attemptKey) return
+    googlePlayRestoreAttemptRef.current = attemptKey
+    void restoreGooglePlayPurchases().catch(() => undefined)
+    // Restore runs once per signed-in seeker/product configuration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    currentUser?.role,
+    currentUser?.mobile,
+    currentUser?.authUserId,
+    hasAuthenticated,
+    planPurchaseSyncReady,
+    commerceSettings.payment.googlePlay.enabled,
+    commerceSettings.payment.googlePlay.starterSubscriptionId,
+    commerceSettings.payment.googlePlay.starterOneTimeId,
+    commerceSettings.payment.googlePlay.proSubscriptionId,
+    commerceSettings.payment.googlePlay.proOneTimeId,
+    googlePlaySupported,
+  ])
+  useEffect(() => {
+    if (!supabase || !currentUser || currentUser.role !== 'seeker' || !hasAuthenticated || !planPurchaseSyncReady) return
+    if (!commerceSettings.payment.googlePlay.enabled) return
+    if (!purchases.some(isGooglePlayPurchaseRecord)) return
+    const attemptKey = `${currentUser.authUserId || currentUser.mobile}:${getGooglePlayProductIds(commerceSettings).join('|')}`
+    if (googlePlayServerSyncAttemptRef.current === attemptKey) return
+    googlePlayServerSyncAttemptRef.current = attemptKey
+    void syncGooglePlaySubscriptionsOnServer().catch(() => undefined)
+    // Re-check saved subscription tokens on the server once after purchases load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    purchases,
+    currentUser?.role,
+    currentUser?.mobile,
+    currentUser?.authUserId,
+    hasAuthenticated,
+    planPurchaseSyncReady,
+    commerceSettings.payment.googlePlay.enabled,
+    commerceSettings.payment.googlePlay.starterSubscriptionId,
+    commerceSettings.payment.googlePlay.starterOneTimeId,
+    commerceSettings.payment.googlePlay.proSubscriptionId,
+    commerceSettings.payment.googlePlay.proOneTimeId,
+  ])
   const fetchAdminSupabaseData = async () => {
     if (!supabase) return
     setAdminDataLoading(true)
@@ -2099,6 +2381,10 @@ export default function App() {
   }
   const requestAdminPurchaseStatusChange = (purchase: PurchaseRecord, targetStatus: PurchaseRecord['status']) => {
     if (adminPurchaseActionId) return
+    if (isGooglePlayPurchaseRecord(purchase)) {
+      setToast('Google Play payments are verified and managed by Google. Use Play Console for refunds or subscription changes; do not use the manual UPI status controls for this record.')
+      return
+    }
     const markingInvalid = targetStatus === 'failed'
     requestConfirmation({
       title: markingInvalid ? 'Mark this payment invalid?' : purchase.status === 'failed' ? 'Restore this payment as paid?' : 'Confirm this payment as paid?',
@@ -3840,6 +4126,15 @@ export default function App() {
   const updateCommercePaymentDraft = (patch: Partial<PaymentReceivingSettings>) => {
     setCommerceDraft(prev => ({ ...prev, payment: { ...prev.payment, ...patch } }))
   }
+  const updateCommerceGooglePlayDraft = (patch: Partial<GooglePlayBillingSettings>) => {
+    setCommerceDraft(prev => ({
+      ...prev,
+      payment: {
+        ...prev.payment,
+        googlePlay: { ...prev.payment.googlePlay, ...patch },
+      },
+    }))
+  }
   const requestRemovePaymentQr = () => requestConfirmation({
     title: 'Remove Payment QR?',
     message: 'Are you sure you want to remove this payment QR image? The removal will apply after you save Payment Settings.',
@@ -3905,13 +4200,48 @@ export default function App() {
     }
   }
   // ---- PLAN PURCHASE -> recorded for Admin Purchases/Payments lists (+ Supabase sync) ----
-  const getAvailableCheckoutMethods = (settings: CommerceSettings): { id: CheckoutMethod; label: string }[] => {
-    const methods: { id: CheckoutMethod; label: string }[] = []
-    if (settings.payment.upiEnabled && settings.payment.upiId.trim()) methods.push({ id: 'upi', label: 'UPI' })
-    if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) methods.push({ id: 'payment-link', label: 'Payment Link' })
-    if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) methods.push({ id: 'bank', label: 'Bank Transfer' })
-    return methods
+  const getCheckoutMethodOptions = (
+    settings: CommerceSettings,
+    planId?: PaidPlanId | null,
+    catalogOverride?: { supported: boolean; detailsById: Record<string, GooglePlayItemDetails> },
+  ): CheckoutMethodOption[] => {
+    const options: CheckoutMethodOption[] = []
+    const googlePlay = settings.payment.googlePlay
+    const supported = catalogOverride?.supported ?? googlePlaySupported
+    const detailsById = catalogOverride?.detailsById ?? googlePlayDetails
+
+    if (googlePlay.enabled) {
+      const googlePlayMethods: Array<{ id: GooglePlayCheckoutMethod; label: string; productType: GooglePlayProductType }> = [
+        { id: 'google-play-subscription', label: 'Google Play Subscription', productType: 'subscription' },
+        { id: 'google-play-onetime', label: 'Google Play 30-Day Pass', productType: 'one-time' },
+      ]
+      googlePlayMethods.forEach(method => {
+        const productId = getGooglePlayProductId(settings, planId ?? 'starter', method.productType)
+        const detail = productId ? detailsById[productId] : undefined
+        const available = Boolean(productId && supported === true && detail)
+        const reason = !productId
+          ? 'Product ID missing in Payment Settings'
+          : (googlePlayCatalogLoading && !catalogOverride) || supported === null
+            ? 'Checking Google Play…'
+            : supported !== true
+              ? 'Available in the Android app installed from Google Play'
+              : !detail
+                ? 'Product is not active in Play Console yet'
+                : undefined
+        options.push({ ...method, available, reason, productId, detail })
+      })
+    }
+
+    if (settings.payment.upiEnabled && settings.payment.upiId.trim()) options.push({ id: 'upi', label: 'UPI', available: true })
+    if (settings.payment.paymentLinkEnabled && settings.payment.paymentLink.trim()) options.push({ id: 'payment-link', label: 'Payment Link', available: true })
+    if (settings.payment.bankEnabled && settings.payment.bankDetails.trim()) options.push({ id: 'bank', label: 'Bank Transfer', available: true })
+    return options
   }
+  const getAvailableCheckoutMethods = (
+    settings: CommerceSettings,
+    planId?: PaidPlanId | null,
+    catalogOverride?: { supported: boolean; detailsById: Record<string, GooglePlayItemDetails> },
+  ): CheckoutMethodOption[] => getCheckoutMethodOptions(settings, planId, catalogOverride).filter(option => option.available)
   const getPlanCheckoutExpiry = (planId: PaidPlanId, validityDays: number): string => {
     const now = Date.now()
     const samePlanExpiry = currentUser?.role === 'seeker'
@@ -3956,13 +4286,16 @@ export default function App() {
       setToast(`Your ${activePurchaseNow.planName} plan is active until ${formatAdminDate(activePurchaseNow.expiresAt)}. Starter can be purchased after it expires.`)
       return
     }
-    const availableMethods = getAvailableCheckoutMethods(latestSettings)
-    if (availableMethods.length === 0) {
-      setToast('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+    const googlePlayCatalog = latestSettings.payment.googlePlay.enabled
+      ? await refreshGooglePlayCatalog(latestSettings)
+      : undefined
+    const methodOptions = getCheckoutMethodOptions(latestSettings, nextTier, googlePlayCatalog)
+    if (methodOptions.length === 0) {
+      setToast('Payment is not available right now. Admin has not enabled UPI, a payment link, bank transfer or Google Play Billing.')
       return
     }
     setCheckoutPlan(nextTier)
-    setCheckoutMethod(availableMethods[0].id)
+    setCheckoutMethod(methodOptions.find(option => option.available)?.id ?? null)
     setCheckoutReference('')
     setCheckoutError('')
     setShowPricing(false)
@@ -3972,12 +4305,57 @@ export default function App() {
     if (!currentUser || currentUser.role !== 'seeker' || !hasAuthenticated) { setCheckoutError('Please login as a Job Seeker to activate this plan.'); return }
     const planConfig = commerceSettings.plans[checkoutPlan]
     if (!planConfig.enabled) { setCheckoutError(`${planConfig.name} is not available for purchase right now.`); return }
-    if (!checkoutMethod || !getAvailableCheckoutMethods(commerceSettings).some(method => method.id === checkoutMethod)) {
-      setCheckoutError('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
+    const selectedOption = getCheckoutMethodOptions(commerceSettings, checkoutPlan).find(method => method.id === checkoutMethod)
+    if (!checkoutMethod || !selectedOption) {
+      setCheckoutError('Payment is not available right now. Admin has not enabled UPI, a payment link, bank transfer or Google Play Billing.')
       return
     }
+    if (!selectedOption.available) {
+      setCheckoutError(selectedOption.reason || 'This payment method is not available on this device right now.')
+      return
+    }
+
+    if (isGooglePlayCheckoutMethod(checkoutMethod)) {
+      const productId = selectedOption.productId?.trim()
+      if (!productId) {
+        setCheckoutError('Google Play product ID is missing. Admin must complete Payment Settings before this purchase can continue.')
+        return
+      }
+      if (!supabase) {
+        setCheckoutError('Supabase is not connected, so this Google Play purchase cannot be verified or activated.')
+        return
+      }
+      setCheckoutProcessing(true)
+      setCheckoutError('')
+      try {
+        const record = await buyGooglePlayProduct(
+          productId,
+          purchaseToken => verifyGooglePlayPurchaseOnServer(productId, purchaseToken),
+        )
+        setCheckoutPlan(null)
+        setCheckoutReference('')
+        setShowPricing(false)
+        setToast(checkoutMethod === 'google-play-subscription'
+          ? `${record.planName} subscription activated through Google Play ✅ Current period valid till ${formatAdminDate(record.expiresAt)}. It renews monthly until cancelled in Google Play.`
+          : `${record.planName} activated through Google Play ✅ Valid till ${formatAdminDate(record.expiresAt)}. This one-time pass does not auto-renew.`)
+      } catch (error) {
+        const message = error instanceof GooglePlayBillingError || error instanceof Error
+          ? error.message
+          : 'Google Play purchase could not be completed. The plan was not activated.'
+        setCheckoutError(message)
+      } finally {
+        setCheckoutProcessing(false)
+      }
+      return
+    }
+
+    if (!isManualCheckoutMethod(checkoutMethod)) {
+      setCheckoutError('Please select a valid payment method.')
+      return
+    }
+    const manualMethod = checkoutMethod
     const transactionId = normalizePaymentReference(checkoutReference)
-    const referenceError = getCheckoutReferenceError(checkoutMethod, transactionId)
+    const referenceError = getCheckoutReferenceError(manualMethod, transactionId)
     if (referenceError) {
       setCheckoutError(referenceError)
       return
@@ -3987,7 +4365,7 @@ export default function App() {
       setCheckoutError('This payment reference has already been used. Enter the new UPI/UTR reference for this payment.')
       return
     }
-    const methodLabel = getCheckoutMethodLabel(checkoutMethod)
+    const methodLabel = getCheckoutMethodLabel(manualMethod)
     const now = new Date()
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
@@ -4693,6 +5071,21 @@ export default function App() {
     ? mergePurchaseRecords(purchases, remotePurchases ?? []).filter(record => record.role === 'seeker' && normalizeMobile(record.mobile) === normalizeMobile(currentUser.mobile))
     : []
   const isPurchaseActive = (p: PurchaseRecord) => p.status === 'paid' && new Date(p.expiresAt).getTime() > planClock
+  const checkoutMethodOptions = checkoutPlan ? getCheckoutMethodOptions(commerceSettings, checkoutPlan) : []
+  const selectedCheckoutOption = checkoutMethodOptions.find(option => option.id === checkoutMethod)
+  const checkoutIsGooglePlay = isGooglePlayCheckoutMethod(checkoutMethod)
+  const checkoutIsManual = isManualCheckoutMethod(checkoutMethod)
+  const selectedGooglePlayPrice = formatGooglePlayPrice(selectedCheckoutOption?.detail)
+  const checkoutDisplayAmount = checkoutIsGooglePlay && selectedGooglePlayPrice
+    ? selectedGooglePlayPrice
+    : checkoutPlan
+      ? formatINR(commerceSettings.plans[checkoutPlan].price)
+      : ''
+  const checkoutDisplayPeriod = checkoutMethod === 'google-play-subscription'
+    ? 'month • auto-renews'
+    : checkoutPlan
+      ? `${commerceSettings.plans[checkoutPlan].validityDays} days`
+      : ''
   const adminAccountPurchases = adminAccountDetail
     ? displayedPurchases.filter(purchase => purchase.role === adminAccountDetail.role && normalizeMobile(purchase.mobile) === normalizeMobile(adminAccountDetail.mobile))
     : []
@@ -5011,9 +5404,9 @@ export default function App() {
     const steps = [
       { title: 'Choose a plan', text: 'Open Plans & Benefits and select Free, Starter or Pro.', icon: Crown },
       { title: 'Check the amount', text: 'Confirm the plan name, exact amount, validity and receiver name.', icon: Eye },
-      { title: 'Make the payment', text: 'Use the UPI, payment link or bank option switched on by Admin.', icon: Wallet },
-      { title: 'Save the reference', text: 'Copy the UPI/UTR/transaction number. Use a new reference for every payment.', icon: FileText },
-      { title: 'Plan auto-activates', text: 'Tap “Payment Done”. The new expiry date will appear in Payment & My Plan.', icon: BadgeCheck },
+      { title: 'Make the payment', text: 'Use an Admin-enabled UPI/payment link/bank option, or Google Play inside the Android app installed from Play.', icon: Wallet },
+      { title: 'Verify the payment', text: 'For UPI/bank, copy the new UTR. For Google Play, our server verifies directly with Google — no UTR entry.', icon: FileText },
+      { title: 'Plan auto-activates', text: 'After UTR submission or Google verification, the new expiry appears in Payment & My Plan.', icon: BadgeCheck },
     ]
     return (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -5032,7 +5425,34 @@ export default function App() {
   const renderPaymentMethodCards = () => {
     const paymentSettings = commerceSettings.payment
     const canSeeCheckoutDetails = isAdmin || (hasAuthenticated && currentUser?.role === 'seeker')
+    const starterCheckoutOptions = getCheckoutMethodOptions(commerceSettings, 'starter')
+    const proCheckoutOptions = getCheckoutMethodOptions(commerceSettings, 'pro')
+    const starterSubscriptionOption = starterCheckoutOptions.find(option => option.id === 'google-play-subscription')
+    const proSubscriptionOption = proCheckoutOptions.find(option => option.id === 'google-play-subscription')
+    const starterOneTimeOption = starterCheckoutOptions.find(option => option.id === 'google-play-onetime')
+    const proOneTimeOption = proCheckoutOptions.find(option => option.id === 'google-play-onetime')
+    const googlePlayPriceOrPlanPrice = (option: CheckoutMethodOption | undefined, planId: PaidPlanId) => formatGooglePlayPrice(option?.detail) || formatINR(commerceSettings.plans[planId].price)
     const methods = [
+      ...(paymentSettings.googlePlay.enabled ? [
+        {
+          id: 'google-play-subscription' as CheckoutMethod,
+          title: 'Google Play Subscription',
+          icon: Play,
+          available: Boolean(starterSubscriptionOption?.available || proSubscriptionOption?.available),
+          summary: 'Monthly auto-renewing Starter or Pro subscription inside the Android app. Cancel anytime in Google Play; access continues to the current period end.',
+          detail: `Starter: ${googlePlayPriceOrPlanPrice(starterSubscriptionOption, 'starter')}/month • Pro: ${googlePlayPriceOrPlanPrice(proSubscriptionOption, 'pro')}/month. Google Play confirms the final localized price before payment.`,
+          note: 'No UTR entry — the server verifies the purchase with Google before activation.',
+        },
+        {
+          id: 'google-play-onetime' as CheckoutMethod,
+          title: 'Google Play 30-Day Pass',
+          icon: Play,
+          available: Boolean(starterOneTimeOption?.available || proOneTimeOption?.available),
+          summary: 'One-time Google Play purchase for the Admin-set plan validity. It does not auto-renew and can be bought again later.',
+          detail: `Starter: ${googlePlayPriceOrPlanPrice(starterOneTimeOption, 'starter')} • Pro: ${googlePlayPriceOrPlanPrice(proOneTimeOption, 'pro')}. Google Play confirms the final localized price before payment.`,
+          note: 'No UTR entry — entitlement is granted only after server verification, then the pass is consumed in Play.',
+        },
+      ] : []),
       {
         id: 'upi' as CheckoutMethod,
         title: 'UPI / QR',
@@ -5065,6 +5485,7 @@ export default function App() {
     ]
 
     return (
+      <>
       <div className="grid gap-3 md:grid-cols-2">
         {methods.map(method => (
           <article key={method.id} className={`rounded-3xl border p-4 shadow-sm ${method.available ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
@@ -5073,7 +5494,7 @@ export default function App() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h4 className="text-sm font-extrabold text-slate-900">{method.title}</h4>
-                  <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold ${method.available ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{method.available ? 'READY' : 'NOT AVAILABLE'}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold ${method.available ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{method.available ? 'READY' : isGooglePlayCheckoutMethod(method.id) ? (googlePlaySupported !== true ? 'ANDROID APP' : 'SETUP PENDING') : 'NOT AVAILABLE'}</span>
                 </div>
                 <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{method.summary}</p>
               </div>
@@ -5083,6 +5504,16 @@ export default function App() {
           </article>
         ))}
       </div>
+      {paymentSettings.googlePlay.enabled && (
+        <div className="mt-3 flex flex-col gap-3 rounded-3xl border border-slate-900 bg-slate-950 p-4 text-white shadow-sm sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 text-sm font-extrabold"><Play className="h-4 w-4 text-emerald-300" /> Already purchased in the Android app?</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-300">Restore checks Google Play on this device and re-verifies the purchase on the server before linking it to your signed-in Job Seeker account.</p>
+          </div>
+          <button type="button" onClick={() => void restoreGooglePlayPurchases(true)} disabled={googlePlayRestoring} className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 py-2.5 text-xs font-extrabold text-slate-950 shadow disabled:opacity-60"><RotateCcw className={`h-4 w-4 ${googlePlayRestoring ? 'animate-spin' : ''}`} /> {googlePlayRestoring ? 'Restoring…' : 'Restore Google Play Purchase'}</button>
+        </div>
+      )}
+      </>
     )
   }
 
@@ -6974,7 +7405,7 @@ export default function App() {
             <p className="text-[11px] font-extrabold tracking-[0.14em] text-violet-700">COMMON QUESTIONS</p>
             <h3 className="mt-1 text-2xl font-extrabold">Plan and payment doubts — clear answers</h3>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <article className="rounded-3xl border bg-white p-4 shadow-sm"><BadgeCheck className="h-5 w-5 text-emerald-600" /><h4 className="mt-2 text-sm font-extrabold">When does my plan start?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Immediately after you complete checkout and tap <b>Payment Done — Activate Plan</b>. The expiry date appears on the Payment page and in My Account.</p></article>
+              <article className="rounded-3xl border bg-white p-4 shadow-sm"><BadgeCheck className="h-5 w-5 text-emerald-600" /><h4 className="mt-2 text-sm font-extrabold">When does my plan start?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">For UPI/bank, immediately after you tap <b>Payment Done — Activate Plan</b>. For Google Play, immediately after the server verifies the purchase with Google. The expiry date appears on the Payment page and in My Account.</p></article>
               <article className="rounded-3xl border bg-white p-4 shadow-sm"><RotateCcw className="h-5 w-5 text-sky-600" /><h4 className="mt-2 text-sm font-extrabold">Can I renew before expiry?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Yes. Renewing the <b>same plan</b> extends from your current expiry. If you upgrade, checkout shows the new plan expiry before payment confirmation.</p></article>
               <article className="rounded-3xl border bg-white p-4 shadow-sm"><Clock3 className="h-5 w-5 text-amber-600" /><h4 className="mt-2 text-sm font-extrabold">What happens at expiry?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Paid benefits stop at the exact expiry time and <b>Free activates automatically</b>. You do not need to logout or create a new account.</p></article>
               <article className="rounded-3xl border bg-white p-4 shadow-sm"><TvMinimalPlay className="h-5 w-5 text-violet-600" /><h4 className="mt-2 text-sm font-extrabold">Why is there an Apply ad?</h4><p className="mt-1 text-xs leading-relaxed text-slate-600">Paid plans remove browsing and contact-reveal ads. For application safety and sponsorship, <b>Apply Now still shows one sponsored ad on every plan</b>.</p></article>
@@ -7003,7 +7434,7 @@ export default function App() {
               <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
                 <div>
                   <h2 className="text-[30px] font-extrabold leading-[1.08] sm:text-[38px]">Payment steps, plan status and history — all in one place.</h2>
-                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-emerald-50">First choose a plan. Before paying, check the <b>receiver name</b>, <b>exact amount</b> and <b>new expiry</b>. After payment, enter the new UTR/transaction reference to activate the plan.</p>
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-emerald-50">First choose a plan. For UPI/bank, check the <b>receiver name</b>, <b>exact amount</b> and <b>new expiry</b>, then enter the new UTR. For Google Play inside the Android app, activation happens after server verification — no UTR entry.</p>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-2xl bg-white px-2 py-3 text-emerald-900 shadow"><p className="text-[10px] font-extrabold tracking-widest text-emerald-700">RECEIVER</p><p className="mt-1 truncate text-xs font-extrabold">{commerceSettings.payment.receiverName}</p></div>
@@ -7045,7 +7476,7 @@ export default function App() {
                     <p key={item} className={`flex gap-2 rounded-2xl bg-white px-3.5 py-3 text-xs font-semibold leading-relaxed text-amber-950 ${index === 4 ? 'sm:col-span-2' : ''}`}><Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> {item}</p>
                   ))}
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-amber-900"><b>Manual UPI/bank note:</b> PharmaSales Jobs records the reference you submit; Admin can cross-check it in the Payment List. If money was deducted but the plan did not activate, raise a support ticket with your registered mobile number and the same reference.</p>
+                <p className="mt-3 text-xs leading-relaxed text-amber-900"><b>Manual UPI/bank note:</b> PharmaSales Jobs records the reference you submit; Admin can cross-check it in the Payment List. <b>Google Play note:</b> no reference is entered; the server verifies with Google before activation. If money was deducted but the plan did not activate, use Restore Google Play Purchase inside the Android app, then raise a support ticket with your registered mobile number and Google order ID if it still fails.</p>
               </div>
 
               {commerceSettings.payment.instructions.trim() && (
@@ -7796,7 +8227,7 @@ export default function App() {
                             { id: 'purchases' as const, label: 'Purchase List', sub: 'Starter & Pro plan purchases', icon: Package, badge: displayedPurchases.length, badgeClass: 'bg-violet-100 text-violet-700' },
                             { id: 'payments' as const, label: 'Payment List', sub: 'Transactions & revenue', icon: IndianRupee, badge: displayedPurchases.filter(p => p.status === 'paid').length, badgeClass: 'bg-emerald-100 text-emerald-700' },
                             { id: 'plan-settings' as const, label: 'Plan Settings', sub: 'Price • validity • contacts • benefits', icon: Crown, badge: undefined, badgeClass: '' },
-                            { id: 'payment-settings' as const, label: 'Payment Settings', sub: 'Receiver • UPI/QR • link • bank', icon: Wallet, badge: undefined, badgeClass: '' },
+                            { id: 'payment-settings' as const, label: 'Payment Settings', sub: 'Receiver • UPI/QR • Google Play • bank', icon: Wallet, badge: undefined, badgeClass: '' },
                             { id: 'accounts' as const, label: 'Account Requests', sub: 'Deletion requests', icon: FileText, badge: pendingDeletionRequests.length, badgeClass: 'bg-red-500 text-white' },
                             { id: 'support' as const, label: 'Support Tickets', sub: 'User help requests', icon: MessageCircle, badge: openSupportTickets.length, badgeClass: 'bg-sky-500 text-white' },
                             { id: 'manage' as const, label: 'Manage Vacancies', sub: 'Live jobs on the app', icon: Briefcase, badge: jobs.length, badgeClass: 'bg-slate-100 text-slate-600' },
@@ -8060,7 +8491,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each submitted reference in your UPI/bank app. If a reference is fake or money was not received, mark that payment invalid; restore it here if it was changed by mistake.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each manual UPI/bank reference in your receiving app. If a manual reference is fake or money was not received, mark that payment invalid; restore it here if changed by mistake. Google Play rows show the Google order ID and are managed through Google Play, not the manual status buttons.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Total Collected</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">₹{totalRevenue.toLocaleString('en-IN')}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">This Month</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">₹{thisMonthRevenue.toLocaleString('en-IN')}</p></div>
@@ -8070,35 +8501,41 @@ export default function App() {
                   <div className="mt-3 space-y-2">
                     {displayedPurchases.map(purchase => (
                       <div key={purchase.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-white px-3.5 py-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white"><IndianRupee className="h-5 w-5" /></span>
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white ${isGooglePlayPurchaseRecord(purchase) ? 'bg-slate-950' : 'bg-emerald-600'}`}>{isGooglePlayPurchaseRecord(purchase) ? <Play className="h-5 w-5" /> : <IndianRupee className="h-5 w-5" />}</span>
                         <div className="min-w-[200px] flex-1">
                           <p className="truncate font-mono text-xs font-extrabold leading-tight text-slate-800">{purchase.transactionId}</p>
                           <p className="truncate text-xs text-slate-600">{purchase.name} • {purchase.planName} Plan{purchase.mobile ? ` • +91 ${purchase.mobile}` : ''}</p>
-                          <p className="text-[11px] text-slate-400">{purchase.method} • {formatAdminDate(purchase.purchasedAt)}</p>
+                          <p className="text-[11px] text-slate-400">{purchase.method} • {formatAdminDate(purchase.purchasedAt)}{isGooglePlayPurchaseRecord(purchase) ? ' • Google order ID above • purchase token hidden' : ''}</p>
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="text-sm font-extrabold">₹{Number(purchase.amount) || 0}</p>
                           <span className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${purchase.status === 'paid' ? 'bg-emerald-500 text-white' : purchase.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-500 text-white'}`}>{purchase.status === 'paid' ? 'PAID' : purchase.status.toUpperCase()}</span>
                           <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-                            {purchase.status === 'paid' && (
-                              <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
-                                {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Mark Invalid'}
-                              </button>
-                            )}
-                            {purchase.status === 'pending' && (
+                            {isGooglePlayPurchaseRecord(purchase) ? (
+                              <span className="rounded-full bg-slate-950 px-3 py-1.5 text-[10px] font-extrabold text-white">GOOGLE VERIFIED • MANAGE IN PLAY CONSOLE</span>
+                            ) : (
                               <>
-                                <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
-                                  {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Confirm Paid'}
-                                </button>
-                                <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
-                                  Mark Invalid
-                                </button>
+                                {purchase.status === 'paid' && (
+                                  <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                    {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Mark Invalid'}
+                                  </button>
+                                )}
+                                {purchase.status === 'pending' && (
+                                  <>
+                                    <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                      {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Confirm Paid'}
+                                    </button>
+                                    <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                      Mark Invalid
+                                    </button>
+                                  </>
+                                )}
+                                {purchase.status === 'failed' && (
+                                  <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                    {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Restore Paid'}
+                                  </button>
+                                )}
                               </>
-                            )}
-                            {purchase.status === 'failed' && (
-                              <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
-                                {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Restore Paid'}
-                              </button>
                             )}
                           </div>
                         </div>
@@ -8118,13 +8555,13 @@ export default function App() {
               {(adminTab === 'plan-settings' || adminTab === 'payment-settings') && (
                 <div className="mt-4 rounded-2xl border bg-white p-5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="flex items-center gap-2 text-base font-extrabold">{adminTab === 'plan-settings' ? <Crown className="h-5 w-5 text-sky-600" /> : <Wallet className="h-5 w-5 text-emerald-600" />} {adminTab === 'plan-settings' ? 'Plan Settings — price, validity, contacts and benefits' : 'Payment Settings — receiver, UPI, QR, payment link and bank'}</p>
+                    <p className="flex items-center gap-2 text-base font-extrabold">{adminTab === 'plan-settings' ? <Crown className="h-5 w-5 text-sky-600" /> : <Wallet className="h-5 w-5 text-emerald-600" />} {adminTab === 'plan-settings' ? 'Plan Settings — price, validity, contacts and benefits' : 'Payment Settings — receiver, UPI, QR, Google Play, payment link and bank'}</p>
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{isSupabaseConfigured ? 'Supabase Live Settings' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void refreshCommerceSettings().then(settings => { setCommerceDraft(settings); setCommerceSettingsError(''); setToast('Latest live plan and payment settings loaded.') }).catch(() => setCommerceSettingsError('Unable to refresh live settings. Your current editor values were kept.'))} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Refresh</button>}
                   </div>
                   <p className="mt-1 max-w-4xl text-xs leading-relaxed text-slate-600">{adminTab === 'plan-settings'
                     ? 'This page controls only what a plan is: name, price, validity, daily contacts, purchase ON/OFF and the benefit lines shown on each Job Seeker plan card. Save after changing anything.'
-                    : 'This page controls only where money is received: receiver name, UPI ID/QR, payment link, bank details, instructions and which methods are ON. Job Seekers see this latest source only after you save.'}</p>
+                    : 'This page controls only where money is received: receiver name, UPI ID/QR, payment link, bank details, Google Play package/product IDs, instructions and which methods are ON. Job Seekers see this latest source only after you save. Never enter a Google service-account JSON or private key here.'}</p>
                   {commerceSettings.updatedAt && <p className="mt-2 text-[11px] font-bold text-slate-400">Last saved: {formatAdminDate(commerceSettings.updatedAt)}</p>}
 
                   {adminTab === 'plan-settings' && (
@@ -8204,11 +8641,12 @@ export default function App() {
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">3</span><h4 className="mt-2 text-sm font-extrabold">Switch method ON</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Only ON methods with complete details appear as usable checkout cards.</p></article>
                           <article className="rounded-3xl border border-emerald-100 bg-emerald-50 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700 text-xs font-extrabold text-white">4</span><h4 className="mt-2 text-sm font-extrabold">Save + cross-check</h4><p className="mt-1 text-[11px] leading-relaxed text-slate-600">Save with the Admin password, then match every submitted UTR in Payment List.</p></article>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                           {[
                             { label: 'UPI / QR', ready: commerceDraft.payment.upiEnabled && Boolean(commerceDraft.payment.upiId.trim()), detail: commerceDraft.payment.upiId || 'UPI ID not added' },
                             { label: 'Payment Link', ready: commerceDraft.payment.paymentLinkEnabled && /^https?:\/\//i.test(commerceDraft.payment.paymentLink.trim()), detail: commerceDraft.payment.paymentLink || 'Payment link not added' },
                             { label: 'Bank Transfer', ready: commerceDraft.payment.bankEnabled && Boolean(commerceDraft.payment.bankDetails.trim()), detail: commerceDraft.payment.bankDetails.trim() ? 'Bank details added' : 'Bank details not added' },
+                            { label: 'Google Play Billing', ready: commerceDraft.payment.googlePlay.enabled && Boolean(commerceDraft.payment.googlePlay.packageName.trim() && commerceDraft.payment.googlePlay.starterSubscriptionId.trim() && commerceDraft.payment.googlePlay.starterOneTimeId.trim() && commerceDraft.payment.googlePlay.proSubscriptionId.trim() && commerceDraft.payment.googlePlay.proOneTimeId.trim()), detail: commerceDraft.payment.googlePlay.enabled ? `${commerceDraft.payment.googlePlay.packageName || 'Package name not added'} • server secret + test purchase still required` : 'Google Play Billing OFF' },
                           ].map(method => (
                             <article key={method.label} className={`rounded-3xl border p-3.5 ${method.ready ? 'border-emerald-200 bg-white' : 'border-slate-200 bg-slate-50'}`}>
                               <div className="flex items-center gap-2"><h4 className="min-w-0 flex-1 truncate text-sm font-extrabold">{method.label}</h4><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold ${method.ready ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{method.ready ? 'READY' : 'NOT READY'}</span></div>
@@ -8274,10 +8712,77 @@ export default function App() {
                     </div>
                     <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
                       <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p><b>Manual UPI/bank payments:</b> the plan activates after the Job Seeker submits the payment/UTR reference. Always cross-check that reference in your UPI/bank app from the Payment List. Automatic bank verification/Play Billing can replace this manual confirmation during production billing setup.</p>
+                      <p><b>Manual UPI/bank payments:</b> the plan activates after the Job Seeker submits the payment/UTR reference. Always cross-check that reference in your UPI/bank app from the Payment List. Google Play purchases configured below do not use this manual reference flow; the server must verify them with Google before activation.</p>
                     </div>
                   </div>
 
+
+                  <div className="mt-5 rounded-3xl border border-slate-900 bg-slate-950 p-4 text-white">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-950"><Play className="h-5 w-5" /></span>
+                      <div className="min-w-[220px] flex-1">
+                        <p className="text-sm font-extrabold">Google Play Billing — Android App</p>
+                        <p className="text-[11px] font-semibold leading-relaxed text-slate-300">Monthly subscriptions + one-time 30-day passes. Buttons work only inside the Android app installed from Google Play; UPI remains visible as selected.</p>
+                      </div>
+                      <span className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${commerceDraft.payment.googlePlay.enabled && commerceDraft.payment.googlePlay.packageName.trim() && commerceDraft.payment.googlePlay.starterSubscriptionId.trim() && commerceDraft.payment.googlePlay.starterOneTimeId.trim() && commerceDraft.payment.googlePlay.proSubscriptionId.trim() && commerceDraft.payment.googlePlay.proOneTimeId.trim() ? 'bg-emerald-400 text-slate-950' : 'bg-white/15 text-white'}`}>{commerceDraft.payment.googlePlay.enabled ? (commerceDraft.payment.googlePlay.packageName.trim() && commerceDraft.payment.googlePlay.starterSubscriptionId.trim() && commerceDraft.payment.googlePlay.starterOneTimeId.trim() && commerceDraft.payment.googlePlay.proSubscriptionId.trim() && commerceDraft.payment.googlePlay.proOneTimeId.trim() ? 'IDs ENTERED' : 'SETUP INCOMPLETE') : 'OFF'}</span>
+                    </div>
+
+                    <label className="mt-4 flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-3 text-xs font-extrabold"><input type="checkbox" checked={commerceDraft.payment.googlePlay.enabled} onChange={e => updateCommerceGooglePlayDraft({ enabled: e.target.checked })} className="h-4 w-4 accent-emerald-400" /> Google Play Billing ON (show both subscription and 30-day pass in checkout)</label>
+
+                    <div className="mt-4">
+                      <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-200"><span>Final Android Package Name</span><Pencil className="h-3.5 w-3.5 text-sky-300" /></label>
+                      <input value={commerceDraft.payment.googlePlay.packageName} onChange={e => updateCommerceGooglePlayDraft({ packageName: e.target.value.trim().toLowerCase() })} autoCapitalize="none" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-white/20 bg-white px-3 py-2.5 font-mono text-sm font-semibold text-slate-950 outline-none focus:border-emerald-300" placeholder="com.example.pharmasalesjobs" />
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Use the final package from the signed Android/TWA release. Do not treat the current placeholder package as final until you confirm it.</p>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-200"><span>Starter Monthly Subscription Product ID</span><Pencil className="h-3.5 w-3.5 text-sky-300" /></label>
+                        <input value={commerceDraft.payment.googlePlay.starterSubscriptionId} onChange={e => updateCommerceGooglePlayDraft({ starterSubscriptionId: e.target.value.trim().toLowerCase() })} autoCapitalize="none" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-white/20 bg-white px-3 py-2.5 font-mono text-sm font-semibold text-slate-950 outline-none focus:border-emerald-300" placeholder="starter_monthly" />
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Create a subscription product + active monthly base plan. Set its Play price to match Starter: {formatINR(commerceDraft.plans.starter.price)}.</p>
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-200"><span>Starter 30-Day One-Time Product ID</span><Pencil className="h-3.5 w-3.5 text-sky-300" /></label>
+                        <input value={commerceDraft.payment.googlePlay.starterOneTimeId} onChange={e => updateCommerceGooglePlayDraft({ starterOneTimeId: e.target.value.trim().toLowerCase() })} autoCapitalize="none" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-white/20 bg-white px-3 py-2.5 font-mono text-sm font-semibold text-slate-950 outline-none focus:border-emerald-300" placeholder="starter_30_days" />
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Create a one-time product. The server grants {commerceDraft.plans.starter.validityDays || 30} days, then consumes it so it can be bought again.</p>
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-200"><span>Pro Monthly Subscription Product ID</span><Pencil className="h-3.5 w-3.5 text-sky-300" /></label>
+                        <input value={commerceDraft.payment.googlePlay.proSubscriptionId} onChange={e => updateCommerceGooglePlayDraft({ proSubscriptionId: e.target.value.trim().toLowerCase() })} autoCapitalize="none" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-white/20 bg-white px-3 py-2.5 font-mono text-sm font-semibold text-slate-950 outline-none focus:border-emerald-300" placeholder="pro_monthly" />
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Create a subscription product + active monthly base plan. Set its Play price to match Pro: {formatINR(commerceDraft.plans.pro.price)}.</p>
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-bold text-slate-200"><span>Pro 30-Day One-Time Product ID</span><Pencil className="h-3.5 w-3.5 text-sky-300" /></label>
+                        <input value={commerceDraft.payment.googlePlay.proOneTimeId} onChange={e => updateCommerceGooglePlayDraft({ proOneTimeId: e.target.value.trim().toLowerCase() })} autoCapitalize="none" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-white/20 bg-white px-3 py-2.5 font-mono text-sm font-semibold text-slate-950 outline-none focus:border-emerald-300" placeholder="pro_30_days" />
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">Create a one-time product. The server grants {commerceDraft.plans.pro.validityDays || 30} days, then consumes it so it can be bought again.</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl bg-white/10 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="min-w-[220px] flex-1 text-xs font-extrabold">This device: {googlePlayCatalogLoading ? 'Checking Google Play…' : googlePlaySupported ? 'Digital Goods API detected' : 'Normal web browser — Play purchases unavailable here'}</p>
+                        <button type="button" onClick={() => void (async () => { const result = await refreshGooglePlayCatalog(normalizeCommerceSettings(commerceDraft)); setToast(result.supported ? `${Object.keys(result.detailsById).length} Google Play product(s) returned on this device.` : 'Google Play Digital Goods API is not available in this browser/device. Test inside the Android app installed from Google Play.') })()} disabled={googlePlayCatalogLoading} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-[11px] font-extrabold text-slate-950 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${googlePlayCatalogLoading ? 'animate-spin' : ''}`} /> Check Products Here</button>
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {[
+                          { label: 'Starter subscription', id: commerceDraft.payment.googlePlay.starterSubscriptionId },
+                          { label: 'Starter 30-day pass', id: commerceDraft.payment.googlePlay.starterOneTimeId },
+                          { label: 'Pro subscription', id: commerceDraft.payment.googlePlay.proSubscriptionId },
+                          { label: 'Pro 30-day pass', id: commerceDraft.payment.googlePlay.proOneTimeId },
+                        ].map(item => {
+                          const detail = item.id ? googlePlayDetails[item.id] : undefined
+                          return (
+                            <p key={item.label} className="rounded-xl bg-slate-950/70 px-3 py-2 text-[11px] leading-relaxed"><span className="block font-extrabold text-slate-100">{item.label}</span><span className="block break-all font-mono text-slate-400">{item.id || 'Product ID not added'}</span><span className={detail ? 'font-bold text-emerald-300' : 'font-semibold text-slate-400'}>{detail ? `${detail.title} • ${formatGooglePlayPrice(detail)}` : 'Not returned on this device'}</span></p>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-2 lg:grid-cols-2">
+                      <p className="flex gap-2 rounded-2xl border border-amber-300/50 bg-amber-400/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-100"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> <span><b>IDs only:</b> never paste the Google service-account JSON/private key here. Those secrets belong only in Supabase Edge Function secrets.</span></p>
+                      <p className="flex gap-2 rounded-2xl border border-sky-300/40 bg-sky-400/10 px-3 py-2.5 text-[11px] leading-relaxed text-sky-100"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" /> <span><b>Saving IDs does not start charging.</b> Play products, service-account API access, Edge secrets, Digital Asset Links and a license-tester purchase must all pass first. Recheck Play alternative-billing policy before submitting an Android build that also shows UPI.</span></p>
+                    </div>
+                  </div>
                     </>
                   )}
 
@@ -8918,14 +9423,14 @@ export default function App() {
                   <div className="flex flex-wrap items-start gap-3">
                     <div className="min-w-[180px] flex-1">
                       <p className="text-[10px] font-extrabold tracking-widest text-slate-500">PLAN AMOUNT</p>
-                      <p className="mt-1 text-3xl font-extrabold">{formatINR(commerceSettings.plans[checkoutPlan].price)} <span className="text-sm font-semibold text-slate-500">/ {commerceSettings.plans[checkoutPlan].validityDays} days</span></p>
+                      <p className="mt-1 text-3xl font-extrabold">{checkoutDisplayAmount} <span className="text-sm font-semibold text-slate-500">/ {checkoutDisplayPeriod}</span></p>
                       <p className="mt-1 text-xs font-bold text-slate-600">{commerceSettings.plans[checkoutPlan].unlimited ? 'Unlimited' : `${getPaidPlanLimit(commerceSettings.plans[checkoutPlan])}/day`} direct contact reveals</p>
                     </div>
                     <span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-extrabold text-emerald-700 shadow-sm">AUTO-ACTIVATES</span>
                   </div>
                   <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
                     <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">JOB SEEKER</span><b>{currentUser.name}</b><span className="block truncate text-slate-500">+91 {currentUser.mobile}</span></p>
-                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">NEW EXPIRY AFTER PAYMENT</span><b>{formatAdminDate(getPlanCheckoutExpiry(checkoutPlan, commerceSettings.plans[checkoutPlan].validityDays))}</b><span className="block text-slate-500">{activePlanPurchase?.plan === checkoutPlan ? 'Renewal extends your current validity.' : 'Free starts automatically after this time.'}</span></p>
+                    <p className="rounded-xl bg-white px-3 py-2"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">{checkoutMethod === 'google-play-subscription' ? 'CURRENT PERIOD EXPIRY' : 'NEW EXPIRY AFTER PAYMENT'}</span><b>{checkoutMethod === 'google-play-subscription' ? 'Confirmed by Google Play' : formatAdminDate(getPlanCheckoutExpiry(checkoutPlan, commerceSettings.plans[checkoutPlan].validityDays))}</b><span className="block text-slate-500">{checkoutMethod === 'google-play-subscription' ? 'Google sets the billing-period expiry; each renewal updates it.' : activePlanPurchase?.plan === checkoutPlan ? 'Renewal extends your current validity.' : 'Free starts automatically after this time.'}</span></p>
                   </div>
                 </div>
 
@@ -8933,7 +9438,7 @@ export default function App() {
                   {[
                     { step: '1', label: 'Check amount' },
                     { step: '2', label: 'Make payment' },
-                    { step: '3', label: 'Enter UTR' },
+                    { step: '3', label: checkoutIsGooglePlay ? 'Google verifies' : 'Enter UTR' },
                     { step: '4', label: 'Auto-activate' },
                   ].map(item => (
                     <div key={item.step} className="flex items-center gap-2 rounded-2xl border border-sky-100 bg-sky-50 px-3 py-2.5">
@@ -8945,31 +9450,59 @@ export default function App() {
 
                 <p className="mt-5 text-xs font-extrabold tracking-wide text-slate-500">STEP 2 — SELECT PAYMENT METHOD</p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {getAvailableCheckoutMethods(commerceSettings).length === 0 && (
-                    <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-relaxed text-amber-900 sm:col-span-2">No payment method is available right now. Admin has not enabled UPI, a payment link or bank transfer.</p>
+                  {checkoutMethodOptions.length === 0 && (
+                    <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-relaxed text-amber-900 sm:col-span-2">No payment method is available right now. Admin has not enabled UPI, a payment link, bank transfer or Google Play Billing.</p>
                   )}
-                  {getAvailableCheckoutMethods(commerceSettings).map(method => {
-                    const methodHint = method.id === 'upi'
-                      ? 'UPI app or QR scan'
-                      : method.id === 'payment-link'
-                        ? 'Open the Admin payment link'
-                        : 'NEFT / IMPS bank transfer'
+                  {checkoutMethodOptions.map(method => {
+                    const formattedGooglePrice = formatGooglePlayPrice(method.detail)
+                    const methodHint = method.id === 'google-play-subscription'
+                      ? `${formattedGooglePrice ? `${formattedGooglePrice} / month • ` : ''}Auto-renews until cancelled`
+                      : method.id === 'google-play-onetime'
+                        ? `${formattedGooglePrice ? `${formattedGooglePrice} • ` : ''}One payment, no auto-renewal`
+                        : method.id === 'upi'
+                          ? 'UPI app or QR scan'
+                          : method.id === 'payment-link'
+                            ? 'Open the Admin payment link'
+                            : 'NEFT / IMPS bank transfer'
                     const selectedMethod = checkoutMethod === method.id
+                    const isGooglePlayMethod = isGooglePlayCheckoutMethod(method.id)
                     return (
-                      <button key={method.id} type="button" disabled={checkoutProcessing} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition disabled:opacity-50 ${selectedMethod ? 'border-slate-900 bg-slate-900 text-white shadow' : 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50'}`}>
-                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${selectedMethod ? 'bg-white/20 text-white' : 'bg-sky-50 text-sky-700'}`}>
-                          {method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
+                      <button key={method.id} type="button" disabled={checkoutProcessing || !method.available} aria-disabled={!method.available} onClick={() => { setCheckoutMethod(method.id); setCheckoutError('') }} className={`flex items-center gap-3 rounded-3xl border p-3 text-left transition disabled:cursor-not-allowed ${selectedMethod ? 'border-slate-900 bg-slate-900 text-white shadow' : method.available ? 'border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50' : 'border-slate-200 bg-slate-50 text-slate-500 opacity-75'}`}>
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${selectedMethod ? 'bg-white/20 text-white' : method.available ? 'bg-sky-50 text-sky-700' : 'bg-slate-200 text-slate-500'}`}>
+                          {isGooglePlayMethod ? <Play className="h-5 w-5" /> : method.id === 'upi' ? <QrCode className="h-5 w-5" /> : method.id === 'bank' ? <Landmark className="h-5 w-5" /> : <CreditCard className="h-5 w-5" />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-extrabold leading-tight">{method.label}</span>
-                          <span className={`mt-0.5 block text-[11px] font-semibold leading-tight ${selectedMethod ? 'text-slate-200' : 'text-slate-500'}`}>{methodHint}</span>
+                          <span className={`mt-0.5 block text-[11px] font-semibold leading-tight ${selectedMethod ? 'text-slate-200' : 'text-slate-500'}`}>{method.available ? methodHint : method.reason || 'Not available on this device'}</span>
                         </span>
                         {selectedMethod && <Check className="h-5 w-5 shrink-0" />}
                       </button>
                     )
                   })}
+                  {commerceSettings.payment.googlePlay.enabled && (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 sm:col-span-2">
+                      <p className="flex gap-2 text-[11px] font-semibold leading-relaxed text-slate-600"><Smartphone className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" /> Google Play purchase buttons work only inside the Android app installed from Google Play. On this website, choose UPI or another available method.</p>
+                      <button type="button" onClick={() => void restoreGooglePlayPurchases(true)} disabled={checkoutProcessing || googlePlayRestoring} className="mt-2 flex items-center gap-1.5 rounded-full border bg-white px-3 py-2 text-[11px] font-extrabold text-slate-900 shadow-sm disabled:opacity-50"><RotateCcw className={`h-3.5 w-3.5 ${googlePlayRestoring ? 'animate-spin' : ''}`} /> {googlePlayRestoring ? 'Restoring…' : 'Restore Google Play Purchase'}</button>
+                    </div>
+                  )}
                 </div>
 
+                {checkoutIsGooglePlay && (
+                  <div className="mt-4 rounded-3xl border border-slate-900 bg-slate-950 p-4 text-white">
+                    <p className="flex items-center gap-2 text-sm font-extrabold"><Play className="h-4 w-4 text-emerald-300" /> Pay securely with Google Play</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-300">Google Play opens its own secure payment sheet. PharmaSales Jobs does not receive your card number, UPI PIN or bank password. The plan activates only after our server verifies the purchase directly with Google.</p>
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <p className="rounded-2xl bg-white/10 px-3 py-2.5"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">PRODUCT</span><b>{selectedCheckoutOption?.detail?.title || `${commerceSettings.plans[checkoutPlan].name} ${checkoutMethod === 'google-play-subscription' ? 'Monthly Subscription' : '30-Day Pass'}`}</b></p>
+                      <p className="rounded-2xl bg-white/10 px-3 py-2.5"><span className="block text-[10px] font-extrabold tracking-widest text-slate-400">GOOGLE PLAY PRICE</span><b>{selectedGooglePlayPrice || checkoutDisplayAmount}</b><span className="mt-0.5 block text-slate-300">{checkoutMethod === 'google-play-subscription' ? 'Per month • auto-renews until cancelled' : 'One-time payment • no auto-renewal'}</span></p>
+                    </div>
+                    {selectedCheckoutOption?.detail?.description && <p className="mt-3 rounded-2xl bg-white/10 px-3 py-2.5 text-[11px] leading-relaxed text-slate-200">{selectedCheckoutOption.detail.description}</p>}
+                    <p className="mt-3 text-[11px] leading-relaxed text-slate-300">{checkoutMethod === 'google-play-subscription'
+                      ? 'Cancel anytime in Google Play → Payments & subscriptions → Subscriptions. Access continues until the current Google billing period ends.'
+                      : 'This pass uses the Admin-set plan validity and can be bought again later. It never renews by itself.'}</p>
+                  </div>
+                )}
+
+                {checkoutIsManual && (
                 <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50/60 p-4">
                   <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-950"><Wallet className="h-4 w-4 text-emerald-700" /> Pay To — Admin Receiving Source</p>
                   <p className="mt-2 text-sm"><span className="text-slate-500">Receiver:</span> <b>{commerceSettings.payment.receiverName}</b></p>
@@ -9012,8 +9545,9 @@ export default function App() {
 
                   {commerceSettings.payment.instructions.trim() && <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">{commerceSettings.payment.instructions}</p>}
                 </div>
+                )}
 
-                {checkoutMethod && (
+                {checkoutIsManual && (
                   <div className="mt-4 rounded-3xl border border-sky-200 bg-sky-50/60 p-4">
                     <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">STEP 3 — AFTER SUCCESSFUL PAYMENT</p>
                     <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">{checkoutMethod === 'upi' ? 'Enter 12-digit UPI UTR / Ref Number *' : 'Enter Payment / UTR / Transaction Reference *'}</label>
@@ -9024,12 +9558,12 @@ export default function App() {
 
                 {checkoutError && <p className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-bold text-red-700"><AlertTriangle className="h-4 w-4 shrink-0" /> {checkoutError}</p>}
 
-                <p className="mt-5 text-center text-[10px] font-extrabold tracking-[0.12em] text-emerald-700">STEP 4 — CONFIRM • PLAN ACTIVATES AUTOMATICALLY</p>
+                <p className="mt-5 text-center text-[10px] font-extrabold tracking-[0.12em] text-emerald-700">STEP 4 — {checkoutIsGooglePlay ? 'PAY WITH GOOGLE PLAY • SERVER VERIFIES & ACTIVATES' : 'CONFIRM • PLAN ACTIVATES AUTOMATICALLY'}</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <button type="button" onClick={closePlanCheckout} disabled={checkoutProcessing} className="flex-1 rounded-full border py-3 text-sm font-extrabold disabled:opacity-50">Cancel</button>
-                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing || !checkoutMethod} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? 'Activating…' : 'Payment Done — Activate Plan'}</button>
+                  <button type="button" onClick={() => void completePlanPurchase()} disabled={checkoutProcessing || googlePlayRestoring || !checkoutMethod || !selectedCheckoutOption?.available} className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-slate-900 py-3 text-sm font-extrabold text-white shadow disabled:opacity-60">{checkoutProcessing ? <RotateCcw className="h-4 w-4 animate-spin" /> : checkoutIsGooglePlay ? <Play className="h-4 w-4" /> : <BadgeCheck className="h-4 w-4" />} {checkoutProcessing ? (checkoutIsGooglePlay ? 'Opening / verifying…' : 'Activating…') : checkoutMethod === 'google-play-subscription' ? 'Subscribe with Google Play' : checkoutMethod === 'google-play-onetime' ? 'Buy with Google Play' : 'Payment Done — Activate Plan'}</button>
                 </div>
-                <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">After activation, this purchase appears in Admin Purchase &amp; Payment Lists. Paid benefits stop automatically at expiry.</p>
+                <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">{checkoutIsGooglePlay ? 'After server verification, the Google order ID appears in Admin Purchase & Payment Lists. The raw purchase token is never shown in the browser or Admin list.' : 'After activation, this purchase appears in Admin Purchase & Payment Lists. Paid benefits stop automatically at expiry.'}</p>
               </div>
             </motion.div>
           </motion.div>

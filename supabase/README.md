@@ -11,6 +11,9 @@ tables for linked profile and application data:
 - **Admin allowlist** in `public.app_admins`, linked to the manually created
   Admin Auth user by `auth_user_id`
 - **Starter/Pro purchases and payments** in `public.app_purchases`
+- **Private Google Play purchase-token ledger** in
+  `public.app_google_play_purchases` (server/service-role only; raw tokens
+  are never returned to the browser/Admin UI)
 - **Live vacancies, pending approvals, support tickets, and deletion
   requests** in `public.app_sync_records`
 - **Saved/applied jobs, candidate interests, and daily reveal state** in
@@ -94,6 +97,23 @@ checked payment as **paid**. Manual references still are not independent
 bank verification; production should use verified gateway/Play Billing
 receipts. The minimized pre-login account resolver still needs rate
 limiting/abuse monitoring before a large launch.
+
+**Google Play Billing backend (1 Nov 2026; disabled until owner setup).**
+Live migration `add_google_play_billing_20261101` (version
+`20261101083940`) created `public.app_google_play_purchases`, enabled RLS,
+revoked all `anon`/`authenticated` table access, and added the
+service-role-only `apply_google_play_purchase` and
+`mark_google_play_purchase_finalized` RPCs. It also prevents the manual
+Admin purchase-status RPC from overriding a Google-verified row. The
+Supabase Edge Function `verify-google-play-purchase` is deployed (version 1,
+ACTIVE, `verify_jwt=true`) from
+`supabase/functions/verify-google-play-purchase/index.ts`. At deployment
+check, the live `commerce` payload contained no `payment.googlePlay` object,
+the app defaults Google Play Billing to OFF, no Google service-account
+secrets exist, and the Google ledger had 0 rows. Verification therefore
+fails closed with `503` and no Google purchase can activate a plan until the
+owner completes [Google Play Billing activation](#google-play-billing-activation-owner-setup)
+below and license-tester purchases pass.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -157,9 +177,15 @@ The script creates:
 - `public.app_sync_records` — ordered cross-device vacancy/support records
 - `public.app_user_states` — per-account saved/applied/reveal state
 - `public.app_settings` — Admin-managed `commerce` plan/payment settings
+- `public.app_google_play_purchases` — private Google Play token/order
+  ledger used only by the service-role Edge Function for restore and
+  subscription re-checks
 - Auth profile lookup/link, profile, deletion, candidate, purchase,
-  Admin-list, collection-sync, user-state, and commerce-settings RPC
-  functions. When applied to an older installation, the schema also drops
+  Admin-list, collection-sync, user-state, commerce-settings, and
+  service-role-only Google Play apply/finalize RPC functions. The
+  `verify-google-play-purchase` Edge Function source is in
+  `supabase/functions/`; running `schema.sql` alone does not deploy that
+  function or its secrets. When applied to an older installation, the schema also drops
   the legacy custom-password RPCs and public-table password columns.
 - Row Level Security and restricted direct table access
 - The initial Admin allowlist row for **M Divakar Reddy** (`divakar`)
@@ -246,7 +272,11 @@ After rebuilding:
    days, daily direct-contact limit, benefits and purchase on/off state. In
    **Payment Settings**, add the receiver name and enable the real receiving
    source Admin wants shown at checkout (UPI ID/QR, payment link and/or bank
-   details). Save each settings change while signed in with the Admin Auth session (no separate password entry).
+   details). Payment Settings also contains a separate **Google Play
+   Billing** section for the final Android package and product IDs; leave it
+   OFF until the Google Play activation section below is complete. Save each
+   settings change while signed in with the Admin Auth session (no separate
+   password entry).
    Job Seekers also have separate menu pages: **Plans & Benefits** explains
    and compares the cards, while **Payment & My Plan** shows the current
    plan, five payment steps, ready payment methods and payment history.
@@ -268,6 +298,12 @@ After rebuilding:
    to a test job; confirm the same records/state appear after signing in on
    another browser or device.
 9. Create the Admin Auth user once in Supabase Dashboard, confirm Admin login works with Admin ID/email + that Auth password, then test Admin password change in Settings.
+10. **Only after Google Play activation below:** install the internal-test
+    Android build from Google Play (not Chrome/PWA), sign in with a license
+    tester Job Seeker, and test one subscription and one one-time pass.
+    Confirm server activation, Google order IDs in Purchase/Payment Lists,
+    subscription acknowledgement, one-time consumption/rebuy, restore and
+    pending-payment non-activation.
 
 Use clearly named test accounts and delete test data before production use.
 
@@ -295,10 +331,154 @@ Supabase for:
 - Admin Users, Purchases, and Payments lists
 - Admin Supabase Auth login, Admin password changes, and email-link Admin
   password reset (Admin Auth user must be created once in the Dashboard)
+- Google Play Billing client catalog/purchase/restore wiring plus deployed
+  server-side token verification, subscription acknowledgement, one-time
+  consumption and app-open subscription sync — **inactive** until Play
+  Console products, final package/asset links and Edge secrets are set
 
 If the environment variables are absent, public/local device content may
 still render, but **login, registration and Admin access require Supabase
 Auth** and will not work. There is no local password-account fallback.
+
+
+## Google Play Billing activation (owner setup)
+
+### Current state — deployed but intentionally inactive
+
+- Database migration `add_google_play_billing_20261101` is live.
+- Edge Function `verify-google-play-purchase` is deployed and requires a
+  Supabase Auth JWT.
+- The live commerce settings did not contain a `googlePlay` object when
+  checked, so the new app normalizes it to **disabled** with a blank package
+  and the planned product IDs.
+- No Play Console app/products, final signing/asset-link verification,
+  linked payments profile, Google service account, or Google Edge secrets
+  have been created yet. The verifier returns `503` rather than granting a
+  plan in this state.
+
+### How verification works
+
+1. Inside the verified Google Play TWA, the browser uses
+   `getDigitalGoodsService('https://play.google.com/billing')`, Digital Goods
+   `getDetails`/`listPurchases`, and a Payment Request for one exact SKU.
+2. Google returns only a purchase token to the browser. The app sends the
+   product ID and token to `verify-google-play-purchase` with the Job
+   Seeker's Supabase Auth session; it does **not** grant the plan locally.
+3. The Edge Function verifies the Auth user has a linked Job Seeker profile,
+   loads the Admin product mapping, obtains a Google OAuth token from the
+   service-account secret, and calls Google Play Developer API
+   (`subscriptionsv2.get` for subscriptions and `products.get` for one-time
+   products).
+4. Only then does it call the service-role-only
+   `apply_google_play_purchase` RPC. The RPC derives plan, price and
+   one-time validity from `commerce` settings, stores the Google order ID in
+   `app_purchases`, and stores the raw token only in the private
+   `app_google_play_purchases` ledger for later subscription re-checks.
+   Token hashes/order IDs are idempotent; a token already linked to another
+   Job Seeker is rejected.
+5. After entitlement is saved, the Edge Function acknowledges subscriptions
+   and consumes one-time products. Consuming a one-time pass makes it
+   buyable again. If finalization temporarily fails after entitlement is
+   saved, restore/app-open sync retries it.
+6. `PaymentResponse.complete('success')` is called by the browser only after
+   the server returns a verified paid purchase. Pending/cancelled purchases
+   do not activate the plan.
+
+### Owner step A — final app and products
+
+Complete [`android/README.md`](../android/README.md) first:
+
+- final production domain and package ID;
+- Play payments profile;
+- active monthly base plans for `starter_monthly` and `pro_monthly`;
+- active one-time purchase options for `starter_30_days` and
+  `pro_30_days`;
+- Play prices kept equal to Admin Plan Settings;
+- signed internal-test AAB with Bubblewrap `playBilling.enabled=true`;
+- production/test Digital Asset Links verified with the Play app-signing
+  SHA-256 fingerprint;
+- license testers added in Play Console.
+
+### Owner step B — Google Cloud service account
+
+1. In Google Cloud Console, create/select the project that will be linked to
+   Play Console API access.
+2. Enable **Google Play Android Developer API**
+   (`androidpublisher.googleapis.com`).
+3. Create a dedicated service account, for example
+   `pharmasales-play-verifier`. Do not make it a broad Google Cloud project
+   Owner for this app integration.
+4. Create **one JSON key** for that service account. Download it once and
+   keep the file outside this repository. **Never paste the JSON/private key
+   into chat, GitHub, Admin Payment Settings, or a `VITE_` variable.**
+5. In Play Console **Setup → API access**, link the same Google Cloud
+   project if Play asks. Then use **Users and permissions** to invite the
+   service-account email and grant access only to this app, including:
+   - View app information/read-only access required by the API user;
+   - **View financial data, orders, and cancellation survey responses**;
+   - **Manage orders and subscriptions**.
+6. Save/apply the permissions and allow time for Google permission
+   propagation before the first API test. A `401`/`403` from the verifier
+   usually means the API is not enabled, the Cloud project is not linked, or
+   these app permissions are missing.
+
+### Owner step C — Supabase Edge Function secrets
+
+In Supabase Dashboard's Edge Function secret manager (or Supabase CLI from a
+private, Git-ignored environment file outside the repo), set **either** the
+full JSON secret **or** the split pair:
+
+| Secret | Required value |
+|---|---|
+| `GOOGLE_PLAY_PACKAGE_NAME` | Final Android package ID. If set, it must match Admin Payment Settings. |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Preferred: complete service-account JSON (or base64 of that JSON). |
+| `GOOGLE_PLAY_CLIENT_EMAIL` | Alternative to JSON: service-account `client_email`. |
+| `GOOGLE_PLAY_PRIVATE_KEY` | Alternative to JSON: service-account PEM private key; escaped `\n` newlines are accepted. |
+
+Do not set these as Netlify/`VITE_` variables. Do not send their values in
+chat. Supabase's own `SUPABASE_URL`, publishable and secret/service-role Edge
+environment values are injected by Supabase; the function supports both the
+current key-dictionary names and legacy key names.
+
+### Owner step D — Admin Payment Settings
+
+After the new app build is deployed:
+
+1. Login to Admin → **Payment Settings**.
+2. Confirm Plan Settings prices/validity first.
+3. In **Google Play Billing**, enter the final package name and exact IDs:
+   `starter_monthly`, `starter_30_days`, `pro_monthly`, `pro_30_days`
+   (or the exact replacement IDs actually created in Play Console).
+4. Save once with Google Play OFF if you only want to persist IDs, then
+   complete secrets/products/AAB/asset-link checks.
+5. Switch Google Play Billing ON and save only when ready for
+   license-tester purchases. The backend still fails closed if package,
+   product, API-access or secret checks fail.
+6. Keep manual UPI as currently selected if desired, but recheck Google
+   Play payments/alternative-billing policy before Play submission because
+   UPI remains visible inside the Android TWA UI.
+
+### Owner step E — license-tester verification
+
+Install from the Play internal-testing track using a license-test Google
+account and confirm:
+
+- subscription purchase/renewal/cancel-to-period-end;
+- one-time pass purchase, server consumption, stacking and rebuy;
+- Restore after reinstall with the same Google account and same Job Seeker;
+- pending/deferred payment does not activate until Google reports it paid;
+- Admin lists show only the Google order ID (never a raw purchase token);
+- Admin manual Mark Invalid/Restore controls are unavailable for
+  Google-verified rows;
+- ordinary website checkout still offers UPI and explains Google Play is
+  Android-app-only.
+
+Real-time Developer Notifications (RTDN through Cloud Pub/Sub) and voided
+purchase monitoring should be added before large-scale Play launch for
+immediate renewal/refund/revocation changes. The current build re-checks
+stored subscription tokens on app open and supports restore, but a consumed
+one-time refund cannot be guaranteed to revoke instantly without RTDN or a
+scheduled voided-purchases job.
 
 ## Not migrated by this schema yet
 
@@ -308,7 +488,10 @@ full cross-device backend coverage is required:
 - Resume file binary storage (currently IndexedDB on the device; do not move
   private resume files to an anonymous bucket/table without authenticated,
   owner-only access controls)
-- Production Google Play Billing receipt verification
+- Google Play Real-time Developer Notifications (RTDN) and scheduled
+  voided-purchase reconciliation; purchase-time/restore/app-open server
+  verification is implemented, but Play Console products/secrets/testing are
+  still owner setup
 
 Current checkout can display Admin-configured manual UPI, payment-link, or
 bank receiving details and records the Job Seeker-entered transaction/UTR
@@ -319,8 +502,10 @@ activation is still **not** independent bank/gateway verification and is not
 proof of a real gateway or Google Play payment. Admin should cross-check
 manual references in the UPI/bank app and use Payment List → **Mark Invalid**
 for an unmatched/fake reference (or **Restore Paid** if checked by mistake).
-Production digital subscriptions should move to verified payment-gateway/
-Google Play Billing receipt validation.
+Production Google Play digital subscriptions now use server-side Google
+token validation once the owner configuration above is completed. Manual
+UPI/bank activation remains separate and must not be described as bank or
+Google verification.
 
 ## Production security review required
 
@@ -339,9 +524,12 @@ hardening pass before a large public launch:
   drop statements so old custom-password RPC definitions and public-table
   password columns are permanently removed from the live database (browser
   execute access to those RPCs is already revoked).
-- Replace manual-reference payment activation with verified
-  gateway/Google Play Billing receipts. Until then, cross-check references
-  and use the Admin Payment List status controls for unmatched payments.
+- Manual-reference payment activation is still not bank verification;
+  cross-check references and use the Admin Payment List status controls for
+  unmatched manual payments. Google Play rows are server-verified and are
+  intentionally excluded from those manual status controls. Before large
+  Play scale, add RTDN/voided-purchase reconciliation and recheck Play
+  payments/alternative-billing policy for showing UPI in the Play TWA.
 - Never expose the `service_role` key in the browser application.
 
 ## Quick troubleshooting
@@ -360,3 +548,16 @@ hardening pass before a large public launch:
 - **Admin login says wrong password / no reset email**: create the
   registered Admin email once in **Authentication → Users → Add user**. A
   reset email is sent only for an existing Auth user.
+- **Google Play button says Android app / Setup pending**: ordinary web and
+  PWA installs do not expose Play Digital Goods. Install the verified TWA
+  from a Play test track; then confirm final package/asset links, active
+  base plans/purchase options, license tester, country/price availability
+  and exact product IDs.
+- **Google verifier returns 503**: Google Play is OFF, package/product IDs
+  are incomplete or mismatched, Edge secrets are missing, or the service
+  account lacks Play API/app permissions. It deliberately does not grant a
+  plan in that state.
+- **Google verifier returns 409**: the purchase token/order is already
+  linked to another PharmaSales Jobs Job Seeker. Sign in with the account
+  that first restored/purchased it; do not edit the private token ledger by
+  hand.
