@@ -364,6 +364,22 @@ const validateCommerceSettings = (settings: CommerceSettings): string => {
   return ''
 }
 const formatINR = (amount: number) => `₹${Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+const normalizePaymentReference = (value: string) => value.trim().replace(/[\s-]+/g, '').toUpperCase()
+const isLikelyUpiUtr = (value: string) => /^\d{12}$/.test(value) && !/^(\d)\1{11}$/.test(value)
+const getCheckoutReferenceError = (method: CheckoutMethod, normalizedReference: string): string => {
+  if (method === 'upi') {
+    return isLikelyUpiUtr(normalizedReference)
+      ? ''
+      : 'Enter the exact 12-digit UPI UTR/ref number shown after successful payment. Do not enter your mobile number, UPI ID, order ID or a guessed number.'
+  }
+  if (normalizedReference.length < 6) return 'Enter the payment/UTR/transaction reference shown after successful payment (minimum 6 characters).'
+  if (normalizedReference.length > 100) return 'Payment reference is too long. Please enter only the transaction/UTR reference.'
+  if (!/^[A-Z0-9][A-Z0-9._/:]{5,99}$/.test(normalizedReference) || /^(.)\1+$/.test(normalizedReference)) {
+    return 'Enter the exact payment/UTR/transaction reference shown after successful payment. Do not enter a guessed or repeated value.'
+  }
+  return ''
+}
+const getCheckoutMethodLabel = (method: CheckoutMethod) => method === 'upi' ? 'UPI' : method === 'payment-link' ? 'Payment Link' : 'Bank Transfer'
 const getPaidPlanLimit = (plan: PaidPlanConfig) => plan.unlimited ? 9999 : Math.max(1, Math.round(plan.dailyLimit) || 1)
 const getActivePlanPurchase = (records: PurchaseRecord[], mobile: string, now = Date.now()): PurchaseRecord | undefined => {
   const normalizedMobile = normalizeMobile(mobile)
@@ -1094,6 +1110,7 @@ export default function App() {
   const [remoteAdminUsers, setRemoteAdminUsers] = useState<RemoteAccountRow[] | null>(null)
   const [remotePurchases, setRemotePurchases] = useState<PurchaseRecord[] | null>(null)
   const [adminDataLoading, setAdminDataLoading] = useState(false)
+  const [adminPurchaseActionId, setAdminPurchaseActionId] = useState('')
   const [newJob, setNewJob] = useState({ company: '', title: 'Medical Representative', division: '', state: 'Telangana', city: 'Hyderabad', area: '', type: 'Field MR' as Job['type'], exp: '0-2 yrs (Freshers can apply)', ctc: '', vacancies: '1', qual: 'B.Pharm / B.Sc / D.Pharm', desc: '', contactPerson: 'M Divakar Reddy', phone: '', email: '', urgent: false })
   const [passForm, setPassForm] = useState({ current: '', next: '', confirm: '' })
   // Recruiter-submitted vacancies — LIVE only after Admin approval
@@ -2009,7 +2026,7 @@ export default function App() {
         p_expires_at: record.expiresAt,
       })
       if (error) throw error
-      if (data === false) throw new Error('This payment reference has already been used. Enter the new UPI/UTR transaction reference for this payment.')
+      if (data === false) throw new Error('This payment could not be accepted for automatic activation. Check that the exact payment reference has not been used before and matches this plan and payment method. If money was deducted, raise a support ticket with the same reference.')
       return true
     } catch (error) {
       if (throwOnError) throw error
@@ -2069,6 +2086,47 @@ export default function App() {
     } catch { /* Admin lists keep showing this device's records */ } finally {
       setAdminDataLoading(false)
     }
+  }
+  const updatePurchaseStatusEverywhere = (purchase: PurchaseRecord, status: PurchaseRecord['status']) => {
+    const replaceStatus = (records: PurchaseRecord[]) => records.map(record => (
+      record.id === purchase.id || normalizePaymentReference(record.transactionId) === normalizePaymentReference(purchase.transactionId)
+        ? { ...record, status }
+        : record
+    ))
+    setPurchases(prev => replaceStatus(prev))
+    setRemotePurchases(prev => (prev ? replaceStatus(prev) : prev))
+    setPlanClock(Date.now())
+  }
+  const requestAdminPurchaseStatusChange = (purchase: PurchaseRecord, targetStatus: PurchaseRecord['status']) => {
+    if (adminPurchaseActionId) return
+    const markingInvalid = targetStatus === 'failed'
+    requestConfirmation({
+      title: markingInvalid ? 'Mark this payment invalid?' : purchase.status === 'failed' ? 'Restore this payment as paid?' : 'Confirm this payment as paid?',
+      message: `${purchase.name} • ${purchase.planName} • ${formatINR(purchase.amount)}\nReference: ${purchase.transactionId}\n${markingInvalid ? 'Use this only after checking your UPI/bank app. The paid plan will stop for this purchase unless the buyer has another active paid purchase.' : 'Use this only after confirming the money in your UPI/bank app. This does not extend the existing expiry date.'}`,
+      confirmLabel: markingInvalid ? 'Yes, Mark Invalid' : purchase.status === 'failed' ? 'Yes, Restore Paid' : 'Yes, Confirm Paid',
+      tone: markingInvalid ? 'danger' : 'primary',
+      onConfirm: async () => {
+        setAdminPurchaseActionId(purchase.id)
+        try {
+          if (supabase) {
+            const { data, error } = await supabase.rpc('admin_update_app_purchase_status_auth', {
+              p_purchase_id: purchase.id,
+              p_transaction_id: purchase.transactionId,
+              p_status: targetStatus,
+            })
+            if (error) throw error
+            if (data === false) throw new Error('Payment status could not be updated. Please refresh the Payment List and try again.')
+          }
+          updatePurchaseStatusEverywhere(purchase, targetStatus)
+          if (supabase) await fetchAdminSupabaseData()
+          setToast(markingInvalid ? 'Payment marked invalid. The buyer will no longer receive this purchase’s plan benefits.' : 'Payment confirmed as paid.')
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : 'Payment status could not be updated.')
+        } finally {
+          setAdminPurchaseActionId('')
+        }
+      },
+    })
   }
   useEffect(() => {
     if (isAdmin && page === 'admin' && ['users', 'purchases', 'payments'].includes(adminTab)) void fetchAdminSupabaseData()
@@ -3918,23 +3976,18 @@ export default function App() {
       setCheckoutError('Payment is not available right now. Admin has not enabled UPI, a payment link or bank transfer.')
       return
     }
-    const enteredReference = checkoutReference.trim().replace(/\s+/g, '')
-    if (enteredReference.length < 6) {
-      setCheckoutError('Enter the UPI/UTR/transaction reference shown after payment (minimum 6 characters).')
+    const transactionId = normalizePaymentReference(checkoutReference)
+    const referenceError = getCheckoutReferenceError(checkoutMethod, transactionId)
+    if (referenceError) {
+      setCheckoutError(referenceError)
       return
     }
-    if (enteredReference.length > 100) { setCheckoutError('Payment reference is too long. Please enter only the transaction/UTR reference.'); return }
-    const transactionId = enteredReference
     const knownPurchases = [...purchases, ...(remotePurchases ?? [])]
-    if (knownPurchases.some(record => record.transactionId.trim().toLowerCase() === transactionId.toLowerCase())) {
-      setCheckoutError('This payment reference has already been used. Enter the new transaction/UTR reference for this payment.')
+    if (knownPurchases.some(record => normalizePaymentReference(record.transactionId) === transactionId)) {
+      setCheckoutError('This payment reference has already been used. Enter the new UPI/UTR reference for this payment.')
       return
     }
-    const methodLabel = checkoutMethod === 'upi'
-      ? 'UPI'
-      : checkoutMethod === 'payment-link'
-        ? 'Payment Link'
-        : 'Bank Transfer'
+    const methodLabel = getCheckoutMethodLabel(checkoutMethod)
     const now = new Date()
     const record: PurchaseRecord = {
       id: 'purchase-' + Date.now(),
@@ -4550,11 +4603,21 @@ export default function App() {
     }
     setAiLoading(true)
     try {
-      const res = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, audience: shouldHideJobSeekerExperience ? 'recruiter' : isAdmin ? 'admin' : currentUser?.role ?? 'guest', history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }) })
-      const data = await res.json()
+      const sessionResult = supabase ? await supabase.auth.getSession() : null
+      const accessToken = sessionResult?.data.session?.access_token
+      const res = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ prompt, audience: shouldHideJobSeekerExperience ? 'recruiter' : isAdmin ? 'admin' : currentUser?.role ?? 'guest', history: aiMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text })).slice(-6) }),
+      })
+      const data = await res.json().catch(() => ({})) as { text?: string }
+      if (!res.ok) throw new Error(data.text || 'AI request failed. Please try again.')
       setAiMessages(prev => [...prev, { role: 'assistant', text: data.text || 'No response' }])
-    } catch {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: shouldHideJobSeekerExperience ? 'I could not connect right now. Quick recruiter tip: mention HQ, experience, qualification, CTC and joining timeline clearly in your vacancy. Please try again in a moment.' : 'I could not connect right now. Quick tip: highlight your HQ, RCPA & achievements. Please try again in a moment.' }])
+    } catch (error) {
+      setAiMessages(prev => [...prev, { role: 'assistant', text: error instanceof Error && error.message ? error.message : shouldHideJobSeekerExperience ? 'I could not connect right now. Quick recruiter tip: mention HQ, experience, qualification, CTC and joining timeline clearly in your vacancy. Please try again in a moment.' : 'I could not connect right now. Quick tip: highlight your HQ, RCPA & achievements. Please try again in a moment.' }])
     } finally { setAiLoading(false) }
   }
 
@@ -7997,7 +8060,7 @@ export default function App() {
                     <span className={`ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${isSupabaseConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${isSupabaseConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`} />{remotePurchases ? 'Supabase Live' : isSupabaseConfigured ? 'Supabase • Loading' : 'This Device'}</span>
                     {isSupabaseConfigured && <button type="button" onClick={() => void fetchAdminSupabaseData()} disabled={adminDataLoading} className="flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-bold shadow-sm transition hover:bg-slate-50 disabled:opacity-60"><RotateCcw className={`h-3.5 w-3.5 ${adminDataLoading ? 'animate-spin' : ''}`} /> Refresh</button>}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each submitted reference in your UPI/bank app; payments sync to Supabase when connected.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">Every payment transaction with amount, method and status. Cross-check each submitted reference in your UPI/bank app. If a reference is fake or money was not received, mark that payment invalid; restore it here if it was changed by mistake.</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                     <div className="rounded-2xl bg-emerald-50 p-3.5"><p className="text-[11px] font-bold text-emerald-700">Total Collected</p><p className="mt-0.5 text-2xl font-extrabold text-emerald-700">₹{totalRevenue.toLocaleString('en-IN')}</p></div>
                     <div className="rounded-2xl bg-sky-50 p-3.5"><p className="text-[11px] font-bold text-sky-700">This Month</p><p className="mt-0.5 text-2xl font-extrabold text-sky-700">₹{thisMonthRevenue.toLocaleString('en-IN')}</p></div>
@@ -8016,6 +8079,28 @@ export default function App() {
                         <div className="shrink-0 text-right">
                           <p className="text-sm font-extrabold">₹{Number(purchase.amount) || 0}</p>
                           <span className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${purchase.status === 'paid' ? 'bg-emerald-500 text-white' : purchase.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-500 text-white'}`}>{purchase.status === 'paid' ? 'PAID' : purchase.status.toUpperCase()}</span>
+                          <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                            {purchase.status === 'paid' && (
+                              <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Mark Invalid'}
+                              </button>
+                            )}
+                            {purchase.status === 'pending' && (
+                              <>
+                                <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                  {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Confirm Paid'}
+                                </button>
+                                <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'failed')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                  Mark Invalid
+                                </button>
+                              </>
+                            )}
+                            {purchase.status === 'failed' && (
+                              <button type="button" onClick={() => requestAdminPurchaseStatusChange(purchase, 'paid')} disabled={Boolean(adminPurchaseActionId)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-extrabold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                {adminPurchaseActionId === purchase.id ? 'Updating…' : 'Restore Paid'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -8906,7 +8991,7 @@ export default function App() {
                       </div>
                       {commerceSettings.payment.qrImageUrl && <img src={commerceSettings.payment.qrImageUrl} alt="Admin UPI payment QR" className="mx-auto mt-3 max-h-64 w-auto rounded-2xl border bg-white object-contain p-2" />}
                       <a href={`upi://pay?pa=${encodeURIComponent(commerceSettings.payment.upiId)}&pn=${encodeURIComponent(commerceSettings.payment.receiverName)}&am=${commerceSettings.plans[checkoutPlan].price}&cu=INR&tn=${encodeURIComponent(`PharmaSales Jobs ${commerceSettings.plans[checkoutPlan].name} plan for ${currentUser.mobile}`)}`} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 py-3 text-sm font-extrabold text-white shadow"><Smartphone className="h-4 w-4" /> Pay via UPI App</a>
-                      <p className="mt-2 text-center text-[11px] text-slate-500">If the UPI app does not open on desktop, scan the QR or pay manually using the UPI ID.</p>
+                      <p className="mt-2 text-center text-[11px] text-slate-500">If the UPI app does not open on desktop, scan the QR or pay manually using the UPI ID. Before paying, confirm the receiver name and exact amount inside your UPI app.</p>
                     </div>
                   )}
 
@@ -8931,9 +9016,9 @@ export default function App() {
                 {checkoutMethod && (
                   <div className="mt-4 rounded-3xl border border-sky-200 bg-sky-50/60 p-4">
                     <p className="text-[10px] font-extrabold tracking-[0.12em] text-sky-700">STEP 3 — AFTER SUCCESSFUL PAYMENT</p>
-                    <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">Enter Payment / UTR / Transaction Reference *</label>
-                    <input value={checkoutReference} onChange={e => { setCheckoutReference(e.target.value); setCheckoutError('') }} disabled={checkoutProcessing} className="w-full rounded-xl border bg-white px-3 py-3 font-mono text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-50" placeholder="Enter reference shown after successful payment" autoComplete="off" />
-                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Use a new reference for every purchase/renewal. Admin can cross-check it in the Payment List.</p>
+                    <label className="mb-1 mt-1 block text-xs font-bold text-slate-700">{checkoutMethod === 'upi' ? 'Enter 12-digit UPI UTR / Ref Number *' : 'Enter Payment / UTR / Transaction Reference *'}</label>
+                    <input value={checkoutReference} onChange={e => { setCheckoutReference(e.target.value); setCheckoutError('') }} disabled={checkoutProcessing} inputMode={checkoutMethod === 'upi' ? 'numeric' : 'text'} maxLength={checkoutMethod === 'upi' ? 17 : 120} className="w-full rounded-xl border bg-white px-3 py-3 font-mono text-sm font-semibold outline-none focus:border-sky-500 disabled:bg-slate-50" placeholder={checkoutMethod === 'upi' ? 'Enter the 12-digit UPI UTR/ref number' : 'Enter reference shown after successful payment'} autoComplete="off" />
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{checkoutMethod === 'upi' ? 'Open the successful payment in PhonePe/Google Pay/Paytm/your bank app and copy the 12-digit UPI UTR/ref number. Do not enter your mobile number, UPI ID or order ID. Use a new UTR for every purchase/renewal.' : 'Use a new reference for every purchase/renewal. Admin can cross-check it in the Payment List.'}</p>
                   </div>
                 )}
 

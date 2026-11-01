@@ -285,9 +285,66 @@ on conflict (admin_id) do nothing;
 -- Admin account/purchase lists are provided only by the Auth-checked RPCs
 -- near the end of this schema.
 
+-- Payment-reference helpers are internal only. The browser submits the
+-- reference, but the database normalizes and validates it again so a direct
+-- RPC call cannot bypass the checkout rules.
+create or replace function public.normalize_app_payment_reference(p_reference text)
+returns text
+language sql
+immutable
+set search_path = public
+as $$
+  select upper(regexp_replace(coalesce(p_reference, ''), '[\s-]+', '', 'g'));
+$$;
+
+create or replace function public.canonical_app_payment_method(p_method text)
+returns text
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  v_method text := lower(trim(regexp_replace(coalesce(p_method, ''), '\s+', ' ', 'g')));
+begin
+  if v_method = 'upi' then
+    return 'UPI';
+  elsif v_method = 'payment link' then
+    return 'Payment Link';
+  elsif v_method = 'bank transfer' then
+    return 'Bank Transfer';
+  end if;
+  return null;
+end;
+$$;
+
+create or replace function public.is_valid_app_payment_reference(p_method text, p_reference text)
+returns boolean
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  v_method text := lower(trim(coalesce(p_method, '')));
+  v_reference text := public.normalize_app_payment_reference(p_reference);
+begin
+  if v_method = 'upi' then
+    return v_reference ~ '^[0-9]{12}$'
+       and length(replace(v_reference, left(v_reference, 1), '')) > 0;
+  end if;
+
+  return char_length(v_reference) between 6 and 100
+     and v_reference ~ '^[A-Z0-9][A-Z0-9._/:]{5,99}$'
+     and length(replace(v_reference, left(v_reference, 1), '')) > 0;
+end;
+$$;
+
 -- Record one Starter/Pro purchase + payment (called right after checkout).
 -- The purchase is recorded only for the signed-in Job Seeker's own linked
--- profile; caller-supplied name/email cannot create a record for someone else.
+-- profile. Amount, validity and expiry are derived from the Admin-managed
+-- commerce settings in the database; browser-supplied amount/expiry/status
+-- cannot create a cheaper, longer or otherwise altered paid plan. A manual
+-- UPI/bank reference still cannot be independently bank-verified here, so
+-- Admin can revoke a bad reference later from the Payment List.
 create or replace function public.record_app_purchase(
   p_role text,
   p_name text,
@@ -310,15 +367,24 @@ declare
   v_role text := lower(trim(coalesce(p_role, 'seeker')));
   v_mobile text := regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
   v_email text := lower(trim(coalesce(p_email, '')));
-  v_transaction_id text := trim(coalesce(p_transaction_id, ''));
+  v_plan text := lower(trim(coalesce(p_plan, '')));
+  v_method text := public.canonical_app_payment_method(p_method);
+  v_transaction_id text := public.normalize_app_payment_reference(p_transaction_id);
   v_status text := lower(trim(coalesce(nullif(p_status, ''), 'paid')));
   v_account public.app_accounts%rowtype;
+  v_now timestamptz := now();
+  v_commerce jsonb;
+  v_plan_config jsonb;
+  v_price numeric;
+  v_validity_days integer;
+  v_expiry_base timestamptz;
+  v_expires_at timestamptz;
 begin
   if length(v_mobile) = 12 and left(v_mobile, 2) = '91' then
     v_mobile := right(v_mobile, 10);
   end if;
 
-  if v_uid is null or v_role <> 'seeker' then
+  if v_uid is null or v_role <> 'seeker' or v_plan not in ('starter', 'pro') or v_method is null then
     return false;
   end if;
 
@@ -333,24 +399,77 @@ begin
     return false;
   end if;
 
-  if p_plan not in ('starter', 'pro')
-     or p_amount is null
-     or p_amount <= 0
-     or v_status not in ('paid', 'pending', 'failed')
-     or v_transaction_id = ''
-     or char_length(v_transaction_id) > 160
-     or p_expires_at is null then
+  select s.payload into v_commerce
+  from public.app_settings s
+  where s.setting_key = 'commerce'
+  limit 1;
+
+  if v_commerce is null then
+    v_commerce := '{"plans":{"starter":{"price":99,"validityDays":30,"enabled":true},"pro":{"price":499,"validityDays":30,"enabled":true}},"payment":{"upiEnabled":false,"paymentLinkEnabled":false,"bankEnabled":false}}'::jsonb;
+  end if;
+
+  v_plan_config := coalesce(v_commerce #> array['plans', v_plan], '{}'::jsonb);
+
+  if lower(coalesce(v_plan_config->>'enabled', 'true')) in ('false', '0', 'no') then
     return false;
   end if;
 
-  -- A UPI/UTR/payment reference can activate only one purchase.
+  v_price := case
+    when coalesce(v_plan_config->>'price', '') ~ '^[0-9]+(\.[0-9]+)?$'
+      then (v_plan_config->>'price')::numeric
+    when v_plan = 'starter' then 99
+    else 499
+  end;
+
+  v_validity_days := case
+    when coalesce(v_plan_config->>'validityDays', '') ~ '^[0-9]+$'
+      then least(greatest((v_plan_config->>'validityDays')::integer, 1), 3650)
+    else 30
+  end;
+
+  if (v_method = 'UPI' and not (
+        lower(coalesce(v_commerce #>> '{payment,upiEnabled}', 'false')) in ('true', '1', 'yes')
+        and coalesce(trim(v_commerce #>> '{payment,upiId}'), '') <> ''
+      ))
+     or (v_method = 'Payment Link' and not (
+        lower(coalesce(v_commerce #>> '{payment,paymentLinkEnabled}', 'false')) in ('true', '1', 'yes')
+        and coalesce(trim(v_commerce #>> '{payment,paymentLink}'), '') <> ''
+      ))
+     or (v_method = 'Bank Transfer' and not (
+        lower(coalesce(v_commerce #>> '{payment,bankEnabled}', 'false')) in ('true', '1', 'yes')
+        and coalesce(trim(v_commerce #>> '{payment,bankDetails}'), '') <> ''
+      )) then
+    return false;
+  end if;
+
+  if v_status <> 'paid'
+     or p_amount is null
+     or p_amount <> v_price
+     or not public.is_valid_app_payment_reference(v_method, v_transaction_id) then
+    return false;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('app_purchase:' || v_account.mobile || ':' || v_plan));
+
+  -- A UPI/UTR/payment reference can activate only one purchase, even if a
+  -- caller changes letter case or adds spaces/hyphens.
   if exists (
     select 1
     from public.app_purchases existing_purchase
-    where lower(existing_purchase.transaction_id) = lower(v_transaction_id)
+    where public.normalize_app_payment_reference(existing_purchase.transaction_id) = v_transaction_id
   ) then
     return false;
   end if;
+
+  select max(existing_purchase.expires_at) into v_expiry_base
+  from public.app_purchases existing_purchase
+  where existing_purchase.role = 'seeker'
+    and existing_purchase.mobile = v_account.mobile
+    and existing_purchase.plan = v_plan
+    and existing_purchase.status = 'paid'
+    and existing_purchase.expires_at > v_now;
+
+  v_expires_at := coalesce(v_expiry_base, v_now) + make_interval(days => v_validity_days);
 
   insert into public.app_purchases (role, name, mobile, email, plan, amount_inr, method, status, transaction_id, expires_at)
   values (
@@ -358,12 +477,12 @@ begin
     v_account.name,
     v_account.mobile,
     lower(v_account.email),
-    p_plan,
-    p_amount,
-    coalesce(nullif(trim(p_method), ''), 'In-App'),
-    v_status,
+    v_plan,
+    v_price,
+    v_method,
+    'paid',
     v_transaction_id,
-    p_expires_at
+    v_expires_at
   );
 
   return true;
@@ -425,6 +544,9 @@ drop function if exists public.admin_list_purchases();
 drop function if exists public.admin_login(text, text);
 drop function if exists public.admin_change_password(text, text, text);
 drop function if exists public.admin_reset_password_with_registered_details(text, text, text);
+revoke all on function public.normalize_app_payment_reference(text) from public, anon, authenticated;
+revoke all on function public.canonical_app_payment_method(text) from public, anon, authenticated;
+revoke all on function public.is_valid_app_payment_reference(text, text) from public, anon, authenticated;
 revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.list_app_purchases_for_mobile(text) from public, anon, authenticated;
 grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to authenticated;
@@ -1362,6 +1484,45 @@ begin
 end;
 $$;
 
+
+create or replace function public.admin_update_app_purchase_status_auth(
+  p_purchase_id text,
+  p_transaction_id text,
+  p_status text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_purchase_id text := trim(coalesce(p_purchase_id, ''));
+  v_transaction_id text := public.normalize_app_payment_reference(p_transaction_id);
+  v_status text := lower(trim(coalesce(p_status, '')));
+  updated_count integer;
+begin
+  if not public.is_current_user_admin() or v_status not in ('paid', 'pending', 'failed') then
+    return false;
+  end if;
+
+  with target as (
+    select p.id
+    from public.app_purchases p
+    where p.id::text = v_purchase_id
+       or (v_transaction_id <> '' and public.normalize_app_payment_reference(p.transaction_id) = v_transaction_id)
+    order by case when p.id::text = v_purchase_id then 0 else 1 end, p.purchased_at desc
+    limit 1
+  )
+  update public.app_purchases p
+  set status = v_status
+  from target
+  where p.id = target.id;
+
+  get diagnostics updated_count = row_count;
+  return updated_count > 0;
+end;
+$$;
+
 create or replace function public.admin_delete_app_account_auth(
   p_role text,
   p_mobile text
@@ -1428,11 +1589,12 @@ revoke all on function public.link_current_admin_auth_user() from public, anon, 
 revoke all on function public.get_admin_auth_email(text) from public, anon, authenticated;
 revoke all on function public.admin_list_accounts_auth() from public, anon, authenticated;
 revoke all on function public.admin_list_purchases_auth() from public, anon, authenticated;
+revoke all on function public.admin_update_app_purchase_status_auth(text, text, text) from public, anon, authenticated;
 revoke all on function public.admin_delete_app_account_auth(text, text) from public, anon, authenticated;
 revoke all on function public.set_app_setting_admin_auth(text, jsonb) from public, anon, authenticated;
 
--- normalize_app_mobile, current_auth_email, is_valid_app_email and
--- is_current_user_admin are internal helpers called by the SECURITY DEFINER
+-- normalize_app_mobile, current_auth_email, is_valid_app_email,
+-- is_current_user_admin and the payment-reference helpers are internal helpers called by the SECURITY DEFINER
 -- RPCs above; the browser has no direct execute grant for them. The two
 -- pre-login resolvers remain anon-callable only to map mobile/email to the
 -- registered Supabase Auth email/role blockers, with non-owner rows minimized
@@ -1448,6 +1610,7 @@ grant execute on function public.link_current_admin_auth_user() to authenticated
 grant execute on function public.get_admin_auth_email(text) to anon, authenticated;
 grant execute on function public.admin_list_accounts_auth() to authenticated;
 grant execute on function public.admin_list_purchases_auth() to authenticated;
+grant execute on function public.admin_update_app_purchase_status_auth(text, text, text) to authenticated;
 grant execute on function public.admin_delete_app_account_auth(text, text) to authenticated;
 grant execute on function public.set_app_setting_admin_auth(text, jsonb) to authenticated;
 
@@ -1476,5 +1639,8 @@ $$;
 -- find RPCs remain anon-callable only so login can resolve a registered
 -- mobile to its Auth email and show role blockers; non-owner responses omit
 -- name/profile/Auth UUID, and the endpoint still needs rate limiting/abuse
--- monitoring before a large launch. Manual UPI/bank transaction references
--- are not independently bank-verified.
+-- monitoring before a large launch. Purchase recording derives price,
+-- validity and expiry from Admin commerce settings and validates/normalizes
+-- the payment reference server-side; manual UPI/bank references are still
+-- not independently bank-verified. Admin can mark a bad reference failed or
+-- restore/confirm a checked payment through the Admin-only status RPC.

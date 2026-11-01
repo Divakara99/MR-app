@@ -79,6 +79,21 @@ UUID. Internal helper functions and legacy custom-password RPCs have no
 browser execute grants. Intentionally public reads are limited to the
 minimized pre-login resolver, Admin-email resolver and non-personal
 `commerce` setting.
+
+**Payment recording hardening (1 Nov 2026).** Live migration
+`harden_payment_recording_and_admin_status_20261101` makes
+`record_app_purchase` derive the Starter/Pro amount, validity and expiry
+from the Admin-managed `commerce` settings instead of trusting browser
+values. It normalizes and validates the payment reference server-side
+(exact non-repeated 12-digit UTR for UPI), requires an enabled/configured
+payment method and paid status, rejects duplicate normalized references,
+and serializes same-account/same-plan renewals. The Admin-only
+`admin_update_app_purchase_status_auth` RPC lets Admin mark an unmatched
+or fake reference **failed** from the Payment List, or confirm/restore a
+checked payment as **paid**. Manual references still are not independent
+bank verification; production should use verified gateway/Play Billing
+receipts. The minimized pre-login account resolver still needs rate
+limiting/abuse monitoring before a large launch.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -297,11 +312,15 @@ full cross-device backend coverage is required:
 
 Current checkout can display Admin-configured manual UPI, payment-link, or
 bank receiving details and records the Job Seeker-entered transaction/UTR
-reference. Manual-reference
-activation is **not** independent bank/gateway verification and is not proof
-of a real gateway or Google Play payment. Admin should cross-check manual
-references, and production digital subscriptions should move to verified
-payment-gateway/Google Play Billing receipt validation.
+reference. The database re-checks the enabled method and reference format
+and derives amount/validity/expiry from Admin commerce settings, so a
+browser or direct RPC caller cannot alter price or expiry. Manual-reference
+activation is still **not** independent bank/gateway verification and is not
+proof of a real gateway or Google Play payment. Admin should cross-check
+manual references in the UPI/bank app and use Payment List → **Mark Invalid**
+for an unmatched/fake reference (or **Restore Paid** if checked by mistake).
+Production digital subscriptions should move to verified payment-gateway/
+Google Play Billing receipt validation.
 
 ## Production security review required
 
@@ -321,7 +340,8 @@ hardening pass before a large public launch:
   password columns are permanently removed from the live database (browser
   execute access to those RPCs is already revoked).
 - Replace manual-reference payment activation with verified
-  gateway/Google Play Billing receipts.
+  gateway/Google Play Billing receipts. Until then, cross-check references
+  and use the Admin Payment List status controls for unmatched payments.
 - Never expose the `service_role` key in the browser application.
 
 ## Quick troubleshooting
