@@ -684,6 +684,10 @@ const mergeAccountLists = (current: Account[], incoming: Account[]) => {
     const previous = merged.get(key)
     merged.set(key, {
       ...account,
+      name: account.name || previous?.name || '',
+      email: account.email || previous?.email || '',
+      createdAt: account.createdAt || previous?.createdAt || new Date().toISOString(),
+      profile: account.profile ?? previous?.profile,
       authUserId: account.authUserId ?? previous?.authUserId,
       authLinked: Boolean(account.authLinked || account.authUserId || previous?.authLinked || previous?.authUserId),
     })
@@ -1203,7 +1207,7 @@ export default function App() {
   const aiEndRef = useRef<HTMLDivElement>(null)
   const heroSearchRef = useRef<HTMLInputElement>(null)
   const secretTapRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
-  const remoteSyncLoadStartedRef = useRef(false)
+  const remoteSyncIdentityRef = useRef('')
   const remoteSyncLoadedRef = useRef<Record<string, boolean>>({})
   const remoteSyncPreviousRef = useRef<Record<string, SyncRecord[]>>({})
   const remoteSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -1765,6 +1769,10 @@ export default function App() {
         const local = prev.find(a => a.role === account.role && normalizeMobile(a.mobile) === normalizeMobile(account.mobile))
         return {
           ...account,
+          name: account.name || local?.name || '',
+          email: account.email || local?.email || '',
+          createdAt: account.createdAt || local?.createdAt || new Date().toISOString(),
+          profile: account.profile ?? local?.profile,
           authUserId: account.authUserId ?? local?.authUserId,
           authLinked: Boolean(account.authLinked || account.authUserId || local?.authLinked || local?.authUserId),
         }
@@ -1784,7 +1792,14 @@ export default function App() {
   const fetchRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey): Promise<T[] | null> => {
     if (!supabase) return null
     const { data, error } = await supabase.rpc('list_app_sync_records', { p_collection_key: collectionKey })
-    if (error) throw error
+    if (error) {
+      // Guests intentionally have no remote collection-read access. Treat
+      // that boundary as an empty remote snapshot so a guest's new support
+      // ticket can still use the create-only sync write below.
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) return []
+      throw error
+    }
     return ((data ?? []) as RemoteSyncRecordRow[]).map(row => ({ ...(row.payload as Record<string, unknown>), id: row.record_id } as T))
   }
   const syncRemoteSyncCollection = async <T extends SyncRecord>(collectionKey: RemoteSyncCollectionKey, previous: T[], next: T[]) => {
@@ -2374,7 +2389,7 @@ export default function App() {
           : undefined
         if (recruiterAccount && (parsedIdentifier.kind === 'mobile' || existing)) {
           markAuthFieldTouched('identifier')
-          showAuthFieldError('identifier', `This mobile is registered as a Recruiter account (${recruiterAccount.name}). Job Seeker login is blocked. Login as Recruiter and delete that account first.`)
+          showAuthFieldError('identifier', `This mobile is registered as a Recruiter account${recruiterAccount.name ? ` (${recruiterAccount.name})` : ''}. Job Seeker login is blocked. Login as Recruiter and delete that account first.`)
           return
         }
       }
@@ -4165,8 +4180,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!supabase || remoteSyncLoadStartedRef.current) return
-    remoteSyncLoadStartedRef.current = true
+    if (!supabase) return
+    const identityKey = `${authSessionUser?.id ?? 'guest'}:${isAdmin ? 'admin' : 'member'}:${currentUser?.role ?? ''}:${currentUser?.mobile ?? ''}`
+    if (remoteSyncIdentityRef.current === identityKey) return
+    remoteSyncIdentityRef.current = identityKey
     let cancelled = false
 
     const loadLocalPendingJobs = (): PendingJob[] => {
@@ -4182,13 +4199,14 @@ export default function App() {
 
     const loadCollection = async <T extends SyncRecord>(
       collectionKey: RemoteSyncCollectionKey,
-      localRecords: T[],
+      loadLocalRecords: () => T[],
       applyRecords: (records: T[]) => void,
       cleanRemoteRecords: (records: T[]) => T[] = records => records,
     ) => {
       try {
         const remoteRecords = await fetchRemoteSyncCollection<T>(collectionKey)
         if (cancelled || !remoteRecords) return
+        const localRecords = loadLocalRecords()
         remoteSyncPreviousRef.current[collectionKey] = remoteRecords
         remoteSyncLoadedRef.current[collectionKey] = true
         applyRecords(mergeRemoteSyncRecords(cleanRemoteRecords(remoteRecords), localRecords))
@@ -4198,16 +4216,21 @@ export default function App() {
     }
 
     void Promise.all([
-      loadCollection<Job>('jobs', loadInitialJobs(), setJobs, records => records.filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))),
-      loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs(), setPendingJobs),
-      loadCollection<SupportTicket>('support_tickets', loadSupportTickets(), setSupportTickets),
-      loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests(), setDeletionRequests),
+      loadCollection<Job>('jobs', loadInitialJobs, setJobs, records => records.filter(job => job && !LEGACY_SEEDED_JOB_IDS.has(String(job.id)))),
+      loadCollection<PendingJob>('pending_jobs', loadLocalPendingJobs, setPendingJobs),
+      loadCollection<SupportTicket>('support_tickets', loadSupportTickets, setSupportTickets),
+      loadCollection<AccountDeletionRequest>('deletion_requests', loadDeletionRequests, setDeletionRequests),
     ])
 
-    return () => { cancelled = true }
-    // Load shared collections once; later edits are mirrored by the effects below.
+    return () => {
+      cancelled = true
+      Object.values(remoteSyncTimersRef.current).forEach(timer => clearTimeout(timer))
+    }
+    // Server-side collection visibility depends on the signed-in identity:
+    // guests read none, members read jobs/their own private records, and
+    // Admin reads pending vacancies plus all tickets/deletion requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [authSessionUser?.id, isAdmin, currentUser?.role, currentUser?.mobile])
 
   useEffect(() => { scheduleRemoteSyncCollection('jobs', jobs) }, [jobs])
   useEffect(() => { scheduleRemoteSyncCollection('pending_jobs', pendingJobs) }, [pendingJobs])
@@ -4267,9 +4290,11 @@ export default function App() {
   }, [currentUser?.role, currentUser?.mobile, saved, applied, requestedCandidates, revealed, paidRevealed, dailyUnlocks, extraReveals])
 
   useEffect(() => {
-    if (!supabase) return
+    if (!supabase || !authSessionUser || (!isAdmin && currentUser?.role !== 'recruiter')) return
     void fetchRemoteCandidateProfiles().catch(() => undefined)
-  }, [])
+    // Candidate profiles are returned only to signed-in Recruiters/Admin.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authSessionUser?.id, isAdmin, currentUser?.role, currentUser?.mobile])
 
   useEffect(() => {
     if (toast) {

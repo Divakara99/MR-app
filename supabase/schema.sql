@@ -20,6 +20,7 @@
 
 create schema if not exists extensions;
 
+-- Internal validation helper only; the browser never calls it directly.
 create or replace function public.is_valid_app_email(p_email text)
 returns boolean
 language plpgsql
@@ -97,6 +98,8 @@ begin
 end;
 $$;
 
+revoke all on function public.is_valid_app_email(text) from public, anon, authenticated;
+
 create table if not exists public.app_accounts (
   id uuid primary key default gen_random_uuid(),
   role text not null check (role in ('seeker', 'recruiter')),
@@ -154,19 +157,36 @@ drop function if exists public.update_app_account_email(text, text, text, text);
 drop function if exists public.update_seeker_profile(text, jsonb);
 drop function if exists public.delete_app_account(text, text);
 
--- Recruiter candidate list: returns only anonymous job-profile data.
--- It never returns candidate name, mobile number or email.
+-- Recruiter candidate list: returns only anonymous job-profile data to a
+-- signed-in Recruiter or the linked Admin. It never returns candidate name,
+-- mobile number or email.
 create or replace function public.list_anonymous_candidate_profiles()
 returns table (
   candidate_id text,
   candidate_code text,
   profile jsonb
 )
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
+#variable_conflict use_column
+begin
+  if auth.uid() is null
+     or not (
+       public.is_current_user_admin()
+       or exists (
+         select 1
+         from public.app_accounts caller
+         where caller.role = 'recruiter'
+           and caller.auth_user_id = auth.uid()
+       )
+     ) then
+    return;
+  end if;
+
+  return query
   select
     a.id::text as candidate_id,
     'MR-2026-' || (1000 + abs(hashtext(a.id::text) % 9000))::text as candidate_code,
@@ -204,6 +224,7 @@ as $$
       )
     )
   order by a.updated_at desc;
+end;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -265,6 +286,8 @@ on conflict (admin_id) do nothing;
 -- near the end of this schema.
 
 -- Record one Starter/Pro purchase + payment (called right after checkout).
+-- The purchase is recorded only for the signed-in Job Seeker's own linked
+-- profile; caller-supplied name/email cannot create a record for someone else.
 create or replace function public.record_app_purchase(
   p_role text,
   p_name text,
@@ -283,20 +306,36 @@ security definer
 set search_path = public
 as $$
 declare
+  v_uid uuid := auth.uid();
   v_role text := lower(trim(coalesce(p_role, 'seeker')));
   v_mobile text := regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+  v_email text := lower(trim(coalesce(p_email, '')));
   v_transaction_id text := trim(coalesce(p_transaction_id, ''));
   v_status text := lower(trim(coalesce(nullif(p_status, ''), 'paid')));
+  v_account public.app_accounts%rowtype;
 begin
   if length(v_mobile) = 12 and left(v_mobile, 2) = '91' then
     v_mobile := right(v_mobile, 10);
   end if;
 
-  if v_role not in ('seeker', 'recruiter')
-     or trim(coalesce(p_name, '')) = ''
-     or p_plan not in ('starter', 'pro')
+  if v_uid is null or v_role <> 'seeker' then
+    return false;
+  end if;
+
+  select * into v_account
+  from public.app_accounts a
+  where a.role = 'seeker'
+    and a.auth_user_id = v_uid
+    and a.mobile = v_mobile
+  limit 1;
+
+  if not found or lower(v_account.email) <> v_email then
+    return false;
+  end if;
+
+  if p_plan not in ('starter', 'pro')
      or p_amount is null
-     or p_amount < 0
+     or p_amount <= 0
      or v_status not in ('paid', 'pending', 'failed')
      or v_transaction_id = ''
      or char_length(v_transaction_id) > 160
@@ -315,10 +354,10 @@ begin
 
   insert into public.app_purchases (role, name, mobile, email, plan, amount_inr, method, status, transaction_id, expires_at)
   values (
-    v_role,
-    trim(p_name),
-    v_mobile,
-    coalesce(lower(trim(p_email)), ''),
+    'seeker',
+    v_account.name,
+    v_account.mobile,
+    lower(v_account.email),
     p_plan,
     p_amount,
     coalesce(nullif(trim(p_method), ''), 'In-App'),
@@ -333,6 +372,7 @@ $$;
 
 -- One Job Seeker's synced Starter/Pro purchases, used to restore the active
 -- paid plan automatically on every signed-in device and remove it at expiry.
+-- Only the linked owner can read the mobile's purchase history.
 create or replace function public.list_app_purchases_for_mobile(p_mobile text)
 returns table (
   id text,
@@ -366,6 +406,14 @@ as $$
   cross join normalized n
   where p.role = 'seeker'
     and p.mobile = n.mobile
+    and auth.uid() is not null
+    and exists (
+      select 1
+      from public.app_accounts a
+      where a.role = 'seeker'
+        and a.auth_user_id = auth.uid()
+        and a.mobile = n.mobile
+    )
   order by p.purchased_at desc;
 $$;
 
@@ -377,12 +425,12 @@ drop function if exists public.admin_list_purchases();
 drop function if exists public.admin_login(text, text);
 drop function if exists public.admin_change_password(text, text, text);
 drop function if exists public.admin_reset_password_with_registered_details(text, text, text);
-revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public;
-revoke all on function public.list_app_purchases_for_mobile(text) from public;
-grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to anon, authenticated;
-grant execute on function public.list_app_purchases_for_mobile(text) to anon, authenticated;
-revoke all on function public.list_anonymous_candidate_profiles() from public;
-grant execute on function public.list_anonymous_candidate_profiles() to anon, authenticated;
+revoke all on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.list_app_purchases_for_mobile(text) from public, anon, authenticated;
+grant execute on function public.record_app_purchase(text, text, text, text, text, numeric, text, text, text, timestamptz) to authenticated;
+grant execute on function public.list_app_purchases_for_mobile(text) to authenticated;
+revoke all on function public.list_anonymous_candidate_profiles() from public, anon, authenticated;
+grant execute on function public.list_anonymous_candidate_profiles() to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Cross-device app collections: live vacancies, pending approvals, support
@@ -414,15 +462,65 @@ returns table (
   payload jsonb,
   updated_at timestamptz
 )
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
+#variable_conflict use_column
+declare
+  v_uid uuid := auth.uid();
+  v_is_admin boolean := public.is_current_user_admin();
+begin
+  if p_collection_key not in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')
+     or v_uid is null then
+    return;
+  end if;
+
+  if p_collection_key = 'jobs' then
+    -- Live vacancies are member data; signed-in users/Admin may read them.
+    return query
+    select r.record_id, r.record_position, r.payload, r.updated_at
+    from public.app_sync_records r
+    where r.collection_key = 'jobs'
+    order by r.record_position asc, r.updated_at desc;
+    return;
+  end if;
+
+  if p_collection_key = 'pending_jobs' then
+    -- Unapproved vacancies and their hiring contacts are Admin-only.
+    if not v_is_admin then
+      return;
+    end if;
+    return query
+    select r.record_id, r.record_position, r.payload, r.updated_at
+    from public.app_sync_records r
+    where r.collection_key = 'pending_jobs'
+    order by r.record_position asc, r.updated_at desc;
+    return;
+  end if;
+
+  -- Support tickets and deletion requests contain personal details. Admin
+  -- sees all; a signed-in member sees only records whose mobile/email match
+  -- one of that member's own Auth-linked profiles. Guests see none remotely.
+  return query
   select r.record_id, r.record_position, r.payload, r.updated_at
   from public.app_sync_records r
   where r.collection_key = p_collection_key
+    and (
+      v_is_admin
+      or exists (
+        select 1
+        from public.app_accounts a
+        where a.auth_user_id = v_uid
+          and (
+            a.mobile = public.normalize_app_mobile(r.payload->>'mobile')
+            or lower(a.email) = lower(coalesce(r.payload->>'email', ''))
+          )
+      )
+    )
   order by r.record_position asc, r.updated_at desc;
+end;
 $$;
 
 create or replace function public.upsert_app_sync_record(
@@ -436,21 +534,102 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_record_id text := trim(coalesce(p_record_id, ''));
+  v_uid uuid := auth.uid();
+  v_is_admin boolean := public.is_current_user_admin();
+  v_existing_payload jsonb;
+  v_payload_mobile text := public.normalize_app_mobile(p_payload->>'mobile');
+  v_payload_email text := lower(trim(coalesce(p_payload->>'email', '')));
+  v_existing_mobile text := '';
+  v_existing_email text := '';
+  v_owns_payload boolean := false;
+  v_owns_existing boolean := false;
 begin
   if p_collection_key not in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')
-     or p_record_id is null
-     or char_length(trim(p_record_id)) not between 1 and 160
+     or char_length(v_record_id) not between 1 and 160
      or p_position is null
      or p_position < 0
      or p_payload is null
      or jsonb_typeof(p_payload) <> 'object'
-     or coalesce(p_payload->>'id', '') <> trim(p_record_id)
+     or coalesce(p_payload->>'id', '') <> v_record_id
      or pg_column_size(p_payload) > 262144 then
     return false;
   end if;
 
+  select r.payload into v_existing_payload
+  from public.app_sync_records r
+  where r.collection_key = p_collection_key
+    and r.record_id = v_record_id;
+
+  if v_existing_payload is not null then
+    v_existing_mobile := public.normalize_app_mobile(v_existing_payload->>'mobile');
+    v_existing_email := lower(trim(coalesce(v_existing_payload->>'email', '')));
+  end if;
+
+  if v_uid is not null then
+    v_owns_payload := exists (
+      select 1
+      from public.app_accounts a
+      where a.auth_user_id = v_uid
+        and (a.mobile = v_payload_mobile or lower(a.email) = v_payload_email)
+    );
+    v_owns_existing := v_existing_payload is not null and exists (
+      select 1
+      from public.app_accounts a
+      where a.auth_user_id = v_uid
+        and (a.mobile = v_existing_mobile or lower(a.email) = v_existing_email)
+    );
+  end if;
+
+  if not v_is_admin then
+    if p_collection_key = 'jobs' then
+      -- Only Admin can create, edit or reorder live vacancies.
+      return false;
+    elsif p_collection_key = 'pending_jobs' then
+      -- Signed-in members may submit a new vacancy for Admin approval. They
+      -- cannot edit an existing pending record; an unchanged payload is the
+      -- client's position-only resync.
+      if v_uid is null then
+        return false;
+      end if;
+      if v_existing_payload is not null and v_existing_payload <> p_payload then
+        return false;
+      end if;
+    elsif p_collection_key = 'support_tickets' then
+      if v_existing_payload is null then
+        -- The sole anonymous write in the app: create one NEW open support
+        -- ticket. Anonymous callers can never list, update or delete tickets.
+        if v_payload_mobile !~ '^[6-9][0-9]{9}$'
+           or v_payload_email = ''
+           or coalesce(p_payload->>'status', 'open') <> 'open' then
+          return false;
+        end if;
+        p_payload := jsonb_set(p_payload, '{status}', '"open"'::jsonb, true);
+      elsif v_uid is null
+         or not v_owns_existing
+         or v_existing_payload <> p_payload then
+        -- Members cannot change ticket details/status after creation; only
+        -- Admin updates status. Unchanged payload = position-only resync.
+        return false;
+      end if;
+    elsif p_collection_key = 'deletion_requests' then
+      if v_uid is null or not v_owns_payload then
+        return false;
+      end if;
+      if v_existing_payload is null then
+        if coalesce(p_payload->>'status', 'pending') <> 'pending' then
+          return false;
+        end if;
+        p_payload := jsonb_set(p_payload, '{status}', '"pending"'::jsonb, true);
+      elsif not v_owns_existing or v_existing_payload <> p_payload then
+        return false;
+      end if;
+    end if;
+  end if;
+
   insert into public.app_sync_records (collection_key, record_id, record_position, payload)
-  values (p_collection_key, trim(p_record_id), p_position, p_payload)
+  values (p_collection_key, v_record_id, p_position, p_payload)
   on conflict (collection_key, record_id)
   do update set
     record_position = excluded.record_position,
@@ -471,30 +650,65 @@ security definer
 set search_path = public
 as $$
 declare
+  v_record_id text := trim(coalesce(p_record_id, ''));
+  v_uid uuid := auth.uid();
+  v_is_admin boolean := public.is_current_user_admin();
+  v_existing_payload jsonb;
+  v_owns_existing boolean := false;
   deleted_count integer;
 begin
   if p_collection_key not in ('jobs', 'pending_jobs', 'support_tickets', 'deletion_requests')
-     or p_record_id is null
-     or char_length(trim(p_record_id)) not between 1 and 160 then
+     or char_length(v_record_id) not between 1 and 160
+     or v_uid is null then
+    return false;
+  end if;
+
+  select r.payload into v_existing_payload
+  from public.app_sync_records r
+  where r.collection_key = p_collection_key
+    and r.record_id = v_record_id;
+
+  if v_existing_payload is null then
+    return false;
+  end if;
+
+  v_owns_existing := exists (
+    select 1
+    from public.app_accounts a
+    where a.auth_user_id = v_uid
+      and (
+        a.mobile = public.normalize_app_mobile(v_existing_payload->>'mobile')
+        or lower(a.email) = lower(coalesce(v_existing_payload->>'email', ''))
+      )
+  );
+
+  -- Admin may delete any synced record. A member may delete only their own
+  -- account-deletion request (withdraw/replace it); jobs, pending vacancies
+  -- and support tickets are never member-deletable through sync.
+  if not v_is_admin
+     and not (p_collection_key = 'deletion_requests' and v_owns_existing) then
     return false;
   end if;
 
   delete from public.app_sync_records
   where collection_key = p_collection_key
-    and record_id = trim(p_record_id);
+    and record_id = v_record_id;
 
   get diagnostics deleted_count = row_count;
   return deleted_count > 0;
 end;
 $$;
 
-revoke all on function public.list_app_sync_records(text) from public;
-revoke all on function public.upsert_app_sync_record(text, text, integer, jsonb) from public;
-revoke all on function public.delete_app_sync_record(text, text) from public;
+revoke all on function public.list_app_sync_records(text) from public, anon, authenticated;
+revoke all on function public.upsert_app_sync_record(text, text, integer, jsonb) from public, anon, authenticated;
+revoke all on function public.delete_app_sync_record(text, text) from public, anon, authenticated;
 
-grant execute on function public.list_app_sync_records(text) to anon, authenticated;
+-- Reads/deletes require a Supabase Auth session. Upsert stays callable by
+-- anon only so a guest can create a new support ticket; the function body
+-- rejects every other anonymous collection/record operation.
+grant execute on function public.list_app_sync_records(text) to authenticated;
 grant execute on function public.upsert_app_sync_record(text, text, integer, jsonb) to anon, authenticated;
-grant execute on function public.delete_app_sync_record(text, text) to anon, authenticated;
+grant execute on function public.delete_app_sync_record(text, text) to authenticated;
 
 -- Per-account Job Seeker/Recruiter activity state: saved jobs, applied jobs,
 -- candidate interests, and same-day sponsored/free reveal usage. The composite
@@ -528,7 +742,15 @@ as $$
   select s.payload, s.updated_at
   from public.app_user_states s
   where s.role = p_role
-    and s.mobile = regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g');
+    and s.mobile = regexp_replace(coalesce(p_mobile, ''), '[^0-9]', '', 'g')
+    and auth.uid() is not null
+    and exists (
+      select 1
+      from public.app_accounts a
+      where a.role = s.role
+        and a.mobile = s.mobile
+        and a.auth_user_id = auth.uid()
+    );
 $$;
 
 create or replace function public.set_app_user_state(
@@ -553,11 +775,13 @@ begin
      or p_payload is null
      or jsonb_typeof(p_payload) <> 'object'
      or pg_column_size(p_payload) > 262144
+     or auth.uid() is null
      or not exists (
        select 1
        from public.app_accounts a
        where a.role = p_role
          and a.mobile = v_mobile
+         and a.auth_user_id = auth.uid()
      ) then
     return false;
   end if;
@@ -573,11 +797,11 @@ begin
 end;
 $$;
 
-revoke all on function public.get_app_user_state(text, text) from public;
-revoke all on function public.set_app_user_state(text, text, jsonb) from public;
+revoke all on function public.get_app_user_state(text, text) from public, anon, authenticated;
+revoke all on function public.set_app_user_state(text, text, jsonb) from public, anon, authenticated;
 
-grant execute on function public.get_app_user_state(text, text) to anon, authenticated;
-grant execute on function public.set_app_user_state(text, text, jsonb) to anon, authenticated;
+grant execute on function public.get_app_user_state(text, text) to authenticated;
+grant execute on function public.set_app_user_state(text, text, jsonb) to authenticated;
 
 -- Admin-managed app settings. The only current key is `commerce`: Job Seeker
 -- Starter/Pro names, prices, validity days, daily limits, benefits and the
@@ -613,7 +837,7 @@ $$;
 
 drop function if exists public.set_app_setting_admin(text, text, text, jsonb);
 
-revoke all on function public.get_app_setting(text) from public;
+revoke all on function public.get_app_setting(text) from public, anon, authenticated;
 
 grant execute on function public.get_app_setting(text) to anon, authenticated;
 
@@ -710,10 +934,16 @@ stable
 security definer
 set search_path = public, extensions
 as $$
-  select a.role, a.name, a.mobile, a.email,
-    a.auth_user_id,
+  -- Pre-login mobile -> Auth-email resolution needs role/mobile/email and
+  -- whether Auth is linked. Name/profile/Auth UUID are returned only when
+  -- the caller already owns this exact profile.
+  select a.role,
+    case when a.auth_user_id = auth.uid() then a.name else '' end,
+    a.mobile, a.email,
+    case when a.auth_user_id = auth.uid() then a.auth_user_id else null end,
     (a.auth_user_id is not null) as auth_linked,
-    a.profile, a.created_at
+    case when a.auth_user_id = auth.uid() then a.profile else '{}'::jsonb end,
+    a.created_at
   from public.app_accounts a
   where a.mobile = public.normalize_app_mobile(p_mobile)
   order by a.created_at asc;
@@ -741,10 +971,13 @@ declare
 begin
   if position('@' in v_identifier) > 0 then
     return query
-    select a.role, a.name, a.mobile, a.email,
-      a.auth_user_id,
+    select a.role,
+      case when a.auth_user_id = auth.uid() then a.name else '' end,
+      a.mobile, a.email,
+      case when a.auth_user_id = auth.uid() then a.auth_user_id else null end,
       (a.auth_user_id is not null) as auth_linked,
-      a.profile, a.created_at
+      case when a.auth_user_id = auth.uid() then a.profile else '{}'::jsonb end,
+      a.created_at
     from public.app_accounts a
     where lower(a.email) = lower(v_identifier)
     order by a.created_at asc;
@@ -752,10 +985,13 @@ begin
   end if;
 
   return query
-  select a.role, a.name, a.mobile, a.email,
-    a.auth_user_id,
+  select a.role,
+    case when a.auth_user_id = auth.uid() then a.name else '' end,
+    a.mobile, a.email,
+    case when a.auth_user_id = auth.uid() then a.auth_user_id else null end,
     (a.auth_user_id is not null) as auth_linked,
-    a.profile, a.created_at
+    case when a.auth_user_id = auth.uid() then a.profile else '{}'::jsonb end,
+    a.created_at
   from public.app_accounts a
   where a.mobile = public.normalize_app_mobile(v_identifier)
   order by a.created_at asc;
@@ -1178,25 +1414,29 @@ begin
 end;
 $$;
 
-revoke all on function public.normalize_app_mobile(text) from public;
-revoke all on function public.current_auth_email() from public;
-revoke all on function public.find_app_accounts_by_mobile(text) from public;
-revoke all on function public.find_app_accounts_by_identifier(text) from public;
-revoke all on function public.list_auth_profiles_for_current_user() from public;
-revoke all on function public.upsert_auth_profile(text, text, text, text) from public;
-revoke all on function public.update_auth_profile_name(text, text) from public;
-revoke all on function public.update_auth_seeker_profile(jsonb) from public;
-revoke all on function public.delete_auth_profile(text) from public;
-revoke all on function public.is_current_user_admin() from public;
-revoke all on function public.link_current_admin_auth_user() from public;
-revoke all on function public.get_admin_auth_email(text) from public;
-revoke all on function public.admin_list_accounts_auth() from public;
-revoke all on function public.admin_list_purchases_auth() from public;
-revoke all on function public.admin_delete_app_account_auth(text, text) from public;
-revoke all on function public.set_app_setting_admin_auth(text, jsonb) from public;
+revoke all on function public.normalize_app_mobile(text) from public, anon, authenticated;
+revoke all on function public.current_auth_email() from public, anon, authenticated;
+revoke all on function public.find_app_accounts_by_mobile(text) from public, anon, authenticated;
+revoke all on function public.find_app_accounts_by_identifier(text) from public, anon, authenticated;
+revoke all on function public.list_auth_profiles_for_current_user() from public, anon, authenticated;
+revoke all on function public.upsert_auth_profile(text, text, text, text) from public, anon, authenticated;
+revoke all on function public.update_auth_profile_name(text, text) from public, anon, authenticated;
+revoke all on function public.update_auth_seeker_profile(jsonb) from public, anon, authenticated;
+revoke all on function public.delete_auth_profile(text) from public, anon, authenticated;
+revoke all on function public.is_current_user_admin() from public, anon, authenticated;
+revoke all on function public.link_current_admin_auth_user() from public, anon, authenticated;
+revoke all on function public.get_admin_auth_email(text) from public, anon, authenticated;
+revoke all on function public.admin_list_accounts_auth() from public, anon, authenticated;
+revoke all on function public.admin_list_purchases_auth() from public, anon, authenticated;
+revoke all on function public.admin_delete_app_account_auth(text, text) from public, anon, authenticated;
+revoke all on function public.set_app_setting_admin_auth(text, jsonb) from public, anon, authenticated;
 
-grant execute on function public.normalize_app_mobile(text) to anon, authenticated;
-grant execute on function public.current_auth_email() to authenticated;
+-- normalize_app_mobile, current_auth_email, is_valid_app_email and
+-- is_current_user_admin are internal helpers called by the SECURITY DEFINER
+-- RPCs above; the browser has no direct execute grant for them. The two
+-- pre-login resolvers remain anon-callable only to map mobile/email to the
+-- registered Supabase Auth email/role blockers, with non-owner rows minimized
+-- (no name, no profile JSON, no Auth UUID returned before login).
 grant execute on function public.find_app_accounts_by_mobile(text) to anon, authenticated;
 grant execute on function public.find_app_accounts_by_identifier(text) to anon, authenticated;
 grant execute on function public.list_auth_profiles_for_current_user() to authenticated;
@@ -1204,13 +1444,22 @@ grant execute on function public.upsert_auth_profile(text, text, text, text) to 
 grant execute on function public.update_auth_profile_name(text, text) to authenticated;
 grant execute on function public.update_auth_seeker_profile(jsonb) to authenticated;
 grant execute on function public.delete_auth_profile(text) to authenticated;
-grant execute on function public.is_current_user_admin() to authenticated;
 grant execute on function public.link_current_admin_auth_user() to authenticated;
 grant execute on function public.get_admin_auth_email(text) to anon, authenticated;
 grant execute on function public.admin_list_accounts_auth() to authenticated;
 grant execute on function public.admin_list_purchases_auth() to authenticated;
 grant execute on function public.admin_delete_app_account_auth(text, text) to authenticated;
 grant execute on function public.set_app_setting_admin_auth(text, jsonb) to authenticated;
+
+-- Supabase projects may include the platform's rls_auto_enable event-trigger
+-- helper. It is not an app RPC, so remove browser execute access if present.
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke all on function public.rls_auto_enable() from public, anon, authenticated';
+  end if;
+end;
+$$;
 
 -- Legacy custom-password RPC definitions and browser grants are intentionally
 -- absent from this schema. The drop statements above remove them from
@@ -1219,11 +1468,13 @@ grant execute on function public.set_app_setting_admin_auth(text, jsonb) to auth
 -- IMPORTANT SECURITY NOTE:
 -- Supabase Auth is now the login/session authority for Job Seekers,
 -- Recruiters and Admin. Direct table access remains revoked and RLS remains
--- enabled. The pre-login find RPCs are intentionally anon-callable
--- only so login can resolve a registered mobile to its Auth email and show
--- role blockers; add rate limiting/abuse monitoring before a large launch.
--- Collection-sync, per-account user-state and purchase-recording RPCs still
--- accept mobile-keyed parameters for app data compatibility and should get a
--- follow-up hardening pass to derive identity from auth.uid() (or move to a
--- protected server-side API) before a large public launch. Manual
--- UPI/bank transaction references are not independently bank-verified.
+-- enabled. Collection-sync reads/deletes, purchases, per-account user state
+-- and candidate profiles derive ownership from auth.uid(): live jobs require
+-- sign-in, pending vacancies are Admin-only, and support tickets/deletion
+-- requests are visible only to Admin or the linked owner. The only anonymous
+-- app-data write is creating one new open support ticket. The pre-login
+-- find RPCs remain anon-callable only so login can resolve a registered
+-- mobile to its Auth email and show role blockers; non-owner responses omit
+-- name/profile/Auth UUID, and the endpoint still needs rate limiting/abuse
+-- monitoring before a large launch. Manual UPI/bank transaction references
+-- are not independently bank-verified.

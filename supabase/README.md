@@ -58,12 +58,27 @@ Netlify deploy previews, `https://3000-*.e2b.app/**`, and localhost.
 registered Admin email once in **Supabase Dashboard → Authentication →
 Users → Add user** (confirmed user, strong password chosen there). The app
 links `app_admins.auth_user_id` on first successful Admin Auth login. Never
-share or store that Admin password in chat/GitHub. Legacy custom-password
-RPC definitions, browser grants, and public-table password columns have
-been removed from the repository schema. They remain live temporarily only
-because the old production client is still deployed until this update
-merges; after production verification, apply the cleaned schema drop
-statements to remove them permanently from the live database.
+share or store that Admin password in chat/GitHub. Legacy custom-password RPC definitions, browser grants, and public-table
+password columns have been removed from the repository schema. The legacy
+definitions remain live temporarily, but all browser (`anon`/`authenticated`)
+execute access to them was revoked on 1 Nov 2026; after exact production-
+bundle verification, apply the cleaned schema drop statements to remove the
+definitions and password columns permanently from the live database.
+
+**RPC anonymous-access hardening (1 Nov 2026).** Live migration
+`harden_rpc_anonymous_access_20261101_v2` closes anonymous whole-collection
+reads/writes. Sync reads/deletes now require Supabase Auth: live jobs are
+signed-in only, pending vacancies are Admin-only, and support tickets /
+deletion requests are visible only to Admin or the Auth-linked owner. Sync
+writes are collection- and owner-checked; the only anonymous app-data write
+is creating one **new open** support ticket, with no anonymous ticket
+listing, updating or deleting. Purchases, per-account user state and
+candidate profiles derive the owner/role from `auth.uid()`, and pre-login
+account lookup no longer returns a non-owner's name, profile JSON or Auth
+UUID. Internal helper functions and legacy custom-password RPCs have no
+browser execute grants. Intentionally public reads are limited to the
+minimized pre-login resolver, Admin-email resolver and non-personal
+`commerce` setting.
 The preview reads the URL + publishable key from `.env.local`
 (Git-ignored); production hosting must set the same `VITE_` variables. The
 owner changed the live Admin password from the seeded bootstrap value;
@@ -252,7 +267,7 @@ Supabase for:
   Auth passwords/sessions
 - Email confirmation and secure email-link password reset
 - Job Seeker profile storage and updates
-- Anonymous Recruiter candidate profiles
+- Anonymous candidate profiles for signed-in Recruiters/Admin (no name/mobile/email)
 - Supported remote account-deletion calls
 - Starter/Pro purchase/payment recording
 - Admin-managed Starter/Pro prices, validity, daily limits, benefits and
@@ -293,18 +308,18 @@ payment-gateway/Google Play Billing receipt validation.
 This setup is ready for controlled testing, but it should receive a security
 hardening pass before a large public launch:
 
-- Identity/session authority is Supabase Auth, and Admin lists/settings now
-  require a linked Admin Auth session. However, collection-sync,
-  per-account user-state and purchase-recording RPCs still accept
-  mobile-keyed parameters for compatibility and should eventually derive
-  identity from `auth.uid()` or move to a protected server-side API. Direct
-  table access remains revoked and RLS remains enabled.
+- Identity/session authority is Supabase Auth. Collection-sync,
+  per-account user-state, purchase and candidate RPCs derive ownership or
+  Admin status from `auth.uid()`; direct table access remains revoked and
+  RLS remains enabled. Before a large launch, add rate limiting/abuse
+  monitoring to the minimized pre-login mobile/email resolver and to
+  guest support-ticket creation (the one intentional anonymous write).
 - Forgot Password uses Supabase email reset links. Configure production
-  SMTP, templates, rate limiting and abuse monitoring before scale; the
-  pre-login mobile/email resolver also needs rate limiting.
-- After the Auth-only client is production-verified, apply the cleaned
-  schema drop statements so old custom-password RPCs and public-table
-  password columns are permanently removed from the live database.
+  SMTP, templates, rate limiting and abuse monitoring before scale.
+- After the exact production bundle is verified, apply the cleaned schema
+  drop statements so old custom-password RPC definitions and public-table
+  password columns are permanently removed from the live database (browser
+  execute access to those RPCs is already revoked).
 - Replace manual-reference payment activation with verified
   gateway/Google Play Billing receipts.
 - Never expose the `service_role` key in the browser application.
