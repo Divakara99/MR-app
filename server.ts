@@ -12,23 +12,131 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS for preview
+const GEMINI_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const geminiRequestLog = new Map<string, number[]>();
+
+const consumeGeminiRateLimit = (key: string, maxRequests: number): boolean => {
+  const now = Date.now();
+  const recentRequests = (geminiRequestLog.get(key) ?? []).filter(timestamp => now - timestamp < GEMINI_RATE_LIMIT_WINDOW_MS);
+  if (recentRequests.length >= maxRequests) {
+    geminiRequestLog.set(key, recentRequests);
+    return false;
+  }
+  recentRequests.push(now);
+  geminiRequestLog.set(key, recentRequests);
+  if (geminiRequestLog.size > 1000) {
+    for (const [storedKey, timestamps] of geminiRequestLog.entries()) {
+      if (timestamps.every(timestamp => now - timestamp >= GEMINI_RATE_LIMIT_WINDOW_MS)) geminiRequestLog.delete(storedKey);
+    }
+  }
+  return true;
+};
+
+const verifySupabaseAccessToken = async (accessToken: string): Promise<{ id: string } | null> => {
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\/$/, '');
+  const supabasePublishableKey = (
+    process.env.SUPABASE_PUBLISHABLE_KEY
+    || process.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    || process.env.VITE_SUPABASE_ANON_KEY
+    || ''
+  ).trim();
+  if (!accessToken || !supabaseUrl || !supabasePublishableKey) return null;
+
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: {
+        apikey: supabasePublishableKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const user = await response.json() as { id?: unknown };
+    return typeof user.id === 'string' && user.id ? { id: user.id } : null;
+  } catch {
+    return null;
+  }
+};
+
+const isAllowedCorsOrigin = (origin: string | undefined, host: string | undefined): boolean => {
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    if (host && url.host === host) return true;
+    if (['localhost', '127.0.0.1', '::1'].includes(url.hostname)) return true;
+    return url.hostname.endsWith('.e2b.app')
+      || url.hostname === 'mrnew.netlify.app'
+      || url.hostname.endsWith('--mrnew.netlify.app');
+  } catch {
+    return false;
+  }
+};
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.header('Permissions-Policy', 'camera=(), geolocation=(), microphone=()');
+  res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  if (req.path.startsWith('/api/')) res.header('Cache-Control', 'no-store');
+
+  const origin = req.header('Origin');
+  const originAllowed = isAllowedCorsOrigin(origin, req.header('Host'));
+  if (origin && originAllowed) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  if (req.method === 'OPTIONS') return res.sendStatus(originAllowed ? 204 : 403);
   next();
 });
 
-// Gemini proxy
+// Gemini proxy. Without a server key it returns only built-in local help;
+// a real key is used only for a verified Supabase Auth session and is never
+// read from a VITE_* variable because those are browser-public by design.
 app.post('/api/gemini', async (req, res) => {
-  const { prompt, history, audience } = req.body;
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  if (!prompt || prompt.length > 4000) {
+    return res.status(400).json({ error: 'Invalid prompt', text: 'Please enter a question of up to 4,000 characters.' });
+  }
+
+  const requestedAudience = typeof body.audience === 'string' ? body.audience : 'seeker';
+  const audience = ['admin', 'guest', 'recruiter', 'seeker'].includes(requestedAudience) ? requestedAudience : 'seeker';
   const isRecruiterAudience = audience === 'recruiter';
-  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const history = Array.isArray(body.history)
+    ? body.history.slice(-6).flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
+      const entry = item as Record<string, unknown>;
+      const role = entry.role === 'model' ? 'model' : entry.role === 'user' ? 'user' : null;
+      const text = typeof entry.text === 'string' ? entry.text.trim().slice(0, 2000) : '';
+      return role && text ? [{ role, text }] : [];
+    })
+    : [];
+
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const ipRateLimitKey = `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  if (!consumeGeminiRateLimit(ipRateLimitKey, 40)) {
+    return res.status(429).json({ error: 'Rate limit exceeded', text: 'Too many AI requests. Please wait a few minutes and try again.' });
+  }
+
+  if (apiKey) {
+    const authorization = req.header('Authorization') || '';
+    const accessToken = authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '';
+    const verifiedUser = await verifySupabaseAccessToken(accessToken);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Login required', text: 'Please login to use the live AI Assistant.' });
+    }
+    if (!consumeGeminiRateLimit(`user:${verifiedUser.id}`, 20)) {
+      return res.status(429).json({ error: 'Rate limit exceeded', text: 'Too many AI requests. Please wait a few minutes and try again.' });
+    }
+  }
+
   if (!apiKey) {
     // Mock response when no key
     const lower = (prompt || '').toLowerCase();
@@ -63,10 +171,7 @@ app.post('/api/gemini', async (req, res) => {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
     const model = 'gemini-2.0-flash';
-    const contents: any[] = [];
-    if (history && Array.isArray(history)) {
-      history.forEach((h: any) => contents.push({ role: h.role, parts: [{ text: h.text }] }));
-    }
+    const contents: any[] = history.map(item => ({ role: item.role, parts: [{ text: item.text }] }));
     contents.push({ role: 'user', parts: [{ text: prompt }] });
 
     const response = await ai.models.generateContent({
@@ -82,7 +187,7 @@ app.post('/api/gemini', async (req, res) => {
     res.json({ text });
   } catch (e: any) {
     console.error('Gemini error', e);
-    res.status(500).json({ error: e.message || 'Gemini failed', text: 'AI is temporarily unavailable. Please try again.' });
+    res.status(500).json({ error: 'Gemini failed', text: 'AI is temporarily unavailable. Please try again.' });
   }
 });
 
